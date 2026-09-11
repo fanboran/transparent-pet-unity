@@ -20,6 +20,7 @@ namespace TransparentPet.Core
         public float OpacityThreshold = 0.1f;
 
         UniWindowController window;
+        NativeTray tray;
 
         void Awake()
         {
@@ -33,7 +34,22 @@ namespace TransparentPet.Core
             window.shouldFitMonitor = true; // 全屏透明覆盖层（Godot 版为全屏 borderless 窗口）
             window.hitTestType = UniWindowController.HitTestType.Opacity;
             window.opacityThreshold = OpacityThreshold;
+
+#if !UNITY_EDITOR
+            // 托盘：全屏无边框窗口的"方便关闭"出口（编辑器下跳过）
+            tray = new NativeTray("透明宠物 · 右键退出", () => Application.Quit());
+#endif
             StartCoroutine(HideFromTaskbarWhenReady());
+        }
+
+        void Update()
+        {
+            tray?.Pump();
+        }
+
+        void OnDestroy()
+        {
+            tray?.Dispose();
         }
 
         /// <summary>运行时切换置顶（对应 Godot 版 set_always_on_top，供托盘/设置菜单调用）</summary>
