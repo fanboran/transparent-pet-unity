@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-**M0 骨架已初始化**。首次用 Unity Hub / 编辑器打开 `transparent-pet/` 子目录即可，编辑器会自动生成 Library 并补全工程设置。
+**Spike 窗口层已实现（UniWindowController 全 alpha 方案），待真机验收**。核心逻辑（拖拽抛射物理、alpha 命中检测）已移植并带 17 项单元测试。场景由 `TransparentPet/生成宠物场景` 菜单或批处理程序化生成，详见 [docs/spike-透明窗口.md](docs/spike-透明窗口.md) 的实现记录。
 
 - 引擎：Unity 2022.3.62f1c1（已装于 `F:\Unity\2022.3.62f1c1`）
 - 打开方式：Unity Hub → Open → 选择 `transparent-pet-unity/transparent-pet/` 目录（工程本体子目录）
@@ -29,12 +29,12 @@ Assets/
 
 | Godot 版已有 | Unity 版对应 | 难点 |
 |---|---|---|
-| 无边框透明窗口 + 置顶 | Win32 互操作（见 spike） | ⚠️ Unity 无原生支持，全项目第一风险 |
-| 像素 Alpha 鼠标检测 | Texture2D.GetPixel 命中测试 | 低 |
+| 无边框透明窗口 + 置顶 | ✅ UniWindowController v0.9.8（全 alpha，UPM 接入） | ~~高危~~ 已落地，待真机验收 |
+| 像素 Alpha 鼠标检测 | ✅ PetInput.AlphaHitTestCore（贴图 alpha 表）+ UniWinC 画面读回穿透 | 已完成 |
 | 系统托盘 | 需原生插件或托盘库 | 中 |
-| 拖拽 + 抛射物理 | Rigidbody2D + 拖拽力 | 低 |
-| 史莱姆着色器 | Shader Graph 重写 | 中 |
-| SVG 矢量渲染 | 预烘焙多分辨率 PNG | 低 |
+| 拖拽 + 抛射物理 | ✅ ThrowPhysics 纯逻辑 1:1 移植（非 Rigidbody2D，忠实 Godot 手写物理） | 已完成 |
+| 史莱姆着色器 | 已烘焙静态近似贴图；动态效果待 Shader Graph 重写 | 中 |
+| SVG 矢量渲染 | ✅ Inkscape 预烘焙 4x PNG（源 SVG 留 Art/Sources） | 已完成 |
 
 ## 下一步：48 小时 Spike（决定项目生死）
 
