@@ -4,10 +4,10 @@
 
 ## 当前状态
 
-**M0 骨架已初始化**。首次用 Unity Hub / 编辑器打开本目录即可，编辑器会自动生成 Library 并补全工程设置。
+**M0 骨架已初始化**。首次用 Unity Hub / 编辑器打开 `pirate-crew/` 子目录即可，编辑器会自动生成 Library 并补全工程设置。
 
 - 引擎：Unity 2022.3.62f1c1（已装于 `F:\Unity\2022.3.62f1c1`）
-- 打开方式：Unity Hub → Open → 选择 `transparent-pet-unity/` 目录
+- 打开方式：Unity Hub → Open → 选择 `transparent-pet-unity/transparent-pet/` 目录（工程本体子目录）
 
 ## 目录约定
 
