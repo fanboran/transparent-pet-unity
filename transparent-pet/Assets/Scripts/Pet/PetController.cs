@@ -67,7 +67,7 @@ namespace TransparentPet.Pet
 
         void HandleInput()
         {
-            var mouseScreen = (Vector2)Input.mousePosition;
+            var mouseScreen = MouseScreenPos();
 
             if (Input.GetMouseButtonDown(0) && IsOnPet(mouseScreen))
                 physics.DragBegin(mouseScreen, WorldToScreen(transform.position), NowMs());
@@ -79,7 +79,7 @@ namespace TransparentPet.Pet
         {
             if (physics.IsDragging)
             {
-                var screenPos = physics.DragMove((Vector2)Input.mousePosition, NowMs());
+                var screenPos = physics.DragMove(MouseScreenPos(), NowMs());
                 transform.position = ScreenToWorld(screenPos);
             }
             else if (physics.IsThrowing)
@@ -92,6 +92,17 @@ namespace TransparentPet.Pet
                     new Vector2(Screen.width, Screen.height), spriteSize, transform.lossyScale.x);
                 transform.position = ScreenToWorld(result.Position);
             }
+        }
+
+        /// <summary>
+        /// Unity 的 Input.mousePosition 原点在左下、Y 向上；
+        /// 本工程物理与转换层统一用 Godot 语义（左上原点、Y 向下），此处翻转 Y。
+        /// 漏掉这一步会导致拖动上下反向、且命中判定查到镜像位置（放下后再也抓不到）。
+        /// </summary>
+        static Vector2 MouseScreenPos()
+        {
+            var m = Input.mousePosition;
+            return new Vector2(m.x, Screen.height - m.y);
         }
 
         void SyncCameraToScreen()
