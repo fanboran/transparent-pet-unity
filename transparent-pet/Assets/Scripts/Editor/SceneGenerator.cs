@@ -63,6 +63,9 @@ namespace TransparentPet.EditorTools
             var spriteRenderer = petGo.AddComponent<SpriteRenderer>();
             spriteRenderer.sprite = AssetDatabase.LoadAssetAtPath<Sprite>(PetTexturePath);
             spriteRenderer.sortingOrder = 10;
+            // 贴图为 4x 烘焙（800×528），正交相机下精灵按贴图像素 1:1 显示；
+            // 缩放 0.25 使屏幕显示尺寸回到 Godot 版的 200×132
+            petGo.transform.localScale = new Vector3(0.25f, 0.25f, 1f);
             petGo.AddComponent<PetController>();
 
             // 窗口互操作：UniWinC 透明/置顶/穿透 + 本项目的任务栏隐藏

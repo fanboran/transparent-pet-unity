@@ -31,9 +31,38 @@ namespace TransparentPet.Pet
 
         void Update()
         {
+            // 安全网：spike 阶段窗口全屏置顶且无托盘/菜单，ESC 是唯一可靠的退出手段
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                Application.Quit();
+                return;
+            }
+
             SyncCameraToScreen();
             HandleInput();
             UpdatePhysics();
+            if (Time.frameCount % 60 == 0)
+                LogDiagnostics();
+        }
+
+        /// <summary>spike 排查用：把渲染链路关键状态写进 Player.log，定位"看不见史莱姆"用。</summary>
+        void LogDiagnostics()
+        {
+            try
+            {
+                var sprite = spriteRenderer ? spriteRenderer.sprite : null;
+                Debug.Log($"[PetDiag] screen={Screen.width}x{Screen.height}" +
+                    $" camOrtho={(mainCamera ? mainCamera.orthographicSize.ToString("0.##") : "null")}" +
+                    $" camPos={(mainCamera ? mainCamera.transform.position.ToString() : "null")}" +
+                    $" petPos={transform.position} petScale={transform.lossyScale.x}" +
+                    $" spriteNull={(sprite == null)}" +
+                    $" rendererEnabled={(spriteRenderer ? spriteRenderer.enabled.ToString() : "null")}" +
+                    $" visible={(spriteRenderer ? spriteRenderer.isVisible : false)}");
+            }
+            catch (System.Exception e)
+            {
+                Debug.Log("[PetDiag] 诊断本身出错: " + e.Message);
+            }
         }
 
         void HandleInput()
