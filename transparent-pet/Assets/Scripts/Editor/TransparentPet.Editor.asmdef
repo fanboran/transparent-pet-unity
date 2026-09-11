@@ -1,0 +1,12 @@
+{
+    "name": "TransparentPet.Editor",
+    "rootNamespace": "TransparentPet.EditorTools",
+    "references": [
+        "TransparentPet.Runtime",
+        "Kirurobo.UniWindowController"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "autoReferenced": true
+}
