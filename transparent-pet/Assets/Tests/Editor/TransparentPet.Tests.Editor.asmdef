@@ -1,0 +1,18 @@
+{
+    "name": "TransparentPet.Tests.Editor",
+    "rootNamespace": "TransparentPet.Tests",
+    "references": [
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner",
+        "TransparentPet.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ]
+}

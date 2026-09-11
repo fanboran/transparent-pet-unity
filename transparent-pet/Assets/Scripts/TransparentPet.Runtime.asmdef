@@ -1,0 +1,9 @@
+{
+    "name": "TransparentPet.Runtime",
+    "rootNamespace": "TransparentPet",
+    "references": [
+        "Kirurobo.UniWindowController"
+    ],
+    "includePlatforms": [],
+    "autoReferenced": true
+}

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 宠物贴图源文件：轮廓路径 1:1 取自 Godot 版 modules/pet/assets/pet_sprite.svg -->
+<!-- 配色近似 Godot 版 modules/display/shaders/slime.gdshader：
+     glass_color rgb(0.1,0.3,0.6)、边缘菲涅尔向 (0.9,0.95,1.0) 提亮、
+     中心更透明（alpha×(1-dist×0.6)）、高光位于中心偏右上 (0.15,-0.15) -->
+<!-- 运行时使用其 4x 烘焙产物 ../Pet/PetSlime.png (800x528, Inkscape 导出) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="132" viewBox="0 0 200 132">
+  <defs>
+    <radialGradient id="slimeBody" cx="50%" cy="46%" r="62%">
+      <stop offset="0%"   stop-color="#4A90D9" stop-opacity="0.55"/>
+      <stop offset="55%"  stop-color="#1E5AA8" stop-opacity="0.80"/>
+      <stop offset="85%"  stop-color="#1A4D9E" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#BFD9F2" stop-opacity="1.0"/>
+    </radialGradient>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+    <clipPath id="bodyClip">
+      <path d="M100 19.8 C150 19.8, 180 55, 180 88 C180 110, 165 121, 150 121 L50 121 C35 121, 20 110, 20 88 C20 55, 50 19.8, 100 19.8 Z"/>
+    </clipPath>
+  </defs>
+
+  <path d="M100 19.8 C150 19.8, 180 55, 180 88 C180 110, 165 121, 150 121 L50 121 C35 121, 20 110, 20 88 C20 55, 50 19.8, 100 19.8 Z"
+        fill="url(#slimeBody)"/>
+  <path d="M100 19.8 C150 19.8, 180 55, 180 88 C180 110, 165 121, 150 121 L50 121 C35 121, 20 110, 20 88 C20 55, 50 19.8, 100 19.8 Z"
+        fill="none" stroke="#9CC7F0" stroke-opacity="0.9" stroke-width="2.5"/>
+
+  <g clip-path="url(#bodyClip)">
+    <ellipse cx="130" cy="46" rx="18" ry="12" fill="#FFFFFF" fill-opacity="0.85" filter="url(#soft)"/>
+    <ellipse cx="70"  cy="108" rx="40" ry="8"  fill="#7FB3E8" fill-opacity="0.40" filter="url(#soft)"/>
+  </g>
+</svg>
