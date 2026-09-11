@@ -22,6 +22,7 @@
   ```
   退出码 0 = 工程可打开；非 0 先查输出里的 error 再处置。
 - 改进待办项记录在 `docs/待办事项.md`
+- **Unity MCP**：本工程已装 MCP for Unity（v10.0.0），ZCode 已配 `unity-mcp` server——Unity 编辑器打开本工程时，新会话的 AI 可直接用 manage_scene / manage_gameobject / manage_asset / read_console 工具操作编辑器（写完脚本先 read_console 查编译错误再用）；编辑器没开时这些工具不可用，改用 batchmode 验证
 
 ### 文档导航
 
