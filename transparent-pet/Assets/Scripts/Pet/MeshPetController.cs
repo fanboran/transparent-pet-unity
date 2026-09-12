@@ -1,10 +1,12 @@
 // ============================================================================
 // PetController.cs — PBF 史莱姆总控：输入、物理编排、配置联动
 // ============================================================================
-// 世界模型（用户拍板，尽量简单）：整个画面只有底部一个地面（Windows 工作区
-// 底边），重力常开——出生落下、拖拽松手落下、甩出抛射落下，最终都趴在地面
-// 上呈现自然受力的果冻姿态（PBF 密度约束=体积保持，压扁会横向变宽）。
-// hoverWhenIdle=true 可切回旧行为：落定即关重力原地悬浮（设置面板开关）。
+// 行为语义（对齐 Godot 原版 + 本轮观感锚定）：
+//   · 出生即开重力：从生成点自然落到工作区地面，压扁回弹后停成
+//     受重力影响的自然趴姿（PBF 密度约束 = 体积保持）
+//   · 平时悬浮（无重力）；甩出（松手速度 ≥ minSpeed）开启重力抛射
+//   · 轻放（速度不足）= 原地放下；抛射落定后回到悬浮
+//   · 拖拽 = PBF 控制器吸附（抓取点影响半径内粒子速度跟随 + 吸引）
 // ============================================================================
 using System;
 using TransparentPet.Core;
@@ -19,8 +21,8 @@ namespace TransparentPet.Pet
         /// <summary>正交相机缩放基准（1 世界单位 = 100 屏幕像素）</summary>
         public const float PixelsPerUnit = 100f;
 
-        /// <summary>静息轮廓半宽（px）：原版 SVG 路径宽 160px（x 20..180），半宽 80</summary>
-        const float BaseHalfWidth = 80f;
+        /// <summary>静息轮廓半宽（px）：Godot 原版 SVG 显示宽 ~176px（path 160×1.1）</summary>
+        const float BaseHalfWidth = 88f;
 
         const float MinUserScale = 0.25f;
         const float MaxUserScale = 2f;
@@ -32,17 +34,16 @@ namespace TransparentPet.Pet
         ThrowParams throwParams = new ThrowParams();
         Color bodyColor = new Color(0.1f, 0.3f, 0.6f);
         float userScale = 1f;
+        bool gravityOn; // 抛射进行中（出生下落也算）
 
-        // 重力语义（用户拍板）：默认常开——除被抓时外始终受重力，松手自然落下趴地。
-        // 每种行为语义 = 项目里的一个独立版本场景（Scenes/Versions/），不做运行时开关：
-        // hoverMode=true 的场景保留旧行为（落定即关重力原地悬浮），由场景生成器注入。
+        /// <summary>悬浮语义（V2）：落定即关重力原地漂浮——由场景生成器注入</summary>
         [SerializeField] bool hoverMode = false;
-        bool hoverSettled; // hover 模式专用：落定标记（抓住/甩出即复位）
+        bool hoverSettled;
 
         /// <summary>展厅注入的出生位置（屏像素）；null = 用配置/默认位置</summary>
         Vector2? spawnOverride;
 
-        /// <summary>是否把位置写回配置（展厅多只同屏时关掉，避免互相覆盖）</summary>
+        /// <summary>是否把位置写回配置（展厅多只同屏时关掉）</summary>
         bool persistPosition = true;
 
         // 位置自动保存（节流：移动 >5px 且距上次 ≥1s）
@@ -84,13 +85,14 @@ namespace TransparentPet.Pet
                     : new Vector2(width * 0.5f, ground * 0.5f));
 
             sim = new SlimePbfMesh(spawn, BaseHalfWidth * userScale);
+            gravityOn = true; // 出生下落：落定后自动回悬浮
             lastSavedScreenPos = spawn;
             nextSaveTime = Time.time + 1f;
         }
 
         void Update()
         {
-            // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段（顶层栈硬退，同托盘退出）
+            // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段
             if (Input.GetKeyDown(KeyCode.Escape))
             {
                 HardExit.Now();
@@ -99,15 +101,17 @@ namespace TransparentPet.Pet
 
             SyncCameraToScreen();
             var dt = Time.deltaTime;
+            var env = BuildEnvironment();
 
             HandleInput();
 
-            var env = BuildEnvironment();
             sim.StepFrame(dt, env);
-            // 旧行为版本专用：落定趴地后关重力悬浮；默认重力常开不需要
+            // 抛射落定（速度小且贴地）→ 回悬浮；拖拽中不判（抓住时本来就该跟随）
             if (hoverMode && !sim.IsGrabbed && !hoverSettled &&
                 sim.IsSettled && sim.IsNearGround(env.GroundY))
-                hoverSettled = true;
+                hoverSettled = true; // 落定即漂浮（V2）；抓住/甩出自动解除
+            if (gravityOn && !sim.IsGrabbed && sim.IsSettled && sim.IsNearGround(env.GroundY))
+                gravityOn = false;
 
             body.Push(sim, ScreenToWorld, bodyColor);
             SavePositionIfNeeded();
@@ -120,7 +124,7 @@ namespace TransparentPet.Pet
             var mouse = MouseScreenPos();
 
             if (Input.GetMouseButtonDown(0) && sim.TryGrab(mouse))
-                hoverSettled = false; // 抓住重新武装重力（hover 版本下放手会再落下）
+                gravityOn = false; // 抓住即悬浮（拖拽中不施重力）
 
             if (sim.IsGrabbed)
                 sim.MoveGrab(mouse, NowMs());
@@ -131,7 +135,7 @@ namespace TransparentPet.Pet
                     throwParams.minSpeed, throwParams.maxSpeed,
                     throwParams.multiplier, throwParams.enabled);
                 if (throwVel != Vector2.zero)
-                    hoverSettled = false; // 甩出重新进入抛射
+                    gravityOn = true; // 甩出 → 重力抛射；轻放 → 原地悬浮
             }
         }
 
@@ -149,23 +153,11 @@ namespace TransparentPet.Pet
         void OnThrowParamsChanged(ThrowParams p) => throwParams = p;
 
         // ── 展厅（多只同屏）外部注入 ──
-
-        /// <summary>注入出生位置（屏像素，左上原点）——多只同屏时必须各给各的位置</summary>
         public void SetSpawnOverride(Vector2 screenPos) => spawnOverride = screenPos;
-
-        /// <summary>关闭位置持久化（多只同屏时不写配置，避免互相覆盖）</summary>
         public void SetPersistPosition(bool persist) => persistPosition = persist;
-
-        /// <summary>直接应用角色配色（绕开 EventBus）</summary>
         public void ApplyCharacterDirect(string id) => bodyColor = CharacterRegistry.GetById(id).GlassColor;
-
-        /// <summary>当前质心屏幕位置（展厅标签绘制用）</summary>
         public Vector2 ScreenPosition => sim != null ? sim.Centroid : Vector2.zero;
-
-        /// <summary>是否悬浮语义（展厅据此识别"该悬停展示的那只"）</summary>
         public bool IsHoverMode => hoverMode;
-
-        /// <summary>展厅用：预置"已落定"，让悬浮版一出生就飘在空中（不先落地）</summary>
         public void SetSettledHover(bool settled) => hoverSettled = settled;
 
         // ── 环境/坐标工具 ──
@@ -174,8 +166,8 @@ namespace TransparentPet.Pet
         {
             BoundsWidth = NativeScreen.GetWorkAreaWidth(),
             GroundY = NativeScreen.GetWorkAreaBottomY(),
-            TopY = 0f, // 安全天花板：任何版本都不许飞出屏幕
-            GravityOn = !sim.IsGrabbed && (hoverMode ? !hoverSettled : true),
+            TopY = 0f, // 工作区顶：悬浮态也不许飞出屏幕
+            GravityOn = gravityOn && !(hoverMode && (hoverSettled || sim.IsGrabbed)),
             Gravity = throwParams.gravity,
         };
 

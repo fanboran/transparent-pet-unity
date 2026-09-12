@@ -18,22 +18,20 @@ namespace TransparentPet.Pet
     /// <summary>把 PBF 粒子团重建为表面 Mesh 数据（纯逻辑，可单测）。</summary>
     public static class DensitySurface
     {
-        /// <summary>等值面阈值：低于 ρ0 一半（iso 越低表面越往外扩到平滑低密度区，
-        /// 越远离最外层粒子排列——颗粒感消失；过高会贴着粒子层出现规律性坑洼）。</summary>
-        public const float IsoRatio = 0.36f;
+        /// <summary>等值面阈值：表面处密度约为 ρ0 的一半（半空间邻居缺失）。</summary>
+        public const float IsoRatio = 0.5f;
 
         /// <summary>覆盖度渐变带宽度（相对 ρ0）：决定边缘 AA 的空间宽度。</summary>
         public const float BandRatio = 0.22f;
 
-        /// <summary>场网格单元尺寸（px）：2.5px——4px 时等值线在格上量化出马赛克块，细一倍根治。</summary>
-        public const float CellSize = 2.5f;
+        /// <summary>场网格单元尺寸（px）：越小轮廓越细，4px 已无可见折角。</summary>
+        public const float CellSize = 4f;
 
         // 复用缓冲（单线程主循环使用；避免每帧 GC）
         static readonly List<Vector3> Vertices = new List<Vector3>(1024);
         static readonly List<Color> Colors = new List<Color>(1024);
         static readonly List<int> Triangles = new List<int>(3072);
         static float[] density;
-        static float[] blurBuf;
         static int gridW, gridH;
         static Vector2 gridMin;
 
@@ -99,37 +97,6 @@ namespace TransparentPet.Pet
                         density[gy * gridW + gx] += poly6 * t * t * t;
                     }
                 }
-            }
-
-            // ── 2.5 密度场 5×5 盒模糊 ×2（Unity_Slime 的 GridBlurJob 降维）──
-            //       平滑窗 ~12.5px×2 道 ≈ 有效 σ10px：盖过粒子间距 9px 的排布噪声，
-            //       等值面脱离粒子层，轮廓才圆滑对称 ──
-            if (blurBuf == null || blurBuf.Length < gridW * gridH)
-                blurBuf = new float[gridW * gridH];
-            for (var pass = 0; pass < 2; pass++)
-            {
-                for (var gy = 0; gy < gridH; gy++)
-                {
-                    for (var gx = 0; gx < gridW; gx++)
-                    {
-                        var sum = 0f;
-                        var n = 0;
-                        for (var dy = -2; dy <= 2; dy++)
-                        {
-                            var yy = gy + dy;
-                            if (yy < 0 || yy >= gridH) continue;
-                            for (var dx = -2; dx <= 2; dx++)
-                            {
-                                var xx = gx + dx;
-                                if (xx < 0 || xx >= gridW) continue;
-                                sum += density[yy * gridW + xx];
-                                n++;
-                            }
-                        }
-                        blurBuf[gy * gridW + gx] = sum / n;
-                    }
-                }
-                System.Array.Copy(blurBuf, density, gridW * gridH);
             }
 
             // ── 3. Marching Squares ──

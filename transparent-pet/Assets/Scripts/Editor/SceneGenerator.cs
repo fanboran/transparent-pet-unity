@@ -257,11 +257,11 @@ namespace TransparentPet.EditorTools
         /// </summary>
         static readonly (PetKind kind, bool hoverMode, string label)[] GalleryPets =
         {
-            // V2 = 第一个流体物理版本（PBF + 等值线 mesh）：漂浮、拉扯会断裂成块
+            // 同屏只放一只重负载：V2 的等值线是 CPU 逐帧重建、V3 的 metaball 是逐像素渲染，
+            // 两只叠加会在全屏透明窗口上明显掉帧（实测反馈），故只保留 V2
             (PetKind.PbfMesh,    true,  "V2 · 第一个流体版（PBF + 等值线渲染 · 漂浮 · 会碎成块）"),
             (PetKind.SvgLife,    false, "V7 · 生命感（呼吸 / 倾斜 / 落地挤压）"),
             (PetKind.SvgClassic, false, "V5 · 玻璃着色器 Slime.shader"),
-            (PetKind.Pbf,        false, "V3 · PBF 流体（metaball 渲染 · 重力落地）"),
         };
 
         [MenuItem("TransparentPet/生成展厅场景（各版本同屏）")]
