@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using Kirurobo;
 using UnityEngine;
@@ -36,8 +37,9 @@ namespace TransparentPet.Core
             window.opacityThreshold = OpacityThreshold;
 
 #if !UNITY_EDITOR
-            // 托盘：全屏无边框窗口的"方便关闭"出口（编辑器下跳过）
-            tray = new NativeTray("透明宠物 · 右键退出", () => Application.Quit());
+            // 托盘：全屏无边框窗口的"方便关闭"出口（编辑器下跳过）。
+            // 硬退而非 Application.Quit：托盘菜单的 Win32 模态循环里 Quit 请求可能不被处理
+            tray = new NativeTray("透明宠物 · 右键退出", () => Environment.Exit(0));
 #endif
             StartCoroutine(HideFromTaskbarWhenReady());
         }

@@ -219,7 +219,11 @@ namespace TransparentPet.Core
             PostMessageW(hWnd, WM_NULL, IntPtr.Zero, IntPtr.Zero);
 
             if (cmd == MENU_ID_EXIT)
+            {
+                // 先摘图标再退：Application.Quit 从窗口过程深栈调用不可靠，进程不退图标就悬空
+                self.Dispose();
                 self.onExit?.Invoke();
+            }
         }
 
         [DllImport("user32.dll")]
