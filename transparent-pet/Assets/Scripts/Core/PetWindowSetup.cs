@@ -58,9 +58,8 @@ namespace TransparentPet.Core
 
 #if !UNITY_EDITOR
             // 托盘：全屏无边框窗口的控制出口（编辑器下跳过）。
-            // "退出"直接 KillNow（TerminateProcess 内核级强杀，嵌套模态循环也
-            // 拦不住——Environment.Exit 在部分环境会被运行时吞掉导致赖死）；
-            // 调用方先 Dispose 托盘图标，图标不悬空
+            // 菜单动作由 NativeTray 排队后在 Pump 顶层执行（不在窗口过程里做），
+            // "退出"先点 HardExit 的延迟强杀引信再摘图标，见 ExitFromTray
             tray = new NativeTray("透明宠物", new[]
             {
                 new TrayMenuItem("设置", () => EventBus.Publish(EventTopics.SettingsPanelToggleRequested, true)),
@@ -103,9 +102,9 @@ namespace TransparentPet.Core
         }
 
         /// <summary>
-        /// 整窗穿透：指针压在任意宠物不透明区域上 → 可交互；否则穿透到桌面。
-        /// 等价于原 UniWinC 的 Opacity 判定（本工程只画宠物），但不做每帧读屏回读；
-        /// 只在状态真正翻转时才改窗口样式，避免全屏窗口反复改 EX 样式引起合成抖动。
+        /// 整窗穿透：指针压在宠物不透明区域或设置面板上 → 可交互；否则穿透到桌面。
+        /// 判定输入来自各绘制方自报（见 PointerHover），不再每帧读屏回读；
+        /// 只在状态真正翻转时才改窗口 EX 样式，避免全屏窗口反复改样式引起合成抖动。
         /// </summary>
         void UpdateClickThrough()
         {
