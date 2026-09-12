@@ -6,28 +6,58 @@ namespace TransparentPet.UI
 {
     /// <summary>
     /// 角色切换提示 HUD：屏幕中上显示角色名，停留 2 秒后淡出。
+    /// 兼首次启动引导：配置里未标记 introShown 时显示一次玩法提示（拖拽/抛掷/托盘）。
     /// 与 SettingsPanel 同理走 IMGUI——绘制内容自带 alpha，落在文字上时
     /// UniWinC 按像素命中判为可交互区；淡出时 alpha 下降，穿透状态自然恢复。
     /// </summary>
     public class HudController : MonoBehaviour
     {
-        const float HoldSeconds = 2f;   // 全不透明停留时长
-        const float FadeSeconds = 0.5f; // 淡出时长
+        const float DefaultHoldSeconds = 2f; // 普通提示（角色名）的停留时长
+        const float FadeSeconds = 0.5f;      // 淡出时长
 
-        string text;       // 当前提示文本（null = 无内容，OnGUI 早退）
-        float elapsed;     // 本次显示已持续秒数
-        GUIStyle hudStyle; // 懒创建：GUIStyle 依赖 GUI.skin，只能在 OnGUI 期间构造
+        /// <summary>首次启动引导（一行内显示，字号 22 下约 700px）</summary>
+        const string IntroTip = "按住我拖动 · 甩出去试试 · 托盘右键菜单可设置 / 退出";
+
+        /// <summary>引导展示时长（秒）：比普通提示长，确保用户看清</summary>
+        const float IntroHoldSeconds = 4f;
+
+        const int FontSize = 22;
+
+        string text;        // 当前提示文本（null = 无内容，OnGUI 早退）
+        float elapsed;      // 本次显示已持续秒数
+        float holdSeconds = DefaultHoldSeconds; // 本条提示的停留时长
+        GUIStyle hudStyle;  // 懒创建：GUIStyle 依赖 GUI.skin，只能在 OnGUI 期间构造
 
         void OnEnable() => EventBus.Subscribe<string>(EventTopics.CharacterChanged, OnCharacterChanged);
 
         void OnDisable() => EventBus.Unsubscribe<string>(EventTopics.CharacterChanged, OnCharacterChanged);
+
+        void Start()
+        {
+            // 首次启动引导：只出现一次（写盘标记），之后启动即是安静的宠物
+            var config = PetConfigStore.Load();
+            if (config.introShown)
+                return;
+
+            ShowTip(IntroTip, IntroHoldSeconds);
+            config.introShown = true;
+            PetConfigStore.Save(config);
+        }
+
+        /// <summary>显示一条居中提示（停留后淡出）；重复调用会重置计时，供引导/事件复用。</summary>
+        public void ShowTip(string tip, float hold = DefaultHoldSeconds)
+        {
+            text = tip;
+            elapsed = 0f;
+            holdSeconds = hold;
+        }
 
         void Update()
         {
             if (text == null)
                 return;
             elapsed += Time.deltaTime;
-            if (elapsed >= HoldSeconds + FadeSeconds)
+            if (elapsed >= holdSeconds + FadeSeconds)
                 text = null; // 播完即清
         }
 
@@ -35,8 +65,7 @@ namespace TransparentPet.UI
         void OnCharacterChanged(string characterId)
         {
             var preset = CharacterRegistry.GetById(characterId);
-            text = preset != null ? preset.DisplayName : characterId;
-            elapsed = 0f;
+            ShowTip(preset != null ? preset.DisplayName : characterId);
         }
 
         void OnGUI()
@@ -45,7 +74,7 @@ namespace TransparentPet.UI
                 return;
 
             // 停留期全不透明，之后线性淡出
-            var alpha = elapsed <= HoldSeconds ? 1f : 1f - (elapsed - HoldSeconds) / FadeSeconds;
+            var alpha = elapsed <= holdSeconds ? 1f : 1f - (elapsed - holdSeconds) / FadeSeconds;
             if (alpha <= 0f)
                 return;
 
@@ -54,7 +83,7 @@ namespace TransparentPet.UI
                 hudStyle = new GUIStyle(GUI.skin.label)
                 {
                     alignment = TextAnchor.MiddleCenter,
-                    fontSize = 26,
+                    fontSize = FontSize,
                     fontStyle = FontStyle.Bold,
                 };
             }

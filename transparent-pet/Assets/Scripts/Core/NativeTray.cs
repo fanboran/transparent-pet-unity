@@ -127,6 +127,9 @@ namespace TransparentPet.Core
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         static extern IntPtr LoadIconW(IntPtr instance, IntPtr iconName);
 
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern IntPtr LoadImageW(IntPtr instance, IntPtr name, uint type, int cx, int cy, uint loadFlags);
+
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
         static extern bool Shell_NotifyIconW(uint message, ref NOTIFYICONDATAW data);
 
@@ -196,7 +199,7 @@ namespace TransparentPet.Core
                     uID = 1,
                     uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP,
                     uCallbackMessage = WM_APP_TRAY,
-                    hIcon = LoadIconW(IntPtr.Zero, (IntPtr)IDI_APPLICATION),
+                    hIcon = ResolveTrayIcon(),
                     szTip = tip,
                 };
                 Shell_NotifyIconW(NIM_ADD, ref nid);
@@ -205,6 +208,30 @@ namespace TransparentPet.Core
             {
                 // 托盘创建失败不阻断主流程（spike 阶段仍有 ESC 兜底）
             }
+        }
+
+        /// <summary>
+        /// 托盘图标：优先取 exe 内嵌的应用图标（PlayerSettings 里设的 AppIcon，
+        /// 标准资源 ID 为 1；LR_SHARED 由系统托管、无需释放），失败回退系统默认图标——
+        /// 托盘是退出/设置的唯一入口，绝不因图标缺失而中断。
+        /// </summary>
+        static IntPtr ResolveTrayIcon()
+        {
+            try
+            {
+                const uint IMAGE_ICON = 1;
+                const uint LR_DEFAULTSIZE = 0x40;
+                const uint LR_SHARED = 0x8000;
+                var hIcon = LoadImageW(GetModuleHandleW(null), (IntPtr)1, IMAGE_ICON, 0, 0,
+                    LR_DEFAULTSIZE | LR_SHARED);
+                if (hIcon != IntPtr.Zero)
+                    return hIcon;
+            }
+            catch
+            {
+                // 落到回退分支
+            }
+            return LoadIconW(IntPtr.Zero, (IntPtr)IDI_APPLICATION);
         }
 
         /// <summary>每帧抽干消息窗口队列；由 PetWindowSetup.Update 调用。</summary>

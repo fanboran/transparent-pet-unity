@@ -43,6 +43,9 @@ namespace TransparentPet.Pet
         public Vector2 ThrowVelocity => throwVelocity;
         public int VelocitySampleCount => velocityBuffer.Count;
 
+        /// <summary>最近一帧的拖拽速度（px/s，DragMove 计算的原值、不含倍率）——表现层倾斜角用</summary>
+        public Vector2 LastFrameVelocity { get; private set; }
+
         /// <summary>左键按在宠物上：记录抓取偏移并清空速度缓冲（对应 handle_area_input_event 按下分支）</summary>
         public void DragBegin(Vector2 mousePos, Vector2 spritePos, double timeMs)
         {
@@ -52,6 +55,7 @@ namespace TransparentPet.Pet
             IsDragging = true;
             IsThrowing = false;
             throwVelocity = Vector2.zero;
+            LastFrameVelocity = Vector2.zero;
             lastMousePos = mousePos;
             lastFrameTimeMs = timeMs;
             velocityBuffer.Clear();
@@ -66,6 +70,7 @@ namespace TransparentPet.Pet
             if (timeDelta > 0)
             {
                 var frameVelocity = (mousePos - lastMousePos) / (float)(timeDelta / 1000.0);
+                LastFrameVelocity = frameVelocity;
                 velocityBuffer.Enqueue(frameVelocity);
                 while (velocityBuffer.Count > VelocityBufferSize)
                     velocityBuffer.Dequeue();
@@ -177,6 +182,7 @@ namespace TransparentPet.Pet
             IsDragging = false;
             IsThrowing = false;
             throwVelocity = Vector2.zero;
+            LastFrameVelocity = Vector2.zero;
             velocityBuffer.Clear();
         }
     }

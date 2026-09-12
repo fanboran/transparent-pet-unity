@@ -13,7 +13,7 @@ namespace TransparentPet.EditorTools
     public static class BuildPlayer
     {
         /// <summary>交付默认版本（构建设置 index 0）；体验其他保留版本改此路径（见 SceneGenerator.Versions）。</summary>
-        const string ScenePath = "Assets/Scenes/Versions/V6BakedTexture/PetScene.unity";
+        const string ScenePath = "Assets/Scenes/Versions/V7LifeVisual/PetScene.unity";
 
         public static void BuildWindows64()
         {
@@ -29,6 +29,9 @@ namespace TransparentPet.EditorTools
 
             if (report.summary.result != BuildResult.Succeeded)
                 throw new System.Exception("[BuildPlayer] 构建失败: " + report.summary.result);
+
+            // 构建后注入应用图标（Unity 的 PlayerSettings 图标设置在 batchmode 下不落盘）
+            AppIconSetup.InjectIntoExe(outputPath);
 
             Debug.Log("[BuildPlayer] 构建成功: " + report.summary.outputPath);
         }

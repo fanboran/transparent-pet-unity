@@ -49,6 +49,9 @@ namespace TransparentPet.Core
 
         /// <summary>宠物屏幕像素 Y 坐标（左上原点），-1 表示从未保存过位置</summary>
         public float petScreenY = -1f;
+
+        /// <summary>是否已展示过首次启动引导（HUD 提示只出现一次）</summary>
+        public bool introShown = false;
     }
 
     /// <summary>

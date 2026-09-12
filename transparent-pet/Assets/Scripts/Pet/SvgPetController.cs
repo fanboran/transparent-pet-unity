@@ -1,9 +1,14 @@
 // ============================================================================
-// SvgPetController.cs — V5 纯 SVG 经典版控制器（用户拍板：无任何软体物理）
+// SvgPetController.cs — 贴图精灵版控制器（V5/V6/V7 共用；用户拍板：无任何软体物理）
 // ============================================================================
 // 贴图精灵 + Godot 原版拖拽/抛射语义（ThrowPhysics 1:1 移植 drag_controller.gd）：
 // 拖拽=贴图跟随鼠标；快甩松手=刚体抛物线落到工作区底边；轻放=原地停住。
 // 与 PBF 存档版本（V2/V3 场景用的 PetController）并存，类名区分互不干扰。
+//
+// 【逻辑位置 vs 渲染位置】本类维护 logicScreenPos 作为位置唯一真值——物理积分、
+// 持久化、表现层基准全用它；transform 每帧写入其映射（不含生命感装饰）。可选的
+// PetLifeVisual 表现层在 LateUpdate 里叠加呼吸/挤压/倾角后接管最终变换。
+// 物理永不读 transform：视觉偏移不会污染模拟（装饰量累积是这类分层的经典坑）。
 // ============================================================================
 using System;
 using AlphaHit = TransparentPet.PetInput.AlphaHitTestCore;
@@ -31,15 +36,53 @@ namespace TransparentPet.Pet
         const float MinUserScale = 0.25f;
         const float MaxUserScale = 2f;
 
+        /// <summary>"戳"判定阈值：按下到抬起位移 ≤ 6px 且时长 ≤ 0.35s（否则算拖拽/抛射）</summary>
+        const float TapMaxMovePx = 6f;
+        const float TapMaxSeconds = 0.35f;
+
         Camera mainCamera;
         SpriteRenderer spriteRenderer;
         AlphaHit hitTest;
+        PetLifeVisual lifeVisual;
         readonly ThrowPhysics physics = new ThrowPhysics();
         MaterialPropertyBlock materialBlock;
+
+        float userScale = 1f;
+
+        /// <summary>屏幕像素逻辑位置（左上原点、Y 向下）——位置唯一真值（见文件头说明）</summary>
+        Vector2 logicScreenPos;
+
+        Vector2 dragStartMouse;
+        float dragStartTime;
+        float prevVerticalVelocity; // 触地前一刻的垂直速度：落地冲击强度的来源
+        bool onGround;
 
         // 位置自动保存（节流：移动超阈值且距上次保存 ≥1s 才落盘，硬退出也不丢位置）
         Vector2 lastSavedScreenPos;
         float nextSaveTime;
+
+        // ── 表现层（PetLifeVisual）读取的公开状态 ──
+
+        /// <summary>逻辑屏幕位置（不含生命感装饰；表现层据此计算最终渲染变换）</summary>
+        public Vector2 LogicScreenPos => logicScreenPos;
+
+        /// <summary>基准缩放（贴图尺寸 × 用户缩放）；表现层的呼吸/挤压在此之上叠加</summary>
+        public float BaseScaleValue => BaseScale * Mathf.Clamp(userScale, MinUserScale, MaxUserScale);
+
+        public bool IsDragging => physics.IsDragging;
+        public bool IsThrowing => physics.IsThrowing;
+
+        /// <summary>拖拽中的水平速度（px/s，屏幕坐标），表现层据此算倾斜角</summary>
+        public float DragVelocityX => physics.LastFrameVelocity.x;
+
+        /// <summary>本帧刚触地（飞行 → 着地的上升沿；Update 开头清零，供 LateUpdate 的表现层读取）</summary>
+        public bool JustLanded { get; private set; }
+
+        /// <summary>触地前一刻的垂直速度绝对值（px/s），表现层据此定挤压幅度</summary>
+        public float LandingImpact { get; private set; }
+
+        /// <summary>本帧被"戳"（点击未拖动；Update 开头清零，供 LateUpdate 的表现层读取）</summary>
+        public bool Tapped { get; private set; }
 
         void OnEnable()
         {
@@ -58,6 +101,7 @@ namespace TransparentPet.Pet
         void Start()
         {
             spriteRenderer = GetComponent<SpriteRenderer>();
+            lifeVisual = GetComponent<PetLifeVisual>(); // 可选：存在则最终变换（缩放/旋转/位置）由表现层接管
             materialBlock = new MaterialPropertyBlock();
             hitTest = BuildHitTest(spriteRenderer.sprite);
             SyncCameraToScreen();
@@ -66,20 +110,25 @@ namespace TransparentPet.Pet
             var config = PetConfigStore.Load();
             ApplyThrowParams(config.throwParams);
             ApplyCharacter(config.characterId);
-            transform.localScale = Vector3.one * (BaseScale * Mathf.Clamp(config.petScale, MinUserScale, MaxUserScale));
+            userScale = Mathf.Clamp(config.petScale, MinUserScale, MaxUserScale);
+            ApplyScaleIfStandalone();
 
             // 初始位置：保存过的位置优先，否则屏幕中央（对应 Godot 版 center_sprite）
-            var spawn = config.petScreenX >= 0f
+            logicScreenPos = config.petScreenX >= 0f
                 ? new Vector2(config.petScreenX, config.petScreenY)
                 : new Vector2(NativeScreen.GetWorkAreaWidth() * 0.5f,
                               NativeScreen.GetWorkAreaBottomY() * 0.5f);
-            transform.position = ScreenToWorld(spawn);
-            lastSavedScreenPos = spawn;
+            transform.position = ScreenToWorld(logicScreenPos);
+            lastSavedScreenPos = logicScreenPos;
             nextSaveTime = Time.time + 1f;
         }
 
         void Update()
         {
+            // 单帧标志先清零（上一帧的 LateUpdate 已消费完毕）
+            JustLanded = false;
+            Tapped = false;
+
             // 安全网退出：与托盘"退出"同一条 HardExit 链路
             if (Input.GetKeyDown(KeyCode.Escape))
             {
@@ -90,6 +139,10 @@ namespace TransparentPet.Pet
             SyncCameraToScreen();
             HandleInput();
             UpdatePhysics();
+
+            // 写逻辑位置映射；存在表现层时它会在 LateUpdate 覆盖为带生命感装饰的最终变换
+            transform.position = ScreenToWorld(logicScreenPos);
+
             SavePositionIfNeeded();
             if (Time.frameCount % 60 == 0)
                 LogDiagnostics();
@@ -97,12 +150,22 @@ namespace TransparentPet.Pet
 
         // ── EventBus 处理器（SettingsPanel 发布 → 此处应用）──
 
-        void OnScaleChanged(float scale) =>
-            transform.localScale = Vector3.one * (BaseScale * Mathf.Clamp(scale, MinUserScale, MaxUserScale));
+        void OnScaleChanged(float scale)
+        {
+            userScale = scale;
+            ApplyScaleIfStandalone();
+        }
 
         void OnCharacterChanged(string id) => ApplyCharacter(id);
 
         void OnThrowParamsChanged(ThrowParams p) => ApplyThrowParams(p);
+
+        /// <summary>无表现层时自管缩放；有表现层时由它每帧写 transform（基准 × 呼吸 × 挤压）</summary>
+        void ApplyScaleIfStandalone()
+        {
+            if (lifeVisual == null)
+                transform.localScale = Vector3.one * BaseScaleValue;
+        }
 
         void ApplyCharacter(string id)
         {
@@ -127,16 +190,15 @@ namespace TransparentPet.Pet
             if (Time.time < nextSaveTime)
                 return;
 
-            var screenPos = WorldToScreen(transform.position);
-            if ((screenPos - lastSavedScreenPos).sqrMagnitude < 25f) // 移动小于 5px 不存
+            if ((logicScreenPos - lastSavedScreenPos).sqrMagnitude < 25f) // 移动小于 5px 不存
                 return;
 
             // Load-modify-Save：只动位置字段，其余字段以磁盘/设置面板的最新值为准
             var config = PetConfigStore.Load();
-            config.petScreenX = screenPos.x;
-            config.petScreenY = screenPos.y;
+            config.petScreenX = logicScreenPos.x;
+            config.petScreenY = logicScreenPos.y;
             PetConfigStore.Save(config);
-            lastSavedScreenPos = screenPos;
+            lastSavedScreenPos = logicScreenPos;
             nextSaveTime = Time.time + 1f;
         }
 
@@ -149,7 +211,7 @@ namespace TransparentPet.Pet
                 Debug.Log($"[PetDiag] screen={Screen.width}x{Screen.height}" +
                     $" camOrtho={(mainCamera ? mainCamera.orthographicSize.ToString("0.##") : "null")}" +
                     $" camPos={(mainCamera ? mainCamera.transform.position.ToString() : "null")}" +
-                    $" petPos={transform.position} petScale={transform.lossyScale.x}" +
+                    $" logicPos={logicScreenPos} petPos={transform.position} petScale={transform.lossyScale.x}" +
                     $" spriteNull={(sprite == null)}" +
                     $" rendererEnabled={(spriteRenderer ? spriteRenderer.enabled.ToString() : "null")}" +
                     $" visible={(spriteRenderer ? spriteRenderer.isVisible : false)}");
@@ -165,29 +227,53 @@ namespace TransparentPet.Pet
             var mouseScreen = MouseScreenPos();
 
             if (Input.GetMouseButtonDown(0) && IsOnPet(mouseScreen))
-                physics.DragBegin(mouseScreen, WorldToScreen(transform.position), NowMs());
+            {
+                physics.DragBegin(mouseScreen, logicScreenPos, NowMs());
+                dragStartMouse = mouseScreen;
+                dragStartTime = Time.time;
+            }
+
             if (Input.GetMouseButtonUp(0))
+            {
+                var wasDragging = physics.IsDragging;
                 physics.DragEnd();
+
+                // 戳 = 按下后未拖动（未抛出 + 位移与时长都在阈值内）
+                if (wasDragging && !physics.IsThrowing
+                    && (MouseScreenPos() - dragStartMouse).magnitude <= TapMaxMovePx
+                    && Time.time - dragStartTime <= TapMaxSeconds)
+                    Tapped = true;
+            }
         }
 
         void UpdatePhysics()
         {
             if (physics.IsDragging)
             {
-                var screenPos = physics.DragMove(MouseScreenPos(), NowMs());
-                transform.position = ScreenToWorld(screenPos);
+                logicScreenPos = physics.DragMove(MouseScreenPos(), NowMs());
+                prevVerticalVelocity = 0f;
             }
             else if (physics.IsThrowing)
             {
                 var spriteSize = new Vector2(
                     spriteRenderer.sprite.texture.width,
                     spriteRenderer.sprite.texture.height);
-                // "屏幕"即 Windows 工作区（扣任务栏）：地面=工作区底边，落底可再抓
+                // "屏幕"即 Windows 工作区（扣任务栏）：地面=工作区底边，落底可再抓。
+                // 碰撞尺寸用基准缩放而非 transform.lossyScale——后者带生命感变形，会污染物理
+                var wasOnGround = onGround;
                 var result = physics.Step(
-                    WorldToScreen(transform.position), Time.deltaTime,
+                    logicScreenPos, Time.deltaTime,
                     new Vector2(NativeScreen.GetWorkAreaWidth(), NativeScreen.GetWorkAreaBottomY()),
-                    spriteSize, transform.lossyScale.x);
-                transform.position = ScreenToWorld(result.Position);
+                    spriteSize, BaseScaleValue);
+                logicScreenPos = result.Position;
+                onGround = result.HitGround;
+
+                if (result.HitGround && !wasOnGround)
+                {
+                    JustLanded = true;
+                    LandingImpact = Mathf.Abs(prevVerticalVelocity);
+                }
+                prevVerticalVelocity = result.Velocity.y;
             }
         }
 
@@ -233,6 +319,8 @@ namespace TransparentPet.Pet
             if (hitTest == null || spriteRenderer == null || spriteRenderer.sprite == null)
                 return false;
 
+            // 基于 transform（含表现层变形）的逆变换 = 所见即所点：
+            // 鼠标落在屏幕上被压扁/倾斜过的轮廓上时，反查到的正是对应源像素
             var local = transform.InverseTransformPoint(ScreenToWorld(mouseScreen));
             var boundsSize = spriteRenderer.sprite.bounds.size;
             return AlphaHit.TryWorldToPixel(local, boundsSize, hitTest.Width, hitTest.Height, out var pixelX, out var pixelY)

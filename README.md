@@ -1,35 +1,80 @@
-# 透明宠物 Unity 版（TransparentPet.Unity）
+# 透明宠物 · TransparentPet（Unity）
 
-> Godot 版（`../game/transparent-pet/`）的 Unity 2022.3 重制，独立仓库。目的：验证同一套桌宠玩法在 Unity 管线下的可行性，产出可写进简历的 Unity 实战项目。
+> 一张贴在桌面上的“活”史莱姆：透明置顶窗口、像素级点击穿透、拖拽抛掷物理、呼吸与挤压的生命感。
+> Unity 2022.3 重制版，是 Godot 4 桌宠原版（Project Astra）的引擎迁移实践——玩法规则不变，实现全部重写。
 
-## 当前状态
+![拖拽抛掷演示](docs/images/throw.gif)
 
-**软体重构完成（Subagent 并行开发）**：贴图+刚体方案整体升级为 **Verlet 粒子环 + 面积压力软体模拟**（Q 弹/压扁回弹/甩动拉伸由物理自然涌现）+ **全程序化液态玻璃着色器**（fwidth 抗锯齿、伪 3D 打光、色散伪折射、会眨眼看方向的眼睛），外加撞墙分裂/飘回融合玩法。透明窗口/穿透/设置面板/多角色/持久化/托盘/开机自启齐备。27 项单元测试全过。验收 exe 在 `F:/Downloads/PetSpike/`，开发迭代节奏见 [docs/待办事项.md](docs/待办事项.md)。
+![静息](docs/images/hero.png)
 
-- 引擎：Unity 2022.3.62f1c1（已装于 `F:\Unity\2022.3.62f1c1`）
-- 打开方式：Unity Hub → Open → 选择 `transparent-pet-unity/transparent-pet/` 目录（工程本体子目录）
+## 玩法
 
-## 目录约定
+- 常驻桌面：背景全透明、始终置顶、不抢焦点，鼠标落在宠物身上才可交互（像素级 alpha 命中），其余区域直接穿透到桌面
+- 拖拽抛掷：按住拖动，快甩松手走抛物线；落在任务栏上沿回弹、左右撞墙反弹
+- 生命感：静息时呼吸起伏，被拖动时身体向运动方向倾斜，落地按冲击速度压扁再弹回，戳一下会弹
+- 托盘菜单：设置（缩放 / 角色配色 / 抛射参数 / 置顶 / 开机自启）与退出
+- 位置记忆：退出前的位置自动落盘，下次启动回到原地
+
+![呼吸](docs/images/breathe.gif)
+
+## 技术亮点
+
+| 模块 | 说明 |
+|---|---|
+| Win32 窗口互操作（`Core/`） | 透明 / 置顶 / 点击穿透（UniWinC 接入）；`SPI_GETWORKAREA` 工作区地面（自动扣除任务栏，落底不吃点击）；`Shell_NotifyIcon` 托盘 + 隐藏消息窗口 + 手写消息泵；托盘图标由 `LoadImageW` 从 exe 资源提取；注册表开机自启；JSON 配置持久化 |
+| 交互物理（`Pet/ThrowPhysics`） | 从 Godot 版 `drag_controller.gd` 逐行移植：拖拽速度滑动窗口 → 抛射初速（夹上下限）、重力、地面/墙壁反弹、接地摩擦；纯 C# 无场景依赖，NUnit 可直接实例化测试 |
+| 生命感表现（`Pet/PetLifeMath`+`PetLifeVisual`） | 逻辑位置与渲染变换分层：物理只读写逻辑位置，表现层在 `LateUpdate` 叠加呼吸/倾角/挤压——视觉装饰永不污染模拟；落地挤压用半隐式欧拉弹簧（欠阻尼 ζ≈0.27，1~2 次回弹过冲即“Q 弹”来源）；同一套数学被离线快照工具复用，保证“演示图 = 真实行为” |
+| 工程化 | 场景程序化生成（`SceneGenerator`）：不手写场景 YAML，克隆工程一条命令复原全部场景与图标；六个历史版本场景存档（`Assets/Scenes/Versions/`，index 0 = 交付默认）；**62 项 NUnit 测试**（物理/命中/软体/配置/事件总线/表现数学） |
+
+## 快速开始
+
+**直接体验（Windows）**：运行 `Builds/PetSpike.exe`（无窗口、进托盘，右键托盘图标可设置/退出）。
+
+**从源码构建**：
+
+```bash
+# 生成全部版本场景 + 应用图标（克隆后首次必需）
+"F:/Unity/2022.3.62f1c1/Editor/Unity.exe" -batchmode -quit \
+  -projectPath "transparent-pet" \
+  -executeMethod TransparentPet.EditorTools.SceneGenerator.GenerateAll
+
+# 构建 Windows x64（输出 transparent-pet/Builds/PetSpike.exe）
+"F:/Unity/2022.3.62f1c1/Editor/Unity.exe" -batchmode -quit \
+  -projectPath "transparent-pet" \
+  -executeMethod TransparentPet.EditorTools.BuildPlayer.BuildWindows64
+```
+
+编辑器内体验：Unity Hub 打开 `transparent-pet/`，打开 `Assets/Scenes/Versions/V7LifeVisual/PetScene.unity` 直接 Play（透明/穿透行为需在构建产物中验证）。
+
+## 项目结构
 
 ```
-Assets/
+transparent-pet/Assets/
 ├── Scripts/
-│   ├── Core/        # 透明窗口、置顶、点击穿透、工作区查询等 Win32 互操作 + 事件总线 + 配置
-│   ├── Pet/         # 软体物理模拟（SlimeSimulation）、动态 Mesh 渲染（SlimeBody）、行为编排（PetController）
-│   └── UI/          # 设置面板、HUD、系统托盘
-├── Scenes/          # 主场景（SceneGenerator 程序化生成）
-├── Art/Shaders/     # SlimeLiquid.shader（全程序化液态玻璃，无贴图）
-└── Tests/           # NUnit 测试（软体模拟/事件总线/配置）
+│   ├── Core/    # Win32 互操作（透明/托盘/工作区/自启）+ 事件总线 + 配置持久化
+│   ├── Pet/     # 拖拽抛射物理、生命感表现、PBF 软体（存档版）、角色注册表
+│   ├── UI/      # 设置面板、HUD 提示
+│   └── Editor/  # 场景生成、构建入口、门面图渲染、图标装配
+├── Art/         # 贴图（PetSlime）、着色器、应用图标
+├── Scenes/Versions/  # 版本场景存档（一版本一目录）
+└── Tests/       # NUnit 测试
+tools/           # 图标生成 / GIF 合成脚本（Python + Pillow）
 ```
 
-## 技术对标（Godot 版功能清单 + 软体升级）
+## 版本存档（`Assets/Scenes/Versions/`）
 
-| Godot 版已有 | Unity 版对应 | 状态 |
-|---|---|---|
-| 无边框透明窗口 + 置顶 | UniWindowController v0.9.8（全 alpha，UPM 接入） | ✅ 已落地 |
-| 像素 Alpha 鼠标检测 | 软体多边形几何命中（模拟轮廓点包含测试）+ UniWinC 画面读回穿透 | ✅ 已升级 |
-| 系统托盘 | Shell_NotifyIcon（设置/退出菜单） | ✅ 已完成 |
-| 拖拽 + 抛射物理 | 软体粒子 pin 拖拽 + Verlet 抛射（甩出才有重力，轻放原地悬浮） | ✅ 已升级 |
-| 史莱姆着色器 | SlimeLiquid.shader（FBM 流动/菲涅尔/Blinn-Phong/RGB 色散伪折射/程序化眼睛） | ✅ 已升级 |
-| SVG 矢量渲染 | 程序化动态 Mesh（28 粒子轮廓每帧重建，无贴图无像素阶梯） | ✅ 已升级 |
-| —（Unity 版新增） | 撞墙面积转移式分裂 + 分身吸引融合（面积守恒）；Windows 工作区地面（扣任务栏） | ✅ 新增 |
+| 版本 | 形态 |
+|---|---|
+| **V7 LifeVisual**（交付默认） | 烘焙贴图原样 + 生命感表现层（呼吸/倾斜/落地挤压/戳反应） |
+| V6 BakedTexture | 烘焙贴图原样，零表现层 |
+| V5 SvgClassic | 贴图仅作 alpha 轮廓，颜色由 `Slime.shader` 玻璃着色器计算 |
+| V3 PbfGravity | PBF 粒子软体（重力常开趴姿版，`SlimeLiquid` metaball 场渲染） |
+| V2 PbfHover | PBF 粒子软体（落定悬浮版） |
+
+版本约定：观感/行为迭代一律作为独立版本场景永久保留，不做运行时开关；构建 exe 只打 index 0。
+
+## 文档
+
+- [docs/待办事项.md](docs/待办事项.md) — 开发节奏与归档
+- [docs/spike-透明窗口.md](docs/spike-透明窗口.md) — 透明窗口技术验证记录
+- 姊妹项目（Godot 原版）：`../game/transparent-pet/`

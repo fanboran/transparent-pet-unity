@@ -16,8 +16,8 @@ namespace TransparentPet.EditorTools
     /// Assets/Scenes/Versions/ 下一个版本一个目录。GenerateAll 成套生成并全部
     /// 收录进构建设置（index 0 = 交付默认版本）。构建 exe 时默认只打 index 0
     /// （BuildPlayer 显式指定）；体验其他版本：编辑器打开对应场景 Play。
-    /// 当前交付默认 = V6 纯烘焙贴图版（用户拍板：Slime.shader 根本不输出贴图 RGB，
-    /// 屏幕上一直是"着色器画的玻璃球"而不是那张烘焙图——恢复原图原样显示）。
+    /// 当前交付默认 = V7 生命感版（V6 原图原样 + PetLifeVisual 呼吸/倾斜/挤压/戳反应）；
+    /// V6 纯烘焙贴图版（零表现层）作为存档保留。
     /// </summary>
     public static class SceneGenerator
     {
@@ -26,6 +26,10 @@ namespace TransparentPet.EditorTools
             /// <summary>贴图精灵原样显示（SvgPetController + 内置 Sprites/Default）——
             /// 贴图 RGB+alpha 直出，零着色器效果。</summary>
             SvgBaked,
+
+            /// <summary>贴图精灵 + 生命感表现层（SvgPetController + PetLifeVisual）——
+            /// 呼吸/拖拽倾斜/落地挤压/戳反应；贴图内容仍原样，只做 transform 级表现</summary>
+            SvgLife,
 
             /// <summary>贴图精灵 + 原版拖拽/抛射（SvgPetController + Slime.shader 玻璃效果）</summary>
             SvgClassic,
@@ -37,8 +41,10 @@ namespace TransparentPet.EditorTools
         /// <summary>全部保留版本：路径 + 类型 + 行为语义说明（新版本在表尾追加）。</summary>
         static readonly (string scenePath, PetKind kind, bool hoverMode, string description)[] Versions =
         {
+            ("Assets/Scenes/Versions/V7LifeVisual/PetScene.unity", PetKind.SvgLife, false,
+                "V7 · 生命感版：烘焙图原样 + 呼吸/拖拽倾斜/落地挤压/戳反应（当前交付默认）"),
             ("Assets/Scenes/Versions/V6BakedTexture/PetScene.unity", PetKind.SvgBaked, false,
-                "V6 · 纯烘焙贴图版：PetSlime.png 原样显示，零着色器效果（当前交付默认）"),
+                "V6 · 纯烘焙贴图版：PetSlime.png 原样显示，零着色器零表现层（存档）"),
             ("Assets/Scenes/Versions/V5SvgClassic/PetScene.unity", PetKind.SvgClassic, false,
                 "V5 · 玻璃着色器版：贴图仅当 alpha 轮廓，颜色全由 Slime.shader 计算（存档）"),
             ("Assets/Scenes/Versions/V3PbfGravity/PetScene.unity", PetKind.Pbf, false,
@@ -69,6 +75,9 @@ namespace TransparentPet.EditorTools
             }
             EditorBuildSettings.scenes = scenes;
             AssetDatabase.SaveAssets();
+            // 注意：不在此调用 AppIconSetup.Apply——batchmode 下 PlayerSettings 保存会让
+            // 进程卡在退出（僵持并长期占住工程锁），且该设置本身在 batchmode 不落盘。
+            // 应用图标改由构建流程注入产物（BuildPlayer → AppIconSetup.InjectIntoExe）。
         }
 
         /// <summary>PetSlime.png 导入设置：可读（运行时 alpha 命中表）+ 不压缩（alpha 不量化）。</summary>
@@ -130,6 +139,7 @@ namespace TransparentPet.EditorTools
             switch (kind)
             {
                 case PetKind.SvgBaked:
+                case PetKind.SvgLife:
                 {
                     // 挂 Sprites/Default（无光照、alpha 混合）：贴图 RGB 与 alpha 原样输出，
                     // 屏幕上就是那张烘焙图本身。不能用 SpriteRenderer 默认材质——Unity 默认
@@ -141,6 +151,8 @@ namespace TransparentPet.EditorTools
                     spriteRenderer.sortingOrder = 10;
                     spriteRenderer.sharedMaterial = EnsureMaterial("Sprites/Default", BakedMaterialPath);
                     petGo.AddComponent<SvgPetController>();
+                    if (kind == PetKind.SvgLife)
+                        petGo.AddComponent<PetLifeVisual>(); // 生命感表现层（呼吸/倾斜/挤压/戳）
                     break;
                 }
                 case PetKind.SvgClassic:
