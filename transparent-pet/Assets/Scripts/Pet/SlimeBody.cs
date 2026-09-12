@@ -22,8 +22,6 @@ namespace TransparentPet.Pet
     {
         // MaterialPropertyBlock 的属性 ID 缓存（与 SlimeLiquid.shader 的 Properties 对应）
         static readonly int BodyColorId = Shader.PropertyToID("_BodyColor");
-        static readonly int EyeDirId = Shader.PropertyToID("_EyeDir");
-        static readonly int BlinkId = Shader.PropertyToID("_Blink");
         static readonly int SquashId = Shader.PropertyToID("_Squash");
         static readonly int VelocityWId = Shader.PropertyToID("_VelocityW");
 
@@ -36,12 +34,6 @@ namespace TransparentPet.Pet
         readonly Vector2[] uvShape = new Vector2[VertexCount];
         readonly int[] triangles = new int[SlimeSimulation.OutlineCount * 3];
         MaterialPropertyBlock block;
-
-        // 眨眼状态机：待机倒计时 + 0..1..0 的眨眼相位
-        float blinkCooldown = 2.5f;
-        float blinkPhase = -1f;
-        // 视线惯性当前值（每帧向目标缓动）
-        Vector2 eyeDirCurrent;
 
         /// <summary>当前使用的共享材质（分身创建时由 PetController 传入主体的材质）。</summary>
         public Material SharedMaterial => meshRenderer ? meshRenderer.sharedMaterial : null;
@@ -110,36 +102,9 @@ namespace TransparentPet.Pet
             mesh.uv2 = uvShape;
             mesh.RecalculateBounds(); // 包围盒随软体形变更新（剔除与拾取范围）
 
-            // ── 眨眼状态机：待机 2.2~5.5s 随机 → 0.14s 内睁→闭→睁 ──
-            if (blinkPhase < 0f)
-            {
-                blinkCooldown -= dt;
-                if (blinkCooldown <= 0f)
-                {
-                    blinkPhase = 0f;
-                    blinkCooldown = UnityEngine.Random.Range(2.2f, 5.5f);
-                }
-            }
-            else
-            {
-                blinkPhase += dt / 0.14f;
-                if (blinkPhase >= 1f)
-                    blinkPhase = -1f;
-            }
-            // sin(π·phase)：0→1→0 的闭眼曲线
-            var blink = blinkPhase < 0f ? 0f : Mathf.Sin(Mathf.PI * Mathf.Clamp01(blinkPhase));
-
-            // ── 视线：跟随运动方向（速度映射到 ±0.1 的瞳孔偏移），带惯性 ──
-            var eyeTarget = new Vector2(
-                Mathf.Clamp(velocityPxPerSec.x / 900f, -0.1f, 0.1f),
-                Mathf.Clamp(velocityPxPerSec.y / 900f, -0.1f, 0.1f));
-            eyeDirCurrent = Vector2.Lerp(eyeDirCurrent, eyeTarget, Mathf.Clamp01(dt * 6f));
-
-            // ── 写入材质属性 ──
+            // ── 写入材质属性（液态玻璃只需要色/脉冲/速度三个动态量）──
             meshRenderer.GetPropertyBlock(block);
             block.SetColor(BodyColorId, bodyColor);
-            block.SetVector(EyeDirId, eyeDirCurrent);
-            block.SetFloat(BlinkId, blink);
             block.SetFloat(SquashId, sim.SquashPulse);
             block.SetFloat(VelocityWId, Mathf.Min(velocityPxPerSec.magnitude / 800f, 1.5f));
             meshRenderer.SetPropertyBlock(block);
