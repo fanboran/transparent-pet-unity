@@ -427,5 +427,59 @@ namespace TransparentPet.Tests
             Assert.Less(finalDist, initialDist * 0.5f,
                 $"4 秒吸引后 B 应明显飘回（距离 {finalDist:F1} 需小于初始 {initialDist:F1} 的一半）");
         }
+
+        // ────────────────────────────────────────────────────────────────
+        // 15. 天花板边界：悬浮态飞出屏幕顶部会被压回（根除"定格在天上够不着"）
+        // ────────────────────────────────────────────────────────────────
+
+        [Test]
+        public void TopBound_ClampsBodyInsideScreen()
+        {
+            // 故意把史莱姆生成在天花板（TopY=0）之上，轮廓顶已越界
+            var s = new SlimeSimulation(new Vector2(800f, 20f), Rx, Ry);
+            var env = HoverEnv(); // TopY 默认 0
+
+            for (var i = 0; i < 60; i++)
+                s.StepFrame(Dt, env);
+
+            var highestY = float.MaxValue;
+            for (var i = 0; i < SlimeSimulation.OutlineCount; i++)
+                highestY = Mathf.Min(highestY, s.Outline[i].y);
+
+            Assert.GreaterOrEqual(highestY, -2f,
+                $"步进后轮廓最高点 y={highestY:F1} 应被天花板压回 TopY=0 附近（容差 2px）");
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        // 16. 拖拽限速：鼠标瞬移到极远目标，单帧内任何粒子位移被钳制
+        //     （根除"拎起来乱飞/自己撞墙"——鼠标速度不得直接变成粒子速度）
+        // ────────────────────────────────────────────────────────────────
+
+        [Test]
+        public void Grab_FollowsMouseWithCappedSpeed()
+        {
+            var s = new SlimeSimulation(SpawnCenter, Rx, Ry);
+            var env = HoverEnv();
+
+            // 初始轮廓快照（同参构造一只镜像作为基准）
+            var mirror = new SlimeSimulation(SpawnCenter, Rx, Ry);
+            var original = new Vector2[SlimeSimulation.OutlineCount];
+            for (var i = 0; i < SlimeSimulation.OutlineCount; i++)
+                original[i] = mirror.Outline[i];
+
+            Assert.IsTrue(s.TryGrab(SpawnCenter), "中心应可抓取");
+
+            // 鼠标瞬移 2000px 外，仅步进一帧：若无限速，抓取点直接跳跃、
+            // 邻居被弹簧以数千 px/s 拉动——正是"乱飞撞墙"的复现路径
+            s.MoveGrab(SpawnCenter + new Vector2(2000f, 0f), 16.7f);
+            s.StepFrame(Dt, env);
+
+            var moved = 0f;
+            for (var i = 0; i < SlimeSimulation.OutlineCount; i++)
+                moved = Mathf.Max(moved, Vector2.Distance(s.Outline[i], original[i]));
+            Assert.Less(moved, 40f,
+                $"鼠标瞬移后单帧内粒子最大位移 {moved:F1}px 应被限速钳制在 40px 内" +
+                "（限速 14px/子步 × 2 子步 + 约束修正余量）");
+        }
     }
 }

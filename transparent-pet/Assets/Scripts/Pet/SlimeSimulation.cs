@@ -31,6 +31,9 @@ namespace TransparentPet.Pet
         /// <summary>地面 y（Y 向下语义，即工作区底边）</summary>
         public float GroundY;
 
+        /// <summary>天花板 y（Y 向下语义，通常 0=工作区顶）。悬浮/抛射都不允许整只飞出屏幕</summary>
+        public float TopY;
+
         /// <summary>重力开关：甩出后的抛射阶段开启；平时悬浮（Godot 原版语义）</summary>
         public bool GravityOn;
 
@@ -72,12 +75,18 @@ namespace TransparentPet.Pet
         public const int OutlineCount = 28;
 
         // ── 求解参数（经验值，单测保证行为；调参会影响稳定性，改前先跑全量测试）──
+        // 阻尼量级说明：这是"每 1/120s 子步"的速度保留率，指数效应极强。
+        // Verlet+线性阻尼的自由落体终端速度 ≈ g·dt/(1-damping)：
+        //   0.988 → 555px/s（飘）；0.975 → 267px/s（羽毛，落地无质感）；
+        //   0.995 → 1333px/s ≈ 无阻尼自由落体从屏顶落底的速度，落地质感正确。
         const int ConstraintIterations = 6;   // 每子步约束迭代次数（Gauss-Seidel）
-        const float Damping = 0.988f;         // Verlet 速度保留率（空气阻尼）
+        const float Damping = 0.995f;         // 常态速度保留率（终端落速 ~1333px/s）
+        const float DragDamping = 0.96f;      // 拖拽中的额外阻尼（耗散鼠标甩动注入的动能）
         const float DistanceStiffness = 0.9f; // 距离约束单次迭代修正比例
         const float RadialStiffness = 0.10f;  // 辐射(形状记忆)约束：软，允许大幅拉伸变形
         const float PressureGain = 0.10f;     // 面积压力修正强度（过大易振荡，过小守恒慢）
-        const float GrabLerp = 0.45f;         // 抓取点向鼠标目标的每子步跟随比例
+        const float MaxGrabStep = 14f;        // 抓取粒子每子步最大跟随距离（px，限速防速度爆炸）
+        const float BounceDeadZone = 60f;     // 落地反弹死区（px/s）：低于此值直接贴地，杜绝微颤
         const float MaxSpeed = 1800f;         // 单粒子硬速度上限（px/s，防爆）
         const int VelocityBufferSize = 8;     // 拖拽速度滑窗（沿用 Godot 版语义）
 
@@ -125,12 +134,23 @@ namespace TransparentPet.Pet
             for (var i = 0; i < OutlineCount; i++)
             {
                 var theta = i / (float)OutlineCount * Mathf.PI * 2f;
+                var dx = Mathf.Cos(theta);
+                var dy = Mathf.Sin(theta);
                 var p = new Vector2(
-                    center.x + Mathf.Cos(theta) * radiusX,
-                    center.y + Mathf.Sin(theta) * radiusY);
-                // Y 向下：sinθ>0 是屏幕下半部 → 底部向质心收 12%，得到"馒头"静息形
-                if (p.y > center.y)
-                    p.y = center.y + (p.y - center.y) * 0.88f;
+                    center.x + dx * radiusX,
+                    center.y + dy * radiusY);
+                // Y 向下（dy>0 = 屏幕下半部）：馒头形静息轮廓——
+                // 底部压平（坐下来的果冻）且略外扩（底盘比腰宽），
+                // 顶部拔高（圆润的馒头背）。三处系数共同决定"坐姿"。
+                if (dy > 0f)
+                {
+                    p.y = center.y + dy * radiusY * 0.78f;
+                    p.x = center.x + dx * radiusX * 1.07f;
+                }
+                else
+                {
+                    p.y = center.y + dy * radiusY * 1.04f;
+                }
 
                 pos[i] = p;
                 prev[i] = p - initialVelocity * (1f / 60f); // 初速度经 prev 回推注入
@@ -283,21 +303,29 @@ namespace TransparentPet.Pet
                 }
             }
 
-            // ── 2. Verlet 积分（速度阻尼内建）──
+            // ── 2. Verlet 积分（速度阻尼内建；拖拽中加强阻尼，快速耗散
+            //       鼠标甩动注入的动能，防止整团"乱飞"）──
+            var damping = grabbed ? DragDamping : Damping;
             for (var i = 0; i < OutlineCount; i++)
             {
                 var velocity = pos[i] - prev[i]; // px / 子步
-                var next = pos[i] + velocity * Damping + acc[i] * dt * dt;
+                var next = pos[i] + velocity * damping + acc[i] * dt * dt;
                 prev[i] = pos[i];
                 pos[i] = next;
             }
 
-            // ── 3. 抓取跟随：把被抓粒子往鼠标目标拉（速度经 prev 半跟随被压制，
-            //       释放时在 Release() 中补偿，保证甩出速度来自拖拽轨迹本身）──
+            // ── 3. 抓取跟随：限速追赶鼠标目标 + 抓取粒子零速度注入。
+            //       这是拖拽稳定性的关键：鼠标再快，抓取粒子每子步也
+            //       只走 MaxGrabStep（且 prev=pos 抹掉自身速度），软体
+            //       完全靠位置约束被"拖着走"——快速甩动呈现自然的泪滴
+            //       拉伸，而不会把鼠标速度变成粒子炮弹到处乱飞。──
             if (grabbed)
             {
-                pos[grabIndex] += (grabTarget - pos[grabIndex]) * GrabLerp;
-                prev[grabIndex] += (grabTarget - prev[grabIndex]) * GrabLerp * 0.5f;
+                var toTarget = grabTarget - pos[grabIndex];
+                var dist = toTarget.magnitude;
+                if (dist > 1e-4f)
+                    pos[grabIndex] += toTarget * (Mathf.Min(dist, MaxGrabStep) / dist);
+                prev[grabIndex] = pos[grabIndex];
             }
 
             // ── 4. 约束求解（迭代逼近）──
@@ -308,11 +336,7 @@ namespace TransparentPet.Pet
                 SolvePressure();
             }
 
-            // 约束可能把抓取点拉离目标，迭代后统一再钉一次
-            if (grabbed)
-                pos[grabIndex] += (grabTarget - pos[grabIndex]) * GrabLerp;
-
-            // ── 5. 碰撞（地面/侧墙）与撞击上报 ──
+            // ── 5. 碰撞（天花板/地面/侧墙）与撞击上报 ──
             SolveCollisions(dt, env);
 
             // ── 6. 速度硬上限，杜绝约束竞争导致的飞射 ──
@@ -389,8 +413,10 @@ namespace TransparentPet.Pet
         }
 
         /// <summary>
-        /// 边界碰撞。Verlet 中"速度= pos-prev"，反弹通过改写 prev 实现；
-        /// 摩擦只作用水平分量且做防反向钳制。侧墙撞击记录到 WallImpact 供分裂判定。
+        /// 边界碰撞（天花板/地面/侧墙）。Verlet 中"速度= pos-prev"，反弹通过
+        /// 改写 prev 实现；摩擦只作用水平分量且做防反向钳制。侧墙撞击记录到
+        /// WallImpact 供分裂判定。反弹带死区：微小反弹直接归零贴地/贴顶，
+        /// 根除"落地后无限微颤"。
         /// </summary>
         void SolveCollisions(float dt, in SimEnvironment env)
         {
@@ -401,7 +427,10 @@ namespace TransparentPet.Pet
                 if (pos[i].y >= env.GroundY && vy > 0f)
                 {
                     pos[i].y = env.GroundY;
-                    prev[i].y = pos[i].y + vy * env.Restitution * dt;
+                    var bounce = vy * env.Restitution;
+                    if (bounce < BounceDeadZone)
+                        bounce = 0f; // 死区：微小反弹直接贴地
+                    prev[i].y = pos[i].y + bounce * dt;
 
                     // 接地摩擦：水平速度朝零线性衰减，禁止反向
                     var vx = (pos[i].x - prev[i].x) / dt;
@@ -412,6 +441,17 @@ namespace TransparentPet.Pet
                     // 大幅撞地触发挤压脉冲（Q 弹观感），不触发分裂（分裂仅侧墙）
                     if (vy > 420f)
                         squashPulse = 1f;
+                }
+
+                // ── 天花板（悬浮态没有重力拉回来，绝不允许整只飞出屏幕顶部）──
+                var vyTop = (pos[i].y - prev[i].y) / dt;
+                if (pos[i].y <= env.TopY && vyTop < 0f)
+                {
+                    pos[i].y = env.TopY;
+                    var bounceT = -vyTop * 0.25f;
+                    if (bounceT < BounceDeadZone)
+                        bounceT = 0f;
+                    prev[i].y = pos[i].y - bounceT * dt; // 反弹向下（Y 向下语义）
                 }
 
                 // ── 左墙 ──
@@ -431,7 +471,6 @@ namespace TransparentPet.Pet
                     prev[i].x = pos[i].x + vxr * env.WallRestitution * dt;
                     ReportImpact(Vector2.left, pos[i], vxr);
                 }
-                // 顶部不设碰撞（Godot 原版语义：可以向上扔出屏幕再落回来）
             }
         }
 

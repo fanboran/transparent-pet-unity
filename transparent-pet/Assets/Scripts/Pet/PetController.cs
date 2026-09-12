@@ -240,6 +240,7 @@ namespace TransparentPet.Pet
             {
                 BoundsWidth = NativeScreen.GetWorkAreaWidth(),
                 GroundY = NativeScreen.GetWorkAreaBottomY(),
+                TopY = 0f,                   // 工作区顶：悬浮态也不许飞出屏幕
                 GravityOn = gravityOn,
                 Gravity = throwParams.gravity,
                 Restitution = 0.3f,          // Godot 版 ground_bounce
