@@ -33,12 +33,12 @@
 **从源码构建**：
 
 ```bash
-# 生成全部版本场景 + 应用图标（克隆后首次必需）
+# 生成全部版本场景（克隆工程后首次必需）
 "F:/Unity/2022.3.62f1c1/Editor/Unity.exe" -batchmode -quit \
   -projectPath "transparent-pet" \
   -executeMethod TransparentPet.EditorTools.SceneGenerator.GenerateAll
 
-# 构建 Windows x64（输出 transparent-pet/Builds/PetSpike.exe）
+# 构建 Windows x64（输出 transparent-pet/Builds/PetSpike.exe，构建后自动注入应用图标）
 "F:/Unity/2022.3.62f1c1/Editor/Unity.exe" -batchmode -quit \
   -projectPath "transparent-pet" \
   -executeMethod TransparentPet.EditorTools.BuildPlayer.BuildWindows64
