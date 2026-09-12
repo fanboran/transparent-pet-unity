@@ -83,10 +83,10 @@ namespace TransparentPet.Pet
 
         void Update()
         {
-            // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段
+            // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段（顶层栈硬退，同托盘退出）
             if (Input.GetKeyDown(KeyCode.Escape))
             {
-                Application.Quit();
+                HardExit.Now();
                 return;
             }
 

@@ -50,32 +50,39 @@ namespace TransparentPet.Core
 
 #if !UNITY_EDITOR
             // 托盘：全屏无边框窗口的控制出口（编辑器下跳过）。
-            // "设置"走 EventBus（跨模块解耦）；"退出"硬退——托盘菜单的 Win32 模态循环里
-            // Application.Quit 请求可能不被处理，进程不退图标就悬空
+            // "设置"走 EventBus（跨模块解耦）；"退出"只置标志位——绝不在 Win32
+            // 模态循环回调栈里直接退出（Application.Quit/Environment.Exit 会被
+            // 运行时吞掉，进程赖死），延迟到 Update 顶层由 HardExit 三级兜底
             tray = new NativeTray("透明宠物", new[]
             {
                 new TrayMenuItem("设置", () => EventBus.Publish(EventTopics.SettingsPanelToggleRequested, true)),
                 new TrayMenuItem(), // 分隔线
-                new TrayMenuItem("退出", ExitFromTray),
+                new TrayMenuItem("退出", () => exitRequested = true),
             });
 #endif
             StartCoroutine(HideFromTaskbarWhenReady());
         }
 
+        bool exitRequested;
+
         void Update()
         {
+            // 退出在顶层栈执行：先摘托盘图标（防悬空鬼图标），再三级强退
+            if (exitRequested)
+            {
+                if (tray != null)
+                {
+                    tray.Dispose();
+                    tray = null;
+                }
+                HardExit.Now();
+            }
             tray?.Pump();
         }
 
         void OnDestroy()
         {
             tray?.Dispose();
-        }
-
-        void ExitFromTray()
-        {
-            tray?.Dispose();
-            Environment.Exit(0);
         }
 
         /// <summary>运行时切换置顶（对应 Godot 版 set_always_on_top，设置面板经 EventBus 调用）</summary>
