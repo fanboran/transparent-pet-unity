@@ -16,13 +16,18 @@ namespace TransparentPet.EditorTools
     /// Assets/Scenes/Versions/ 下一个版本一个目录。GenerateAll 成套生成并全部
     /// 收录进构建设置（index 0 = 交付默认版本）。构建 exe 时默认只打 index 0
     /// （BuildPlayer 显式指定）；体验其他版本：编辑器打开对应场景 Play。
-    /// 当前交付默认 = V5 纯 SVG 经典版（用户拍板回退：无任何软体物理）。
+    /// 当前交付默认 = V6 纯烘焙贴图版（用户拍板：Slime.shader 根本不输出贴图 RGB，
+    /// 屏幕上一直是"着色器画的玻璃球"而不是那张烘焙图——恢复原图原样显示）。
     /// </summary>
     public static class SceneGenerator
     {
         public enum PetKind
         {
-            /// <summary>贴图精灵 + 原版拖拽/抛射（SvgPetController + Slime.shader）</summary>
+            /// <summary>贴图精灵原样显示（SvgPetController + 内置 Sprites/Default）——
+            /// 贴图 RGB+alpha 直出，零着色器效果。</summary>
+            SvgBaked,
+
+            /// <summary>贴图精灵 + 原版拖拽/抛射（SvgPetController + Slime.shader 玻璃效果）</summary>
             SvgClassic,
 
             /// <summary>PBF 软体（PetController + SlimeBody + SlimeLiquid metaball 场）</summary>
@@ -32,8 +37,10 @@ namespace TransparentPet.EditorTools
         /// <summary>全部保留版本：路径 + 类型 + 行为语义说明（新版本在表尾追加）。</summary>
         static readonly (string scenePath, PetKind kind, bool hoverMode, string description)[] Versions =
         {
+            ("Assets/Scenes/Versions/V6BakedTexture/PetScene.unity", PetKind.SvgBaked, false,
+                "V6 · 纯烘焙贴图版：PetSlime.png 原样显示，零着色器效果（当前交付默认）"),
             ("Assets/Scenes/Versions/V5SvgClassic/PetScene.unity", PetKind.SvgClassic, false,
-                "V5 · 纯 SVG 经典版：贴图精灵+原版拖拽抛射，无软体物理（当前交付默认）"),
+                "V5 · 玻璃着色器版：贴图仅当 alpha 轮廓，颜色全由 Slime.shader 计算（存档）"),
             ("Assets/Scenes/Versions/V3PbfGravity/PetScene.unity", PetKind.Pbf, false,
                 "V3 · PBF 流体趴姿版：重力常开软体（存档）"),
             ("Assets/Scenes/Versions/V2PbfHover/PetScene.unity", PetKind.Pbf, true,
@@ -42,6 +49,7 @@ namespace TransparentPet.EditorTools
 
         const string SlimeMaterialPath = "Assets/Art/Pet/SlimeMat.mat";             // Slime.shader（SVG 版）
         const string SlimeLiquidMaterialPath = "Assets/Art/Pet/SlimeLiquidMat.mat"; // SlimeLiquid.shader（PBF 版）
+        const string BakedMaterialPath = "Assets/Art/Pet/BakedSpriteMat.mat";       // Sprites/Default（纯烘焙图版）
         const string PetTexturePath = "Assets/Art/Pet/PetSlime.png";
 
         [MenuItem("TransparentPet/生成宠物场景")]
@@ -121,6 +129,20 @@ namespace TransparentPet.EditorTools
             var petGo = new GameObject("Pet");
             switch (kind)
             {
+                case PetKind.SvgBaked:
+                {
+                    // 挂 Sprites/Default（无光照、alpha 混合）：贴图 RGB 与 alpha 原样输出，
+                    // 屏幕上就是那张烘焙图本身。不能用 SpriteRenderer 默认材质——Unity 默认
+                    // 给的是 Sprites/Diffuse（受光照），场景里没有灯，图会被环境光压暗。
+                    var spriteRenderer = petGo.AddComponent<SpriteRenderer>();
+                    var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(PetTexturePath);
+                    if (sprite != null)
+                        spriteRenderer.sprite = sprite;
+                    spriteRenderer.sortingOrder = 10;
+                    spriteRenderer.sharedMaterial = EnsureMaterial("Sprites/Default", BakedMaterialPath);
+                    petGo.AddComponent<SvgPetController>();
+                    break;
+                }
                 case PetKind.SvgClassic:
                 {
                     var spriteRenderer = petGo.AddComponent<SpriteRenderer>();

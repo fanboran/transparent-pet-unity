@@ -10,7 +10,7 @@ namespace TransparentPet.EditorTools
     /// </summary>
     public static class PlayHelper
     {
-        const string ScenePath = "Assets/Scenes/Versions/V5SvgClassic/PetScene.unity";
+        const string ScenePath = "Assets/Scenes/Versions/V6BakedTexture/PetScene.unity";
 
         [MenuItem("TransparentPet/播放宠物场景")]
         public static void PlayPetScene()
