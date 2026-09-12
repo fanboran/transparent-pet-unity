@@ -1,0 +1,13 @@
+{
+    "name": "TransparentPet.Display",
+    "rootNamespace": "TransparentPet.Display",
+    "references": [],
+    "includePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

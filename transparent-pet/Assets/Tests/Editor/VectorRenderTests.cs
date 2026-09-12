@@ -352,5 +352,16 @@ namespace TransparentPet.Tests
             Assert.Greater(sut.Texture.width, widthAtOne,
                 "放大后按目标分辨率重栅格化（而不是把原位图拉大）——这是像素阶梯的根治法");
         }
+
+        [Test]
+        public void Renderer_TextureHasMipmaps_ForStableMinification()
+        {
+            // 纹理按 Supersample 倍栅格化、显示时 2:1 缩小，官方建议这类纹理开 mipmap，
+            // 否则宠物连续亚像素移动时只抽到 1/4 纹素 → 边缘闪烁
+            var sut = NewRenderer();
+
+            Assert.Greater(sut.Texture.mipmapCount, 1, "缩放显示用的纹理应带 mip 链");
+            Assert.AreEqual(FilterMode.Bilinear, sut.Texture.filterMode);
+        }
     }
 }

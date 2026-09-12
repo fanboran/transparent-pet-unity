@@ -142,7 +142,10 @@ namespace TransparentPet.Display
             if (texture == null || texture.width != width || texture.height != height)
             {
                 ReleaseTexture();
-                texture = new Texture2D(width, height, TextureFormat.RGBA32, mipChain: false)
+                // mipChain: true —— 纹理是按 scale×Supersample 栅格化的（比屏幕大 Supersample 倍），
+                // 显示时是 2:1 缩小采样。Unity 官方对"会被缩小显示的纹理"的建议就是开 mipmap，
+                // 否则宠物在亚像素位置连续移动时，只抽到 16 个纹素里的 4 个 → 边缘闪烁。
+                texture = new Texture2D(width, height, TextureFormat.RGBA32, mipChain: true)
                 {
                     name = $"PetOutline_{width}x{height}",
                     filterMode = FilterMode.Bilinear,
@@ -151,7 +154,8 @@ namespace TransparentPet.Display
             }
 
             texture.SetPixels32(pixels);
-            texture.Apply(updateMipmaps: false, makeNoLongerReadable: false);
+            // updateMipmaps 必须为 true，否则即使建了 mip 链也是垃圾数据
+            texture.Apply(updateMipmaps: true, makeNoLongerReadable: false);
 
             ReleaseSprite();
             // FullRect：Shader 假设 UV 覆盖 0..1 整张图（Slime.shader 的中心/高光按 UV 算）
