@@ -1,5 +1,7 @@
 // 别名引用命中检测；Input 模块命名空间为 PetInput（避开 UnityEngine.Input 遮蔽问题，详见 AlphaHitTest.cs）
+using System;
 using AlphaHit = TransparentPet.PetInput.AlphaHitTestCore;
+using TransparentPet.Core;
 using UnityEngine;
 
 namespace TransparentPet.Pet
@@ -8,6 +10,7 @@ namespace TransparentPet.Pet
     /// 宠物本体控制器：贴图显示 + 拖拽跟随 + 抛射运动 + 本体命中判定。
     /// 相机为正交、位于原点，1 世界单位 = PixelsPerUnit 像素；
     /// 屏幕像素坐标（左上原点、Y 向下，与 Godot/ThrowPhysics 一致）由此层与世界坐标互转。
+    /// 产品化阶段：订阅 EventBus 响应设置变更（缩放/角色/抛射参数），位置变化自动落盘。
     /// </summary>
     [RequireComponent(typeof(SpriteRenderer))]
     public class PetController : MonoBehaviour
@@ -15,18 +18,57 @@ namespace TransparentPet.Pet
         /// <summary>与 PetSlime.png 的导入设置（Pixels Per Unit）保持一致</summary>
         public const float PixelsPerUnit = 100f;
 
+        /// <summary>场景内基准缩放：4x 烘焙贴图 ÷ 4 = Godot 版 200×132 的屏幕显示尺寸</summary>
+        const float BaseScale = 0.25f;
+
+        /// <summary>用户缩放范围（对应 Godot 版 pet_scale 语义）</summary>
+        const float MinUserScale = 0.25f;
+        const float MaxUserScale = 2f;
+
         Camera mainCamera;
         SpriteRenderer spriteRenderer;
         AlphaHit hitTest;
         readonly ThrowPhysics physics = new ThrowPhysics();
+        MaterialPropertyBlock materialBlock;
+
+        // 位置自动保存（节流：移动超阈值且距上次保存 ≥1s 才落盘，硬退出也不丢位置）
+        Vector2 lastSavedScreenPos;
+        float nextSaveTime;
+
+        void OnEnable()
+        {
+            EventBus.Subscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
+            EventBus.Subscribe<string>(EventTopics.CharacterChanged, OnCharacterChanged);
+            EventBus.Subscribe<ThrowParams>(EventTopics.ThrowParamsChanged, OnThrowParamsChanged);
+        }
+
+        void OnDisable()
+        {
+            EventBus.Unsubscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
+            EventBus.Unsubscribe<string>(EventTopics.CharacterChanged, OnCharacterChanged);
+            EventBus.Unsubscribe<ThrowParams>(EventTopics.ThrowParamsChanged, OnThrowParamsChanged);
+        }
 
         void Start()
         {
             spriteRenderer = GetComponent<SpriteRenderer>();
+            materialBlock = new MaterialPropertyBlock();
             hitTest = BuildHitTest(spriteRenderer.sprite);
             SyncCameraToScreen();
-            // 初始位置：屏幕中央（对应 Godot 版 center_sprite）
-            transform.position = ScreenToWorld(new Vector2(Screen.width * 0.5f, Screen.height * 0.5f));
+
+            // 启动即应用持久化配置（对应 Godot 版 ConfigManager + DataManager 的启动恢复）
+            var config = PetConfigStore.Load();
+            ApplyThrowParams(config.throwParams);
+            ApplyCharacter(config.characterId);
+            transform.localScale = Vector3.one * (BaseScale * Mathf.Clamp(config.petScale, MinUserScale, MaxUserScale));
+
+            // 初始位置：保存过的位置优先，否则屏幕中央（对应 Godot 版 center_sprite）
+            var spawn = config.petScreenX >= 0f
+                ? new Vector2(config.petScreenX, config.petScreenY)
+                : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+            transform.position = ScreenToWorld(spawn);
+            lastSavedScreenPos = spawn;
+            nextSaveTime = Time.time + 1f;
         }
 
         void Update()
@@ -41,8 +83,54 @@ namespace TransparentPet.Pet
             SyncCameraToScreen();
             HandleInput();
             UpdatePhysics();
+            SavePositionIfNeeded();
             if (Time.frameCount % 60 == 0)
                 LogDiagnostics();
+        }
+
+        // ── EventBus 处理器（SettingsPanel 发布 → 此处应用）──
+
+        void OnScaleChanged(float scale) =>
+            transform.localScale = Vector3.one * (BaseScale * Mathf.Clamp(scale, MinUserScale, MaxUserScale));
+
+        void OnCharacterChanged(string id) => ApplyCharacter(id);
+
+        void OnThrowParamsChanged(ThrowParams p) => ApplyThrowParams(p);
+
+        void ApplyCharacter(string id)
+        {
+            // 角色预设 → 玻璃基色（Slime.shader 的 _GlassColor），用 PropertyBlock 避免材质实例化
+            var preset = CharacterRegistry.GetById(id);
+            spriteRenderer.GetPropertyBlock(materialBlock);
+            materialBlock.SetColor("_GlassColor", preset.GlassColor);
+            spriteRenderer.SetPropertyBlock(materialBlock);
+        }
+
+        void ApplyThrowParams(ThrowParams p)
+        {
+            physics.Gravity = p.gravity;
+            physics.MinSpeed = p.minSpeed;
+            physics.MaxSpeed = p.maxSpeed;
+            physics.Multiplier = p.multiplier;
+            physics.ThrowEnabled = p.enabled;
+        }
+
+        void SavePositionIfNeeded()
+        {
+            if (Time.time < nextSaveTime)
+                return;
+
+            var screenPos = WorldToScreen(transform.position);
+            if ((screenPos - lastSavedScreenPos).sqrMagnitude < 25f) // 移动小于 5px 不存
+                return;
+
+            // Load-modify-Save：只动位置字段，其余字段以磁盘/设置面板的最新值为准
+            var config = PetConfigStore.Load();
+            config.petScreenX = screenPos.x;
+            config.petScreenY = screenPos.y;
+            PetConfigStore.Save(config);
+            lastSavedScreenPos = screenPos;
+            nextSaveTime = Time.time + 1f;
         }
 
         /// <summary>spike 排查用：把渲染链路关键状态写进 Player.log，定位"看不见史莱姆"用。</summary>

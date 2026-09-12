@@ -1,6 +1,7 @@
 using Kirurobo;
 using TransparentPet.Core;
 using TransparentPet.Pet;
+using TransparentPet.UI;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -15,6 +16,7 @@ namespace TransparentPet.EditorTools
     {
         const string ScenePath = "Assets/Scenes/PetScene.unity";
         const string PetTexturePath = "Assets/Art/Pet/PetSlime.png";
+        const string SlimeMaterialPath = "Assets/Art/Pet/SlimeMat.mat";
 
         [MenuItem("TransparentPet/生成宠物场景")]
         public static void GenerateFromMenu() => GenerateAll();
@@ -42,6 +44,25 @@ namespace TransparentPet.EditorTools
             importer.SaveAndReimport();
         }
 
+        /// <summary>确保 Slime.shader 的材质资产存在并返回（着色器缺失时返回 null，精灵回退默认材质）。</summary>
+        static Material EnsureSlimeMaterial()
+        {
+            var shader = Shader.Find("TransparentPet/Slime");
+            if (shader == null)
+            {
+                Debug.LogWarning("[SceneGenerator] 未找到 TransparentPet/Slime 着色器，宠物将使用默认精灵材质（静态贴图外观）");
+                return null;
+            }
+
+            var material = AssetDatabase.LoadAssetAtPath<Material>(SlimeMaterialPath);
+            if (material == null || material.shader != shader)
+            {
+                material = new Material(shader);
+                AssetDatabase.CreateAsset(material, SlimeMaterialPath);
+            }
+            return material;
+        }
+
         static void BuildPetScene()
         {
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -63,10 +84,16 @@ namespace TransparentPet.EditorTools
             var spriteRenderer = petGo.AddComponent<SpriteRenderer>();
             spriteRenderer.sprite = AssetDatabase.LoadAssetAtPath<Sprite>(PetTexturePath);
             spriteRenderer.sortingOrder = 10;
+            spriteRenderer.sharedMaterial = EnsureSlimeMaterial();
             // 贴图为 4x 烘焙（800×528），正交相机下精灵按贴图像素 1:1 显示；
             // 缩放 0.25 使屏幕显示尺寸回到 Godot 版的 200×132
             petGo.transform.localScale = new Vector3(0.25f, 0.25f, 1f);
             petGo.AddComponent<PetController>();
+
+            // UI：设置面板 + HUD（IMGUI，透明窗口上自带 alpha → 面板区域自动可交互）
+            var uiGo = new GameObject("PetUI");
+            uiGo.AddComponent<SettingsPanel>();
+            uiGo.AddComponent<HudController>();
 
             // 窗口互操作：UniWinC 透明/置顶/穿透 + 本项目的任务栏隐藏
             var windowGo = new GameObject("WindowController");
