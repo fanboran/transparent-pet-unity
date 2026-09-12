@@ -45,9 +45,6 @@ namespace TransparentPet.Core
 
         void Start()
         {
-            // 启动画面期间窗口被 SplashHider 隐藏（个人版强制播放启动画面）→ 场景就绪，恢复显示
-            NativeWindowStyles.SetVisible(NativeWindowStyles.FindCurrentProcessTopLevelWindow(), true);
-
             var config = PetConfigStore.Load();
             AlwaysOnTop = config.alwaysOnTop;
 
@@ -136,9 +133,7 @@ namespace TransparentPet.Core
             foreach (var delay in delays)
             {
                 yield return new WaitForSeconds(delay);
-                var hwnd = NativeWindowStyles.FindCurrentProcessTopLevelWindow();
-                NativeWindowStyles.HideFromTaskbar(hwnd);
-                NativeWindowStyles.SetVisible(hwnd, true); // 兜底：确保一定恢复可见
+                NativeWindowStyles.HideFromTaskbar(NativeWindowStyles.FindCurrentProcessTopLevelWindow());
             }
 #endif
         }

@@ -293,20 +293,17 @@ namespace TransparentPet.EditorTools
             cameraGo.AddComponent<AudioListener>();
 
             var root = new GameObject("GalleryRoot");
-            var labels = new string[GalleryPets.Length];
             for (var i = 0; i < GalleryPets.Length; i++)
             {
-                var (kind, hoverMode, label) = GalleryPets[i];
+                var (kind, hoverMode, _) = GalleryPets[i];
                 var petGo = new GameObject($"Pet{i}_{kind}");
                 petGo.transform.SetParent(root.transform);
                 // x 初值递增：GalleryLayout 按 transform.x 排序决定左右顺序
                 petGo.transform.position = new Vector3(i * 0.5f, 0f, 0f);
                 AddPetComponents(petGo, kind, hoverMode);
-                labels[i] = label;
             }
 
-            var layout = root.AddComponent<GalleryLayout>();
-            layout.Labels = labels;
+            root.AddComponent<GalleryLayout>();
 
             // 窗口互操作：UniWinC 透明/置顶/穿透 + 任务栏隐藏/托盘（含退出入口）
             var windowGo = new GameObject("WindowController");
