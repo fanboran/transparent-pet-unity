@@ -120,6 +120,10 @@ namespace TransparentPet.Pet
         {
             var mouse = MouseScreenPos();
 
+            // 悬停上报：窗口层据此决定整窗穿透（替代 UniWinC 每帧读屏的命中检测，见 PointerHover）
+            if (sim.ContainsPoint(mouse))
+                PointerHover.ReportHover(Time.frameCount);
+
             // 命中预检（ContainsPoint 无副作用）→ 仲裁归属 → 再真正抓取：
             // 顺序很重要，避免"先抓住再撤销"造成的状态抖动
             var renderer = GetComponent<MeshRenderer>();

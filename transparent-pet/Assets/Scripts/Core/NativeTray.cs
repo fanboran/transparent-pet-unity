@@ -35,6 +35,8 @@ namespace TransparentPet.Core
     /// - Unity 主线程没有 Win32 消息循环，由调用方每帧调 Pump() 抽干本窗口消息
     /// - 窗口过程委托用静态字段持有，防止被 GC 回收后崩溃
     /// - 菜单数据（menuItems）随实例走；静态 active 只负责把窗口过程路由回当前实例
+    /// - 菜单项动作不在窗口过程里直接执行，而是登记到队列由 Pump 在顶层执行
+    ///   （那里是 DispatchMessageW 的嵌套栈，压着同步跨进程调用会挂死进程）
     /// - 仅 Player 使用（编辑器下跳过，避免干扰编辑器会话）
     /// </summary>
     public sealed class NativeTray : IDisposable
@@ -167,6 +169,7 @@ namespace TransparentPet.Core
         readonly IntPtr hwnd;
         readonly string tip;
         readonly TrayMenuItem[] menuItems; // 菜单数据随实例走（窗口过程经静态 active 取回）
+        readonly Queue<Action> pendingActions = new Queue<Action>(); // 菜单动作队列（Pump 顶层执行）
 
         /// <param name="tip">托盘悬停提示文字</param>
         /// <param name="menuItems">右键菜单内容（含分隔线；"退出"也由调用方传入，
@@ -234,15 +237,36 @@ namespace TransparentPet.Core
             return LoadIconW(IntPtr.Zero, (IntPtr)IDI_APPLICATION);
         }
 
-        /// <summary>每帧抽干消息窗口队列；由 PetWindowSetup.Update 调用。</summary>
+        /// <summary>每帧抽干消息窗口队列，并在消息循环结束后执行菜单动作；由 PetWindowSetup.Update 调用。</summary>
         public void Pump()
         {
             if (hwnd == IntPtr.Zero)
                 return;
+
             while (PeekMessageW(out var msg, hwnd, 0, 0, PM_REMOVE))
             {
                 TranslateMessage(ref msg);
                 DispatchMessageW(ref msg);
+            }
+
+            // 菜单动作在主循环顶层执行，而不是在窗口过程里直接调：
+            // ShowMenu 跑在 DispatchMessageW 的嵌套栈上，在那里摘托盘图标
+            // （Shell_NotifyIcon → 任务栏，同步跨进程调用）或退出，一旦对方不响应
+            // 就整进程挂死；挪到这里，嵌套栈已经退出，同一时刻只有一个顶层调用在跑。
+            while (pendingActions.Count > 0)
+                InvokeAction(pendingActions.Dequeue());
+        }
+
+        static void InvokeAction(Action action)
+        {
+            // 异常不能逃出去（会打断 Update）：吞掉记日志
+            try
+            {
+                action?.Invoke();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[NativeTray] 托盘菜单项执行失败: {e}");
             }
         }
 
@@ -292,17 +316,9 @@ namespace TransparentPet.Core
 
             if (cmd >= 1 && cmd <= (uint)entries.Count)
             {
-                var selected = entries[(int)cmd - 1];
-                // 异常不能逃出窗口过程（会崩进程），吞掉记日志；
-                // 退出项的 Action 由调用方传入，里面自行 Dispose() + Environment.Exit
-                try
-                {
-                    selected.Action?.Invoke();
-                }
-                catch (Exception e)
-                {
-                    Debug.LogWarning($"[NativeTray] 托盘菜单项执行失败: {e}");
-                }
+                // 只登记，不在这里执行：本方法跑在窗口过程的嵌套栈上，
+                // 动作（退出/打开设置面板）延后到 Pump 的顶层执行（见 Pump 注释）
+                self.pendingActions.Enqueue(entries[(int)cmd - 1].Action);
             }
         }
 

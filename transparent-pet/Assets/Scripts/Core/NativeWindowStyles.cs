@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace TransparentPet.Core
 {
@@ -20,6 +21,9 @@ namespace TransparentPet.Core
         const uint SWP_NOACTIVATE = 0x0010;
         const uint SWP_FRAMECHANGED = 0x0020;
 
+        /// <summary>Unity Player 主窗口的窗口类名（精确定位主窗口用）</summary>
+        const string UnityWindowClass = "UnityWndClass";
+
         delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
         [DllImport("user32.dll")]
@@ -31,6 +35,79 @@ namespace TransparentPet.Core
         [DllImport("user32.dll")]
         static extern bool IsWindowVisible(IntPtr hWnd);
 
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern int GetClassNameW(IntPtr hWnd, StringBuilder className, int maxCount);
+
+        [DllImport("user32.dll")]
+        static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        const int SW_HIDE = 0;
+        const int SW_SHOW = 5;
+
+        /// <summary>
+        /// 显示/隐藏窗口：Unity 个人版强制播放启动画面（PlayerSettings 的设置对免费版无效），
+        /// 故启动画面期间由 SplashHider 隐藏窗口，等 UniWinC 透明生效后再由 PetWindowSetup 显示。
+        /// </summary>
+        public static void SetVisible(IntPtr hWnd, bool visible)
+        {
+            if (hWnd == IntPtr.Zero)
+                return;
+            ShowWindow(hWnd, visible ? SW_SHOW : SW_HIDE);
+        }
+
+        // ── 启动画面屏蔽的隐藏/恢复配对 ──
+        // 两者成对使用：隐藏方（SplashHider，后台线程）记下句柄，恢复方（PetWindowSetup，
+        // 主线程）按同一句柄还原；无论哪一方先到都不会把窗口永久藏起来。
+
+        static readonly object suppressGate = new object();
+        static IntPtr suppressedWindow = IntPtr.Zero;
+        static bool suppressReleased;
+
+        /// <summary>
+        /// 启动画面期间隐藏主窗口（由 SplashHider 后台线程调用）。
+        /// 返回 true = 已处理（隐藏成功，或场景已放行无需再藏），调用方停止重试。
+        /// </summary>
+        public static bool HideMainWindowForSplash()
+        {
+            IntPtr hWnd;
+            lock (suppressGate)
+            {
+                // 场景已就绪并放行 → 这次隐藏来晚了，再藏就会让桌宠整轮不见
+                if (suppressReleased)
+                    return true;
+
+                hWnd = FindCurrentProcessTopLevelWindow(requireVisible: false);
+                if (hWnd == IntPtr.Zero)
+                    return false; // 窗口还没创建，调用方稍后重试
+
+                suppressedWindow = hWnd;
+            }
+
+            // 锁外调用：ShowWindow 从非属主线程调用会等主线程处理消息，别把锁带进去
+            ShowWindow(hWnd, SW_HIDE);
+            return true;
+        }
+
+        /// <summary>
+        /// 恢复启动画面期间被隐藏的主窗口（由 PetWindowSetup 主线程调用）。
+        /// 返回 false = 连窗口句柄都没拿到（调用方应记日志，并靠后续重试兜底）。
+        /// </summary>
+        public static bool ReleaseMainWindow()
+        {
+            IntPtr hWnd;
+            lock (suppressGate)
+            {
+                suppressReleased = true; // 先置位：之后再来的隐藏请求一律忽略
+                hWnd = suppressedWindow != IntPtr.Zero
+                    ? suppressedWindow
+                    : FindCurrentProcessTopLevelWindow(requireVisible: false);
+                if (hWnd == IntPtr.Zero)
+                    return false;
+            }
+
+            ShowWindow(hWnd, SW_SHOW);
+            return true;
+        }
 
         [DllImport("user32.dll")]
         static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
@@ -66,21 +143,56 @@ namespace TransparentPet.Core
                 SetWindowLong32(hWnd, GWL_EXSTYLE, (int)style);
         }
 
-        /// <summary>枚举找到当前进程的可见顶层主窗口（无 owner 的第一个）。</summary>
-        public static IntPtr FindCurrentProcessTopLevelWindow()
+        static bool IsUnityWindow(IntPtr hWnd)
         {
-            IntPtr found = IntPtr.Zero;
+            var buffer = new StringBuilder(256);
+            if (GetClassNameW(hWnd, buffer, buffer.Capacity) <= 0)
+                return false;
+            return buffer.ToString() == UnityWindowClass;
+        }
+
+        /// <summary>
+        /// 枚举找到当前进程的顶层主窗口（无 owner）。三级优先：
+        /// ① Unity 窗口类名精确匹配 → ② 可见的（无 owner 顶层窗口）→ ③ 隐藏的。
+        /// ③ 是必需的：启动画面屏蔽会把主窗口先藏起来，此后按可见性过滤就永远找不到它，
+        /// "恢复显示"会静默失效（窗口再也不出现）。requireVisible=false 才启用 ③。
+        /// </summary>
+        public static IntPtr FindCurrentProcessTopLevelWindow(bool requireVisible = true)
+        {
+            IntPtr unityWindow = IntPtr.Zero;
+            IntPtr visibleFallback = IntPtr.Zero;
+            IntPtr hiddenFallback = IntPtr.Zero;
             uint pid = GetCurrentProcessId();
+
             EnumWindows((hWnd, lParam) =>
             {
                 GetWindowThreadProcessId(hWnd, out uint windowPid);
                 if (windowPid != pid) return true;
-                if (!IsWindowVisible(hWnd)) return true;
                 if (GetWindow(hWnd, GW_OWNER) != IntPtr.Zero) return true;
-                found = hWnd;
-                return false;
+
+                var visible = IsWindowVisible(hWnd);
+                if (!visible && requireVisible) return true;
+
+                if (IsUnityWindow(hWnd))
+                {
+                    unityWindow = hWnd;
+                    return false; // 类名精确匹配，直接定案
+                }
+
+                if (visible)
+                {
+                    if (visibleFallback == IntPtr.Zero) visibleFallback = hWnd;
+                }
+                else if (hiddenFallback == IntPtr.Zero)
+                {
+                    hiddenFallback = hWnd;
+                }
+                return true;
             }, IntPtr.Zero);
-            return found;
+
+            if (unityWindow != IntPtr.Zero) return unityWindow;
+            if (visibleFallback != IntPtr.Zero) return visibleFallback;
+            return requireVisible ? IntPtr.Zero : hiddenFallback;
         }
 
         /// <summary>加 WS_EX_TOOLWINDOW 使窗口不出现在任务栏；已设置则幂等返回。</summary>

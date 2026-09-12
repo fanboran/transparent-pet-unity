@@ -123,6 +123,10 @@ namespace TransparentPet.Pet
         {
             var mouse = MouseScreenPos();
 
+            // 悬停上报：窗口层据此决定整窗穿透（替代 UniWinC 每帧读屏的命中检测，见 PointerHover）
+            if (sim.ContainsPoint(mouse))
+                PointerHover.ReportHover(Time.frameCount);
+
             if (Input.GetMouseButtonDown(0) && sim.TryGrab(mouse))
                 gravityOn = false; // 抓住即悬浮（拖拽中不施重力）
 

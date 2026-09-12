@@ -268,8 +268,14 @@ namespace TransparentPet.Pet
         void HandleInput()
         {
             var mouseScreen = MouseScreenPos();
+            var onPet = IsOnPet(mouseScreen);
 
-            if (Input.GetMouseButtonDown(0) && IsOnPet(mouseScreen)
+            // 悬停上报：窗口层据此决定整窗穿透（替代 UniWinC 每帧读屏的命中检测，
+            // 见 PointerHover）。与抓取判定同源，所见即所点。
+            if (onPet)
+                PointerHover.ReportHover(Time.frameCount);
+
+            if (Input.GetMouseButtonDown(0) && onPet
                 && PetInputArbiter.TryClaim(this, spriteRenderer.sortingOrder))
             {
                 physics.DragBegin(mouseScreen, logicScreenPos, NowMs());

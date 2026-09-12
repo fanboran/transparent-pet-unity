@@ -7,9 +7,9 @@ namespace TransparentPet.UI
 {
     /// <summary>
     /// 设置面板（IMGUI）。为什么用 OnGUI 而不是 UGUI Canvas：
-    /// 全屏透明窗口的穿透由 UniWinC 按像素 alpha 自动切换，IMGUI 绘制内容自带 alpha，
-    /// 鼠标落在面板上时窗口自动转为可交互；Canvas 方案在无边框置顶窗口上还需额外
-    /// 处理事件穿透与画布缩放，spike 阶段 IMGUI 是务实选择。
+    /// 面板是自绘的、位置固定，鼠标落在面板矩形内时向窗口层登记"指针下有可交互内容"，
+    /// 窗口即转为可交互（见 PointerHover / PetWindowSetup.UpdateClickThrough）；
+    /// Canvas 方案在无边框置顶窗口上还需额外处理事件穿透与画布缩放，spike 阶段 IMGUI 是务实选择。
     ///
     /// 数据流：Start 时从 PetConfigStore 载入工作副本 → 控件只改工作副本 →
     /// Commit 统一走"发布对应主题 → 落盘 → 广播 ConfigSaved"。
@@ -51,6 +51,22 @@ namespace TransparentPet.UI
         void OnDestroy()
         {
             EventBus.Unsubscribe<bool>(EventTopics.SettingsPanelToggleRequested, OnToggleRequested);
+        }
+
+        /// <summary>
+        /// 悬停上报：窗口层据"指针下有无可交互内容"决定整窗穿透，面板不在宠物命中判定里，
+        /// 必须自己登记，否则面板会被当成透明区域而点不动。
+        /// </summary>
+        void Update()
+        {
+            if (!Visible || config == null)
+                return;
+
+            // IMGUI 矩形原点在左上，Input.mousePosition 原点在左下 —— 换算后再比对
+            var mouse = Input.mousePosition;
+            var guiPoint = new Vector2(mouse.x, Screen.height - mouse.y);
+            if (PanelRect().Contains(guiPoint))
+                PointerHover.ReportHover(Time.frameCount);
         }
 
         void OnToggleRequested(bool show) => Visible = show;
