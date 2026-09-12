@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 史莱姆形状源（矢量）：1:1 取自 Godot 版 modules/pet/assets/pet_sprite.svg
+     用途：Unity 侧的运行时矢量渲染（TransparentPet.Display.VectorRenderer）。
+     Godot 版把同一份 SVG 交给内置 ThorVG 按需栅格化；本仓库用 SvgPathParser + SvgRasterizer
+     做等价的事——解析这条 path → 展平成多边形 → 扫描线填充成 Texture2D（alpha 即形状遮罩）。
+     着色器（Slime.shader，移植自 slime.gdshader）只取该 alpha 当轮廓，颜色全部由 shader 计算，
+     所以这里 fill 用白色即可（与 Godot 版一致）。
+     注意：文件扩展名故意是 .txt —— Unity 只有在这些扩展名（txt/xml/bytes/json…）下才把文件
+     当 TextAsset 打进包，`.svg` 在没装 Vector Graphics 包时是未知类型、运行时读不到文本。 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="132" viewBox="0 0 200 132">
+   <path d="M100 19.8
+            C150 19.8, 180 55, 180 88
+            C180 110, 165 121, 150 121
+            L50 121
+            C35 121, 20 110, 20 88
+            C20 55, 50 19.8, 100 19.8 Z"
+         fill="#FFFFFF" />
+</svg>
