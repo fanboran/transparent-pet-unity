@@ -1,0 +1,102 @@
+// 宠物配置模型 + JSON 持久化（对应 Godot 版 ConfigFile 存取，改用 JsonUtility）
+using System;
+using System.IO;
+using UnityEngine;
+
+namespace TransparentPet.Core
+{
+    /// <summary>抛射物理可调参数（载荷见 EventTopics.ThrowParamsChanged）。</summary>
+    [Serializable]
+    public class ThrowParams
+    {
+        /// <summary>重力加速度（px/s²）</summary>
+        public float gravity = 800f;
+
+        /// <summary>松手触发抛射的最小初速（px/s），低于此值视为放下</summary>
+        public float minSpeed = 350f;
+
+        /// <summary>抛射初速上限（px/s）</summary>
+        public float maxSpeed = 800f;
+
+        /// <summary>拖拽速度 → 抛射初速的放大倍率</summary>
+        public float multiplier = 2f;
+
+        /// <summary>抛射物理总开关</summary>
+        public bool enabled = true;
+    }
+
+    /// <summary>宠物全部持久化配置，由 PetConfigStore 负责 JSON 读写。</summary>
+    [Serializable]
+    public class PetConfig
+    {
+        /// <summary>相对基准缩放，合法范围 0.25~2.0</summary>
+        public float petScale = 1f;
+
+        /// <summary>当前角色 id（见 CharacterRegistry）</summary>
+        public string characterId = "slime_1";
+
+        /// <summary>窗口是否置顶</summary>
+        public bool alwaysOnTop = true;
+
+        /// <summary>开机自启动（托盘菜单用）</summary>
+        public bool autoStart = false;
+
+        /// <summary>抛射物理参数</summary>
+        public ThrowParams throwParams = new ThrowParams();
+
+        /// <summary>宠物屏幕像素 X 坐标（左上原点），-1 表示从未保存过位置</summary>
+        public float petScreenX = -1f;
+
+        /// <summary>宠物屏幕像素 Y 坐标（左上原点），-1 表示从未保存过位置</summary>
+        public float petScreenY = -1f;
+    }
+
+    /// <summary>
+    /// PetConfig 的 JSON 存取门面。filePath 参数可注入：传临时文件路径即可
+    /// 在 NUnit 测试中脱离 persistentDataPath 做往返验证。
+    /// </summary>
+    public static class PetConfigStore
+    {
+        /// <summary>默认配置文件路径：persistentDataPath/config.json</summary>
+        public static string DefaultFilePath =>
+            Path.Combine(Application.persistentDataPath, "config.json");
+
+        /// <summary>
+        /// 读取配置。文件不存在、内容为空、JSON 损坏等一切异常情况
+        /// 均返回带默认字段值的新 PetConfig，绝不抛异常。
+        /// </summary>
+        public static PetConfig Load(string filePath = null)
+        {
+            var path = filePath ?? DefaultFilePath;
+            try
+            {
+                if (!File.Exists(path))
+                    return new PetConfig();
+
+                var json = File.ReadAllText(path);
+                if (string.IsNullOrWhiteSpace(json))
+                    return new PetConfig();
+
+                var config = JsonUtility.FromJson<PetConfig>(json);
+                return config ?? new PetConfig(); // 合法 JSON 的 "null"/空对象等边界也兜底
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[PetConfigStore] 读取配置失败，回退默认配置：{path}\n{e.Message}");
+                return new PetConfig();
+            }
+        }
+
+        /// <summary>保存配置为缩进 JSON；目标目录不存在时自动创建。写入异常向上抛给调用方。</summary>
+        public static void Save(PetConfig config, string filePath = null)
+        {
+            var path = filePath ?? DefaultFilePath;
+
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+
+            File.WriteAllText(path, JsonUtility.ToJson(config, true));
+        }
+    }
+}
