@@ -11,11 +11,24 @@ namespace TransparentPet.EditorTools
     /// <summary>
     /// 场景与资产的程序化生成器：不手写场景 YAML，工程克隆后一条命令即可复原场景。
     /// 菜单：TransparentPet/生成宠物场景；批处理：-executeMethod TransparentPet.EditorTools.SceneGenerator.GenerateAll
-    /// 软体方案：宠物为 MeshFilter+MeshRenderer+SlimeBody+PetController（无贴图，程序化渲染）。
+    ///
+    /// 【版本保留约定（用户拍板）】一切效果迭代都作为独立版本场景永久保留：
+    /// Assets/Scenes/Versions/ 下一个版本一个目录。GenerateAll 成套生成并全部
+    /// 收录进构建设置（index 0 = 交付默认版本）。构建 exe 时默认只打 index 0
+    /// （BuildPlayer 显式指定）；体验其他版本：编辑器打开对应场景 Play，或改
+    /// BuildPlayer.ScenePath 后构建。
     /// </summary>
     public static class SceneGenerator
     {
-        const string ScenePath = "Assets/Scenes/PetScene.unity";
+        /// <summary>全部保留版本：路径 + 行为语义说明（新版本在表尾追加）。</summary>
+        static readonly (string scenePath, bool hoverMode, string description)[] Versions =
+        {
+            ("Assets/Scenes/Versions/V3PbfGravity/PetScene.unity", false,
+                "V3 · PBF 流体趴姿版：重力常开，落地压扁回弹趴在地面（当前交付默认）"),
+            ("Assets/Scenes/Versions/V2PbfHover/PetScene.unity", true,
+                "V2 · PBF 悬浮版：落定即关重力原地悬浮（旧行为，保留）"),
+        };
+
         const string SlimeMaterialPath = "Assets/Art/Pet/SlimeLiquidMat.mat";
 
         [MenuItem("TransparentPet/生成宠物场景")]
@@ -23,9 +36,16 @@ namespace TransparentPet.EditorTools
 
         public static void GenerateAll()
         {
-            BuildPetScene();
+            var scenes = new EditorBuildSettingsScene[Versions.Length];
+            for (var i = 0; i < Versions.Length; i++)
+            {
+                var (path, hoverMode, description) = Versions[i];
+                BuildPetScene(path, hoverMode);
+                scenes[i] = new EditorBuildSettingsScene(path, true);
+                Debug.Log($"[SceneGenerator] 版本场景生成完成: {path} —— {description}");
+            }
+            EditorBuildSettings.scenes = scenes;
             AssetDatabase.SaveAssets();
-            Debug.Log("[SceneGenerator] 场景生成完成: " + ScenePath);
         }
 
         /// <summary>确保液态玻璃着色器的材质资产存在并返回（着色器缺失时返回 null 并告警）。</summary>
@@ -47,7 +67,8 @@ namespace TransparentPet.EditorTools
             return material;
         }
 
-        static void BuildPetScene()
+        /// <summary>构建一个版本场景。hoverMode 经 SerializedObject 注入 PetController（场景级语义，非运行时开关）。</summary>
+        static void BuildPetScene(string scenePath, bool hoverMode)
         {
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
@@ -63,13 +84,16 @@ namespace TransparentPet.EditorTools
             camera.transform.position = new Vector3(0f, 0f, -10f);
             cameraGo.AddComponent<AudioListener>();
 
-            // 宠物本体：软体模拟 + 动态 Mesh 渲染（尺寸由 SlimeSimulation 以屏幕像素定义）
+            // 宠物本体：PBF 软体模拟 + 密度场表面渲染（尺寸由模拟以屏幕像素定义）
             var petGo = new GameObject("Pet");
             petGo.AddComponent<MeshFilter>();
             var meshRenderer = petGo.AddComponent<MeshRenderer>();
             meshRenderer.sharedMaterial = EnsureSlimeMaterial();
             petGo.AddComponent<SlimeBody>();
-            petGo.AddComponent<PetController>();
+            var controller = petGo.AddComponent<PetController>();
+            var so = new SerializedObject(controller);
+            so.FindProperty("hoverMode").boolValue = hoverMode;
+            so.ApplyModifiedProperties();
 
             // UI：设置面板 + HUD（IMGUI，透明窗口上自带 alpha → 面板区域自动可交互）
             var uiGo = new GameObject("PetUI");
@@ -81,8 +105,10 @@ namespace TransparentPet.EditorTools
             windowGo.AddComponent<UniWindowController>();
             windowGo.AddComponent<PetWindowSetup>();
 
-            EditorSceneManager.SaveScene(scene, ScenePath);
-            EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+            // SaveScene 对不存在的目录会"静默失败"（日志成功、磁盘无文件）——先建目录
+            var fullPath = System.IO.Path.GetFullPath(scenePath);
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath));
+            EditorSceneManager.SaveScene(scene, fullPath);
         }
     }
 }

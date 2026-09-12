@@ -12,7 +12,8 @@ namespace TransparentPet.EditorTools
     /// </summary>
     public static class BuildPlayer
     {
-        const string ScenePath = "Assets/Scenes/PetScene.unity";
+        /// <summary>交付默认版本（构建设置 index 0）；体验其他保留版本改此路径（见 SceneGenerator.Versions）。</summary>
+        const string ScenePath = "Assets/Scenes/Versions/V3PbfGravity/PetScene.unity";
 
         public static void BuildWindows64()
         {
