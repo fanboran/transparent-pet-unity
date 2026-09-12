@@ -40,7 +40,7 @@ namespace TransparentPet.Pet
         // ── 求解参数（对应 Unity_Slime PBF_Utils 与论文推荐值）──
         // SPH 标准配置：核半径 = 2.2×粒子间距（紧支撑覆盖 2~3 环邻居）。
         // 若 h=间距，最近邻恰在核边界上（W=0）→ 密度恒为 0 → 约束发散。
-        public const float Spacing = 9f;       // 撒点间距（px）
+        public const float Spacing = 7f;       // 撒点间距（px）
         public const float KernelH = 20f;      // 核半径（px）≈ 2.2 × Spacing
         const int SubSteps = 2;                 // 每帧子步（项目 FixedUpdate×2 同款）
         const int DensityLoops = 3;             // 每子步密度约束迭代环：单遍太软，
@@ -304,6 +304,11 @@ namespace TransparentPet.Pet
         void ApplyForces(float dt, in PbfEnvironment env)
         {
             var h = EffectiveH;
+            // 静息强阻尼：整团低速（未被抓）时每子步额外强耗散。PBF 表面波
+            // 由重力-压力每帧往返注入，普通阻尼下永不衰减→轮廓"反复颤抖"；
+            // 抓取/落地冲击会让速度立刻超阈值，自动唤醒，不影响交互
+            var idle = !grabbed && Velocity.sqrMagnitude < 40f * 40f;
+            var damping = idle ? 0.90f : VelocityDamping;
             // 形状记忆全局权重：质心速度低（已落定/静止）才生效；
             // 被抓住时强制为 0——拎在空中要自然下垂（受重力+键塑形），
             // 不能死抱着 SVG 趴姿模板把底面绷平
@@ -312,7 +317,7 @@ namespace TransparentPet.Pet
                 : 1f - Mathf.Clamp01(Velocity.magnitude / 350f);
             for (var i = 0; i < ParticleCount; i++)
             {
-                var v = vel[i] * VelocityDamping;
+                var v = vel[i] * damping;
                 if (env.GravityOn)
                     v.y += env.Gravity * dt;
 

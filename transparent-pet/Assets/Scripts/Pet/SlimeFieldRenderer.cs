@@ -29,8 +29,8 @@ namespace TransparentPet.Pet
         static readonly int BodyAlphaId = Shader.PropertyToID("_BodyAlpha");
         static readonly int SquashId = Shader.PropertyToID("_Squash");
 
-        /// <summary>iso 阈值相对质心核总和的比例（0.38：表面落在核半径 ~70% 处）。</summary>
-        public const float IsoRatio = 0.38f;
+        /// <summary>iso 阈值相对质心核总和的比例（平滑会轻微侵蚀表面，取低值回补）。</summary>
+        public const float IsoRatio = 0.34f;
 
         /// <summary>边缘过渡带比例（0.08×wC ≈ 1.5px 空间宽度，天然抗锯齿）。</summary>
         public const float BandRatio = 0.08f;
@@ -38,11 +38,15 @@ namespace TransparentPet.Pet
         readonly Material material;
         readonly ComputeBuffer buffer;
         readonly Vector4[] data;
+        readonly Vector2[] smA;                 // 邻居均值平滑的双缓冲（渲染专用，
+        readonly Vector2[] smB;                 // 物理粒子不受影响）
 
         public SlimeFieldRenderer(Material sharedMaterial, int particleCount)
         {
             material = UnityEngine.Object.Instantiate(sharedMaterial);
             data = new Vector4[particleCount];
+            smA = new Vector2[particleCount];
+            smB = new Vector2[particleCount];
             buffer = new ComputeBuffer(particleCount, 16);
             material.SetBuffer(ParticlesId, buffer);
         }
@@ -60,25 +64,69 @@ namespace TransparentPet.Pet
         {
             var positions = sim.Positions;
             var n = sim.Count;
-            var hWorld = sim.EffectiveH / 100f; // 世界单位核半径（1 unit = 100px，PetController.PPU）
 
-            // 粒子世界坐标 + 包围盒（pad 一个核半径，保证表面完整）
+            // ── 邻居均值平滑 ×2（Unity_Slime ComputeMeanPosJob 的降维）──
+            // 自由面粒子的排布噪声会在密度场上刻出固定刻痕（轮廓的"包"）；
+            // 渲染前把每个粒子替换为核半径内邻域的平均位置，刻痕被邻域平均
+            // 抹掉——等值面才真正圆滑。物理仍用原始粒子，渲染不反哺模拟。
+            for (var i = 0; i < n; i++)
+                smA[i] = toWorld(positions[i]);
+
+            var hWorld = sim.EffectiveH / 100f; // 世界单位核半径（1 unit = 100px）
+            var h2 = hWorld * hWorld;
+            var rawMinY = float.MaxValue;
+            for (var i = 0; i < n; i++)
+                rawMinY = Mathf.Min(rawMinY, smA[i].y);
+
+            for (var pass = 0; pass < 2; pass++)
+            {
+                var src = pass == 0 ? smA : smB;
+                var dst = pass == 0 ? smB : smA;
+                for (var i = 0; i < n; i++)
+                {
+                    var sum = src[i];
+                    var count = 1;              // 归一化必须用实际邻居数——
+                    for (var j = 0; j < n; j++)  // 除以恒量会把整团拉向原点
+                    {
+                        if (j == i) continue;
+                        var d = src[i] - src[j];
+                        if (d.sqrMagnitude < h2)
+                        {
+                            sum += src[j];
+                            count++;
+                        }
+                    }
+                    dst[i] = sum / count;
+                }
+            }
+            var smoothed = smA;
+
+            // 恢复接地：底面粒子邻域单侧，平滑会把它抬离地面——
+            // 整团竖直平移回原始最低点（平移不影响轮廓形状）
+            var smMinY = float.MaxValue;
+            for (var i = 0; i < n; i++)
+                smMinY = Mathf.Min(smMinY, smoothed[i].y);
+            var lift = rawMinY - smMinY;
+            if (lift > 0f)
+                for (var i = 0; i < n; i++)
+                    smoothed[i].y += lift;
+
+            // 粒子（平滑后）世界坐标 + 包围盒（pad 一个核半径，保证表面完整）
             var min = new Vector2(float.MaxValue, float.MaxValue);
             var max = new Vector2(float.MinValue, float.MinValue);
             var centroid = Vector2.zero;
             for (var i = 0; i < n; i++)
             {
-                var w = toWorld(positions[i]);
+                var w = smoothed[i];
                 data[i] = new Vector4(w.x, w.y, 0f, 0f);
-                min = Vector2.Min(min, new Vector2(w.x, w.y));
-                max = Vector2.Max(max, new Vector2(w.x, w.y));
-                centroid += positions[i];
+                min = Vector2.Min(min, w);
+                max = Vector2.Max(max, w);
             }
-            centroid /= n;
+            centroid = (min + max) * 0.5f;
 
             // iso 自标定：质心处的核总和 ≈ 内部密度（CPU 同款核，世界单位）
             var cw = toWorld(centroid);
-            float h2 = hWorld * hWorld, wC = 0f;
+            var wC = 0f; // h2 已在平滑段声明
             for (var i = 0; i < n; i++)
             {
                 var dx = cw.x - data[i].x;

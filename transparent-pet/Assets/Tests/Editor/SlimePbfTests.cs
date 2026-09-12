@@ -46,7 +46,7 @@ namespace TransparentPet.Tests
             var sim = new SlimePbf(Spawn, HalfWidth);
 
             Assert.Greater(sim.Count, 120, "半宽 88px 应撒出 >120 个粒子");
-            Assert.Less(sim.Count, 320, "粒子数失控（撒点间距算错）");
+            Assert.Less(sim.Count, 520, "粒子数失控（撒点间距算错）");
             Assert.Greater(sim.Rho0, 0f, "ρ0 应完成自适应标定");
 
             var size = sim.BoundsSize();
@@ -74,6 +74,31 @@ namespace TransparentPet.Tests
                 "落定后再静置 4s 质心漂移应很小（重力平衡态）");
             Assert.Less(Mathf.Abs(sim.LowestY - low0), 8f, "落地高度应稳定");
             Assert.IsTrue(sim.IsSettled, "静置后应处于低速状态");
+        }
+
+        // ── 2b. 表面微动停止：落定后轮廓不得"反复颤抖"（静息强阻尼的直接观测）──
+        [Test]
+        public void Settle_SurfaceMicroMotionStops()
+        {
+            var sim = new SlimePbf(Spawn, HalfWidth);
+            var env = GroundEnv();
+
+            for (var i = 0; i < 300; i++)
+                sim.StepFrame(Dt, env); // 落定
+
+            var before = new Vector2[sim.Count];
+            for (var i = 0; i < sim.Count; i++)
+                before[i] = sim.Positions[i];
+
+            for (var i = 0; i < 30; i++) // 静置 0.5s，观察表面运动
+                sim.StepFrame(Dt, env);
+
+            var maxDrift = 0f;
+            for (var i = 0; i < sim.Count; i++)
+                maxDrift = Mathf.Max(maxDrift, Vector2.Distance(sim.Positions[i], before[i]));
+
+            Assert.Less(maxDrift, 8f,
+                $"静置 0.5s 内单粒子最大漂移 {maxDrift:F1}px 应 <8px（<0.27px/帧，表面波已死）");
         }
 
         // ── 3. 重力落地：底部被地面钳制，整体趋停 ──
