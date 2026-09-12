@@ -17,7 +17,7 @@ Shader "TransparentPet/SlimeLiquid"
 {
     Properties
     {
-        _BodyColor ("主体色", Color) = (0.1, 0.3, 0.6, 1)
+        _BodyColor ("主体色", Color) = (0.16, 0.48, 0.92, 1)
         _BodyAlpha ("主体不透明度", Range(0.35, 1)) = 0.75
         _Squash ("挤压脉冲", Range(0, 1)) = 0
         _VelocityW ("速度模长", Float) = 0
