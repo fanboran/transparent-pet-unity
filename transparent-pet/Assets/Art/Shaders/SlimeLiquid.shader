@@ -66,9 +66,11 @@ Shader "TransparentPet/SlimeLiquid"
 
             float4 frag(v2f i) : SV_Target
             {
-                // 覆盖度（顶点插值）直接作为透明系数：边缘密度低于 iso 的部分
-                // 平滑渐隐，内部为 1——不需要 fwidth，密度场本身就是连续场
-                float alpha = _BodyAlpha * i.color.a;
+                // 覆盖度（顶点插值）→ smoothstep 软化后再作为透明系数：
+                // 顶点色网格量化出的 alpha 台阶被 S 曲线抹平（马赛克感来源之一），
+                // 边缘密度低于 iso 的部分平滑渐隐，内部为 1
+                float coverage = smoothstep(0.0, 1.0, i.color.a);
+                float alpha = _BodyAlpha * coverage;
                 // 挤压脉冲轻微提亮（果冻受激反馈）
                 float3 col = _BodyColor.rgb * (1.0 + _Squash * 0.18);
                 return float4(col, alpha);

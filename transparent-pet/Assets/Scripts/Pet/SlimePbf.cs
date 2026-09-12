@@ -46,21 +46,28 @@ namespace TransparentPet.Pet
         const int DensityLoops = 3;             // 每子步密度约束迭代环：单遍太软，
                                                 // 重力会把趴姿压成薄饼；3 遍接近不可压缩，
                                                 // 落地后保持"压扁但有厚度"的果冻趴姿
-        const float VelocityDamping = 0.99f;    // 每子步速度保留（项目 ×0.99）
+        const float VelocityDamping = 0.985f;   // 每子步速度保留（加大耗散，静止更快）
         const float MaxSpeed = 1800f;           // 速度硬上限 px/s（项目 clamp 30 单位）
-        const float DensityClampLow = -0.2f;    // C 下限（项目防表面负压）
-        const float TensileK = 0.3f;            // s_corr k（论文 0.1；桌面果冻加大到 0.3 换更顺滑的表层）
+        const float DensityClampLow = -0.08f;   // C 下限收紧：欠密度（被拉稀）区受到更强回拉——PBF 的"黏性"本体，防一拉就散
+        const float TensileK = 0.5f;            // s_corr k（论文 0.1；桌面果冻加大换更顺滑更强黏聚的表层）
         const float TensileDqRatio = 0.25f;     // dq = 0.25h（论文 0.2~0.3h）
-        const float XsphViscosity = 6f;         // XSPH 强度（果冻内聚，观感项）
+        const float XsphViscosity = 14f;         // XSPH 强度（果冻内聚，观感项）
         const float ShapeMemoryAccel = 100f;    // 静置形状记忆加速度（px/s²，≈重力15%）：
                                                 // 果冻的"形状弹性"——纯流体在平底锅上物理上
                                                 // 必摊成薄饼，弹性恢复力顶住重力才蹲得住
                                                 // （平衡高差 = g/k ≈ 8px → 静息 ~85% 高度）
-        const float GrabRadiusMul = 2.8f;       // 拖拽影响半径 = mul × h
+        const float GrabRadiusMul = 3.5f;       // 拖拽影响半径 = mul × h（更宽=整团被拎起）
         const float GrabFollowLerp = 0.5f;      // 影响区内粒子速度向控制器速度的 lerp 系数
-        const float GrabPullAccel = 1200f;      // 影响区内粒子向抓取点的吸引加速度
+        const float GrabPullAccel = 450f;        // 影响区内粒子向抓取点的吸引加速度（温和，防撕开）
         const int MaxNeighbors = 48;
         const int VelocityBufferSize = 8;       // 甩出速度滑窗（Godot 版语义）
+
+        // ── 弹性键（黏性的真正来源）──
+        // PBF 密度约束只抗压缩、不抗拉：一拉内部就撕出空洞、表层甩飞=分身。
+        // 在初始邻居对之间建立 PBD 距离弹簧（LiquidFun elastic 粒子同思路）：
+        // 拉拽时整团弹性跟随，抗拉由键承担——分身在结构上不可能发生。
+        const float BondRadiusMul = 1.35f;      // 建键距离 = mul × Spacing（约 6 键/粒子）
+        const float BondStiffness = 0.15f;      // 单次投影刚度（×3 迭代 ≈ 0.4 有效，软果冻）
 
         // ── 粒子状态（平行数组）──
         public readonly int ParticleCount;
@@ -72,6 +79,12 @@ namespace TransparentPet.Pet
         readonly Vector2[] restOffset;          // 形状记忆锚（质心系，Godot SVG 静息轮廓）
         readonly int[] nbrCount;
         readonly int[] nbrIdx;                  // [i*MaxNeighbors + k]
+
+        // ── 弹性键表（初始邻居对）──
+        readonly int[] bondA;
+        readonly int[] bondB;
+        readonly float[] bondRest;
+        readonly int bondCount;
 
         // ── 拖拽控制器 ──
         bool grabbed;
@@ -137,6 +150,34 @@ namespace TransparentPet.Pet
             prevCentroidForVel = Centroid;
             for (var i = 0; i < ParticleCount; i++)
                 restOffset[i] = pos[i] - Centroid;   // 形状锚 = SVG 静息轮廓
+
+            // ── 建弹性键：初始距离 < BondRadiusMul×Spacing 的粒子对 ──
+            var bondList = new List<int>(ParticleCount * 12);
+            var restList = new List<float>(ParticleCount * 12);
+            var bondR2 = BondRadiusMul * Spacing * (BondRadiusMul * Spacing);
+            for (var i = 0; i < ParticleCount; i++)
+            {
+                for (var j = i + 1; j < ParticleCount; j++)
+                {
+                    var d2 = (pos[i] - pos[j]).sqrMagnitude;
+                    if (d2 < bondR2)
+                    {
+                        bondList.Add(i);
+                        bondList.Add(j);
+                        restList.Add(Mathf.Sqrt(d2));
+                    }
+                }
+            }
+            bondCount = restList.Count;
+            bondA = new int[bondCount];
+            bondB = new int[bondCount];
+            bondRest = new float[bondCount];
+            for (var b = 0; b < bondCount; b++)
+            {
+                bondA[b] = bondList[b * 2];      // bondList 是交错表 [a0,b0,a1,b1,...]
+                bondB[b] = bondList[b * 2 + 1];  // 按 2 步长解包，键对才与 rest 一一对应
+                bondRest[b] = restList[b];
+            }
 
             // ρ0 自适应标定：初始布局是"理想六边形填充"，其平均密度即目标密度
             rho0 = AverageDensity();
@@ -204,12 +245,32 @@ namespace TransparentPet.Pet
             BuildNeighbors();
             for (var k = 0; k < DensityLoops; k++)
             {
+                SolveBonds();      // 弹性键：抗拉黏性（每环先键后密度，位置投影互相收敛）
                 ComputeLambda();
                 ApplyDeltaPos();
             }
             ProjectBounds(env);
             FinishStep(dt);
             ApplyXsphViscosity();
+        }
+
+        /// <summary>
+        /// 弹性键求解：初始邻居对的距离弹簧（PBD 位置投影，对称无净力）。
+        /// 拉拽时键把力传遍整团——拎起一半，另一半被键拖住跟上，不撕洞不分身。
+        /// </summary>
+        void SolveBonds()
+        {
+            for (var b = 0; b < bondCount; b++)
+            {
+                var a = bondA[b];
+                var c = bondB[b];
+                var d = pred[c] - pred[a];
+                var len = Mathf.Max(d.magnitude, 1e-5f);
+                var diff = (len - bondRest[b]) / len * (BondStiffness * 0.5f);
+                var shift = d * diff;
+                pred[a] += shift;
+                pred[c] -= shift;
+            }
         }
 
         // ── 1. 外力 + 预测位置（对应 ApplyForceJob）──

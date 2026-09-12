@@ -25,8 +25,8 @@ namespace TransparentPet.Pet
         /// <summary>覆盖度渐变带宽度（相对 ρ0）：决定边缘 AA 的空间宽度。</summary>
         public const float BandRatio = 0.22f;
 
-        /// <summary>场网格单元尺寸（px）：越小轮廓越细，4px 已无可见折角。</summary>
-        public const float CellSize = 4f;
+        /// <summary>场网格单元尺寸（px）：2.5px——4px 时等值线在格上量化出马赛克块，细一倍根治。</summary>
+        public const float CellSize = 2.5f;
 
         // 复用缓冲（单线程主循环使用；避免每帧 GC）
         static readonly List<Vector3> Vertices = new List<Vector3>(1024);
@@ -106,7 +106,7 @@ namespace TransparentPet.Pet
             //       一道 12px 平滑窗压不住核半径 20px 的密度波纹，两道才够）──
             if (blurBuf == null || blurBuf.Length < gridW * gridH)
                 blurBuf = new float[gridW * gridH];
-            for (var pass = 0; pass < 3; pass++)
+            for (var pass = 0; pass < 4; pass++)
             {
                 for (var gy = 0; gy < gridH; gy++)
                 {

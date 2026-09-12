@@ -92,6 +92,8 @@ namespace TransparentPet.EditorTools
 
             var restSize = sim.BoundsSize();
             var impactCaptured = false;
+            bool pullPhase = false;
+            var grabAnchor = Vector2.zero;
             for (var frame = 0; frame <= 360; frame++)
             {
                 if (frame > 0)
@@ -106,7 +108,22 @@ namespace TransparentPet.EditorTools
                     Snap(cam, rt, "pbf_impact.png");
                 }
                 if (frame == 240) // 落定趴姿（重力常开平衡态）
+                {
                     Snap(cam, rt, "pbf_settled.png");
+                    Closeup(cam, rt, sim, "closeup_settled.png"); // 特写：边界马赛克/抖动感检查
+                }
+                // 上拉相位：验证黏性（整团应被拎起拉伸，不许分身）
+                if (frame == 242)
+                {
+                    pullPhase = sim.TryGrab(sim.Centroid);
+                    grabAnchor = sim.Centroid;
+                }
+                if (pullPhase && frame > 242 && frame <= 282)
+                    sim.MoveGrab(grabAnchor + new Vector2(20f, -(frame - 242) * 4f), frame * 16.7f); // 上拉 160px
+                if (frame == 282)
+                    Closeup(cam, rt, sim, "closeup_drag.png"); // 特写：上拉中的黏连状态
+                if (frame == 284 && pullPhase)
+                    sim.Release(350f, 800f, 2f, true);
                 if (frame == 360 && refGo != null)
                 {
                     refGo.SetActive(true); // 同框对比：左原版 / 右 PBF
@@ -129,6 +146,19 @@ namespace TransparentPet.EditorTools
             File.WriteAllBytes(Path.Combine(OutDir, file), tex.EncodeToPNG());
             Object.DestroyImmediate(tex);
             Debug.Log("[SlimeSnapshot] 已保存 " + file);
+        }
+
+        /// <summary>特写镜头：相机推近史莱姆质心（视野 ~300px 高），拍完复原。</summary>
+        static void Closeup(Camera cam, RenderTexture rt, SlimePbf sim, string file)
+        {
+            var c = sim.Centroid;
+            var homePos = cam.transform.position;
+            var homeSize = cam.orthographicSize;
+            cam.transform.position = new Vector3((c.x - W * 0.5f) / PPU, (H * 0.5f - c.y) / PPU, -10f);
+            cam.orthographicSize = 1.5f;
+            Snap(cam, rt, file);
+            cam.transform.position = homePos;
+            cam.orthographicSize = homeSize;
         }
 
         static void Rebuild(MeshFilter mf, SlimePbf sim)
