@@ -123,7 +123,6 @@ Shader "TransparentPet/SlimeRing"
         float  _RefractStrength;
         float  _FlowSpeed;
         float  _Squash;
-        float  _Squash;
         float  _VelocityW;
         float  _TransparencyBoost;
 

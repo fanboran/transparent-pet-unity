@@ -229,7 +229,7 @@ namespace TransparentPet.Pet
 
             children.Add(child);
             childBodies.Add(childBody);
-            childHadGravity.Add(true); // 分身出生即有重力，落定后转悬浮
+            childHadGravity.Add(false); // 分身同样保持漂浮：碎渣直接飘回母体，不落地
         }
 
         // ── EventBus 处理器（SettingsPanel 发布 → 此处应用）──
@@ -271,8 +271,11 @@ namespace TransparentPet.Pet
         {
             if (sim == null)
                 return;
+            // 故意不打开重力：V2 的特征是"漂浮着 + 撞墙碎成渣 → 分身飘回"，
+            // 开着重力抛出去会先落地，就演出成普通的落地软体了
             sim.Launch(screenVelocity);
-            gravityOn = true; // 抛出即受重力（与用户甩出的语义一致）
+            Debug.Log($"[V2Demo] 注入抛出速度 {screenVelocity}，注入后质心速度 {sim.Velocity}" +
+                      $"（撞墙阈值 {SplitImpactSpeed}）");
         }
 
         // ── 环境/坐标工具 ──

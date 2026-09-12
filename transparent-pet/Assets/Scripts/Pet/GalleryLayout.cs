@@ -41,6 +41,9 @@ namespace TransparentPet.Pet
         [Tooltip("展厅自动演示：启动后延迟（秒）自动把分裂版甩向侧墙（分裂是撞墙触发的，静置看不出来）")]
         public float ShowcaseLaunchDelay = 3.5f;
 
+        [Tooltip("演示重复间隔（秒）；0 = 只演示一次。周期重复才能让「漂浮+碎成渣+飘回」持续可见")]
+        public float ShowcaseRepeatInterval = 5.5f;
+
         [Tooltip("自动演示的抛射速度（屏幕像素/秒；水平分量会自动朝最近的侧墙）")]
         public Vector2 ShowcaseLaunchVelocity = new Vector2(1500f, -100f);
 
@@ -83,6 +86,10 @@ namespace TransparentPet.Pet
                 ring.LaunchForShowcase(v);
                 Debug.Log($"[GalleryLayout] 展厅演示：分裂版以 {v} 抛向侧墙（撞墙触发分裂）");
             }
+
+            // 周期重复：单次演示一闪而过（尤其分身体积小），持续上演才看得出这是它的招牌行为
+            if (ShowcaseRepeatInterval > 0f)
+                Invoke(nameof(TriggerShowcaseSplit), ShowcaseRepeatInterval);
         }
 
         void LogActualPositions()
@@ -100,6 +107,8 @@ namespace TransparentPet.Pet
             foreach (var c in GetComponentsInChildren<PetController>(true))
                 pets.Add(c);
             foreach (var c in GetComponentsInChildren<SplitPetController>(true))
+                pets.Add(c);
+            foreach (var c in GetComponentsInChildren<MeshPetController>(true))
                 pets.Add(c);
             pets.Sort((a, b) => a.transform.position.x.CompareTo(b.transform.position.x));
         }
@@ -121,8 +130,13 @@ namespace TransparentPet.Pet
             for (var i = 0; i < count; i++)
             {
                 var t = (i + 1f) / (count + 1f); // 均匀分布（n+1 个间隔，两端留白）
-                var x = width * Mathf.Lerp(Margin, 1f - Margin, t);
-                var isSoftBody = pets[i] is PetController || pets[i] is SplitPetController;
+                // 分裂版贴左墙摆放：它的演示要撞左墙，行程越短撞墙时保住的法向速度越多
+                // （软体速度阻尼 0.985/子步，飞 1000px 能衰减掉一半以上）
+                var x = pets[i] is SplitPetController
+                    ? width * 0.10f
+                    : width * Mathf.Lerp(Margin, 1f - Margin, t);
+                var isSoftBody = pets[i] is PetController || pets[i] is SplitPetController
+                                 || pets[i] is MeshPetController;
                 // 软体版从空中错落落下（0.32~0.52 屏高）；贴图版没有落地物理，直接贴地摆放
                 var y = isSoftBody && DropIn ? ground * (0.32f + 0.10f * (i % 3)) : ground - 70f;
                 var position = new Vector2(x, y);
@@ -149,6 +163,14 @@ namespace TransparentPet.Pet
                         case SplitPetController ring:
                             ring.SetPersistPosition(false);
                             ring.SetSpawnOverride(position);
+                            break;
+
+                        case MeshPetController mesh:
+                            mesh.SetPersistPosition(false);
+                            mesh.SetSpawnOverride(position);
+                            // V2（第一个流体版）：一出生就飘在空中，不先落地
+                            if (mesh.IsHoverMode)
+                                mesh.SetSettledHover(true);
                             break;
                     }
 
@@ -210,6 +232,8 @@ namespace TransparentPet.Pet
                     return pbf.ScreenPosition;
                 case SplitPetController ring:
                     return ring.ScreenPosition;
+                case MeshPetController mesh:
+                    return mesh.ScreenPosition;
                 default:
                     return Vector2.zero;
             }

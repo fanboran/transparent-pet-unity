@@ -40,6 +40,10 @@ namespace TransparentPet.EditorTools
             /// <summary>轮廓环软体（28 粒子 → 动态 Mesh）：撞墙面积转移式分裂 + 分身吸引融合
             /// （历史实现复活版，见 SplitPetController / SlimeSimulation 文件头）</summary>
             RingSplit,
+
+            /// <summary>第一个流体版本（PBF + Marching Squares 等值线渲染，git e7341a2/e1653e1）：
+            /// 粒子被拉散时等值线会断裂成一块块——即"碎成渣"的观感来源</summary>
+            PbfMesh,
         }
 
         /// <summary>全部保留版本：路径 + 类型 + 行为语义说明（新版本在表尾追加）。</summary>
@@ -51,17 +55,18 @@ namespace TransparentPet.EditorTools
                 "V6 · 纯烘焙贴图版：PetSlime.png 原样显示，零着色器零表现层（存档）"),
             ("Assets/Scenes/Versions/V5SvgClassic/PetScene.unity", PetKind.SvgClassic, false,
                 "V5 · 玻璃着色器版：贴图仅当 alpha 轮廓，颜色全由 Slime.shader 计算（存档）"),
-            ("Assets/Scenes/Versions/V2SplitFusion/PetScene.unity", PetKind.RingSplit, false,
-                "V2 · 轮廓环软体分裂版：撞墙分裂出分身、分身被吸引飘回融合（面积守恒；用户认知的\"会分裂的 V2\"）"),
+            ("Assets/Scenes/Versions/V4SplitFusion/PetScene.unity", PetKind.RingSplit, false,
+                "V4 · 轮廓环软体分裂版：撞墙分裂出分身、分身被吸引飘回融合（早于 PBF 流体的实验版本；历史复活）"),
             ("Assets/Scenes/Versions/V3PbfGravity/PetScene.unity", PetKind.Pbf, false,
                 "V3 · PBF 流体趴姿版：重力常开软体（存档）"),
-            ("Assets/Scenes/Versions/V9PbfHover/PetScene.unity", PetKind.Pbf, true,
-                "V9 · PBF 悬浮版：落定关重力悬浮软体（存档；原 V2 编号于 2026-09 让位给分裂版）"),
+            ("Assets/Scenes/Versions/V2PbfHover/PetScene.unity", PetKind.PbfMesh, true,
+                "V2 · 第一个流体物理版本（PBF + 等值线 mesh 渲染）：落定关重力漂浮，拉扯过猛时轮廓断裂成块（碎成渣）"),
         };
 
         const string SlimeMaterialPath = "Assets/Art/Pet/SlimeMat.mat";             // Slime.shader（SVG 版）
         const string SlimeLiquidMaterialPath = "Assets/Art/Pet/SlimeLiquidMat.mat"; // SlimeLiquid.shader（PBF 版）
         const string SlimeRingMaterialPath = "Assets/Art/Pet/SlimeRingMat.mat";     // SlimeRing.shader（轮廓环软体版）
+        const string SlimeMeshMaterialPath = "Assets/Art/Pet/SlimeMeshMat.mat";     // SlimeMesh.shader（第一个流体版）
         const string BakedMaterialPath = "Assets/Art/Pet/BakedSpriteMat.mat";       // Sprites/Default（纯烘焙图版）
         const string PetTexturePath = "Assets/Art/Pet/PetSlime.png";
 
@@ -224,6 +229,19 @@ namespace TransparentPet.EditorTools
                     petGo.AddComponent<SplitPetController>();
                     break;
                 }
+                case PetKind.PbfMesh:
+                {
+                    // 第一个流体版本：PBF 物理 + Marching Squares 等值线 mesh（粒子散开时轮廓断裂）
+                    petGo.AddComponent<MeshFilter>();
+                    var meshRenderer = petGo.AddComponent<MeshRenderer>();
+                    meshRenderer.sharedMaterial = EnsureMaterial("TransparentPet/SlimeMesh", SlimeMeshMaterialPath);
+                    petGo.AddComponent<SlimeMeshBody>();
+                    var controller = petGo.AddComponent<MeshPetController>();
+                    var so = new SerializedObject(controller);
+                    so.FindProperty("hoverMode").boolValue = hoverMode;
+                    so.ApplyModifiedProperties();
+                    break;
+                }
             }
         }
 
@@ -239,12 +257,11 @@ namespace TransparentPet.EditorTools
         /// </summary>
         static readonly (PetKind kind, bool hoverMode, string label)[] GalleryPets =
         {
-            // V2 放最左：它的分裂演示要飞向侧墙，行程越短留着撞墙的速度越多（软体有速度阻尼）
-            (PetKind.RingSplit,  false, "V2 · 轮廓软体：撞墙分裂 + 分身飘回（甩向侧墙试试）"),
+            // V2 = 第一个流体物理版本（PBF + 等值线 mesh）：漂浮、拉扯会断裂成块
+            (PetKind.PbfMesh,    true,  "V2 · 第一个流体版（PBF + 等值线渲染 · 漂浮 · 会碎成块）"),
             (PetKind.SvgLife,    false, "V7 · 生命感（呼吸 / 倾斜 / 落地挤压）"),
             (PetKind.SvgClassic, false, "V5 · 玻璃着色器 Slime.shader"),
-            (PetKind.Pbf,        false, "V3 · PBF 软体（重力落地）"),
-            (PetKind.Pbf,        true,  "V9 · PBF 软体（悬浮空中 · 唯一不落地的）"),
+            (PetKind.Pbf,        false, "V3 · PBF 流体（metaball 渲染 · 重力落地）"),
         };
 
         [MenuItem("TransparentPet/生成展厅场景（各版本同屏）")]
