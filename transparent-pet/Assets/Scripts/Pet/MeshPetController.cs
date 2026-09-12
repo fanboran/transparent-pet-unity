@@ -90,7 +90,7 @@ namespace TransparentPet.Pet
 
         void Update()
         {
-            // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段
+            // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段（顶层栈硬退，同托盘退出）
             if (Input.GetKeyDown(KeyCode.Escape))
             {
                 HardExit.Now();
@@ -156,16 +156,16 @@ namespace TransparentPet.Pet
         /// <summary>关闭位置持久化（多只同屏时不写配置，避免互相覆盖）</summary>
         public void SetPersistPosition(bool persist) => persistPosition = persist;
 
-        /// <summary>直接应用角色配色（绕开 EventBus——广播会让同屏所有史莱姆一起变色）</summary>
+        /// <summary>直接应用角色配色（绕开 EventBus）</summary>
         public void ApplyCharacterDirect(string id) => bodyColor = CharacterRegistry.GetById(id).GlassColor;
 
-        /// <summary>当前质心屏幕位置（展厅标签绘制用；Start 之前为原点）</summary>
+        /// <summary>当前质心屏幕位置（展厅标签绘制用）</summary>
         public Vector2 ScreenPosition => sim != null ? sim.Centroid : Vector2.zero;
 
-        /// <summary>是否悬浮语义（展厅据此识别"该悬停在空中展示的那只"）</summary>
+        /// <summary>是否悬浮语义（展厅据此识别"该悬停展示的那只"）</summary>
         public bool IsHoverMode => hoverMode;
 
-        /// <summary>展厅用：预置"已落定"标记，让悬浮版一出生就停在空中飘着（不先落地）</summary>
+        /// <summary>展厅用：预置"已落定"，让悬浮版一出生就飘在空中（不先落地）</summary>
         public void SetSettledHover(bool settled) => hoverSettled = settled;
 
         // ── 环境/坐标工具 ──
