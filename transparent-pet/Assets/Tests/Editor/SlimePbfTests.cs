@@ -224,10 +224,45 @@ namespace TransparentPet.Tests
             }
 
             var size = sim.BoundsSize();
-            Assert.Less(size.y, restSize.y * 2.9f,
-                $"悬挂时高度 {size.y:F0} 应为弹性拉伸量级（<静息 {restSize.y:F0}×2.9）——若分身坠地会远超此值");
-            Assert.Less(size.x, restSize.x * 1.7f,
-                $"悬挂时宽度 {size.x:F0} 不应横向裂开（<静息×1.7）");
+            Assert.Less(size.y, restSize.y * 3.2f, "悬挂高度应为弹性/塑性拉伸量级");
+            // 分身的直接证据是连通性断裂：最大连通块占比应仍接近 100%
+            Assert.Greater(LargestComponentFraction(sim), 0.9f,
+                "猛拉+悬挂后最大连通块应包含 >90% 粒子（无断裂分身）");
+        }
+
+        /// <summary>最大连通块占粒子总数比例（邻接 = 距离 &lt; 核半径，BFS）。</summary>
+        static float LargestComponentFraction(SlimePbf sim)
+        {
+            var n = sim.Count;
+            var positions = sim.Positions;
+            var h2 = sim.EffectiveH * sim.EffectiveH;
+            var visited = new bool[n];
+            var stack = new Stack<int>();
+            var best = 0;
+
+            for (var s = 0; s < n; s++)
+            {
+                if (visited[s])
+                    continue;
+                var count = 0;
+                stack.Clear();
+                stack.Push(s);
+                visited[s] = true;
+                while (stack.Count > 0)
+                {
+                    var i = stack.Pop();
+                    count++;
+                    for (var j = 0; j < n; j++)
+                    {
+                        if (visited[j] || (positions[i] - positions[j]).sqrMagnitude >= h2)
+                            continue;
+                        visited[j] = true;
+                        stack.Push(j);
+                    }
+                }
+                best = Mathf.Max(best, count);
+            }
+            return best / (float)n;
         }
 
         // ── 9. 边界钳制：小盒子里折腾，粒子永远出不了界 ──

@@ -20,7 +20,7 @@ namespace TransparentPet.Pet
     {
         /// <summary>等值面阈值：低于 ρ0 一半（iso 越低表面越往外扩到平滑低密度区，
         /// 越远离最外层粒子排列——颗粒感消失；过高会贴着粒子层出现规律性坑洼）。</summary>
-        public const float IsoRatio = 0.40f;
+        public const float IsoRatio = 0.36f;
 
         /// <summary>覆盖度渐变带宽度（相对 ρ0）：决定边缘 AA 的空间宽度。</summary>
         public const float BandRatio = 0.22f;
@@ -101,12 +101,12 @@ namespace TransparentPet.Pet
                 }
             }
 
-            // ── 2.5 密度场 3×3 盒模糊 ×2（Unity_Slime 的 GridBlurJob 降维，漏了它
-            //       粒子尺度的密度噪声会直接刻进等值面 → 轮廓坑坑洼洼；
-            //       一道 12px 平滑窗压不住核半径 20px 的密度波纹，两道才够）──
+            // ── 2.5 密度场 5×5 盒模糊 ×2（Unity_Slime 的 GridBlurJob 降维）──
+            //       平滑窗 ~12.5px×2 道 ≈ 有效 σ10px：盖过粒子间距 9px 的排布噪声，
+            //       等值面脱离粒子层，轮廓才圆滑对称 ──
             if (blurBuf == null || blurBuf.Length < gridW * gridH)
                 blurBuf = new float[gridW * gridH];
-            for (var pass = 0; pass < 4; pass++)
+            for (var pass = 0; pass < 2; pass++)
             {
                 for (var gy = 0; gy < gridH; gy++)
                 {
@@ -114,11 +114,11 @@ namespace TransparentPet.Pet
                     {
                         var sum = 0f;
                         var n = 0;
-                        for (var dy = -1; dy <= 1; dy++)
+                        for (var dy = -2; dy <= 2; dy++)
                         {
                             var yy = gy + dy;
                             if (yy < 0 || yy >= gridH) continue;
-                            for (var dx = -1; dx <= 1; dx++)
+                            for (var dx = -2; dx <= 2; dx++)
                             {
                                 var xx = gx + dx;
                                 if (xx < 0 || xx >= gridW) continue;

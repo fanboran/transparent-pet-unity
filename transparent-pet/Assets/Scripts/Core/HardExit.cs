@@ -31,5 +31,16 @@ namespace TransparentPet.Core
             // 理论不可达；若 Exit 被运行时吞掉则强杀进程兜底
             Process.GetCurrentProcess().Kill();
         }
+
+        /// <summary>
+        /// 进程强杀（TerminateProcess）：唯一在任何上下文都保证生效的退出方式——
+        /// 嵌套 Win32 模态循环、运行时吞掉 Exit、任何挂起状态都拦不住它。
+        /// 托盘菜单回调直接用这个（调用方先 Dispose 托盘图标防悬空）。
+        /// </summary>
+        public static void KillNow()
+        {
+            killing = true;
+            Process.GetCurrentProcess().Kill();
+        }
     }
 }

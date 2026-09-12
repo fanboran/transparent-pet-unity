@@ -50,20 +50,36 @@ namespace TransparentPet.Core
 
 #if !UNITY_EDITOR
             // 托盘：全屏无边框窗口的控制出口（编辑器下跳过）。
-            // "设置"走 EventBus（跨模块解耦）；"退出"只置标志位——绝不在 Win32
-            // 模态循环回调栈里直接退出（Application.Quit/Environment.Exit 会被
-            // 运行时吞掉，进程赖死），延迟到 Update 顶层由 HardExit 三级兜底
+            // "退出"直接 KillNow（TerminateProcess 内核级强杀，嵌套模态循环也
+            // 拦不住——Environment.Exit 在部分环境会被运行时吞掉导致赖死）；
+            // 调用方先 Dispose 托盘图标，图标不悬空
             tray = new NativeTray("透明宠物", new[]
             {
                 new TrayMenuItem("设置", () => EventBus.Publish(EventTopics.SettingsPanelToggleRequested, true)),
                 new TrayMenuItem(), // 分隔线
-                new TrayMenuItem("退出", () => exitRequested = true),
+                new TrayMenuItem("退出", ExitFromTray),
             });
 #endif
             StartCoroutine(HideFromTaskbarWhenReady());
         }
 
         bool exitRequested;
+
+        void ExitFromTray()
+        {
+            if (tray != null)
+            {
+                tray.Dispose();
+                tray = null;
+            }
+            HardExit.KillNow();
+        }
+
+#if !UNITY_EDITOR
+        // 优雅退出（ESC/Application.Quit 路径）的最终兜底：退出流程结束的瞬间
+        // 强杀，杜绝任何形态的残留
+        void OnApplicationQuit() => HardExit.KillNow();
+#endif
 
         void Update()
         {
