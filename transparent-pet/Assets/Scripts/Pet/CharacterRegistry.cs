@@ -28,29 +28,30 @@ namespace TransparentPet.Pet
     {
         const string DefaultId = "slime_1";
 
-        /// <summary>全部内置角色预设（新增角色只需在此追加一条）。</summary>
+        /// <summary>全部内置角色预设（新增角色只需在此追加一条）。
+        /// 配色亮度锚定原版观感（深色会被透明窗口背景透叠后发黑，取亮泽档）。</summary>
         public static readonly IReadOnlyList<CharacterPreset> All = new List<CharacterPreset>
         {
             new CharacterPreset
             {
                 Id = "slime_1",
                 DisplayName = "1号史莱姆（蓝）",
-                GlassColor = new Color(0.1f, 0.3f, 0.6f),
-                Description = "经典的蓝色玻璃小史莱姆，会在你的桌面上安分地待着。"
+                GlassColor = new Color(0.16f, 0.48f, 0.92f),
+                Description = "经典的蓝色果冻小史莱姆，会在你的桌面上安分地待着。"
             },
             new CharacterPreset
             {
                 Id = "slime_2",
                 DisplayName = "2号史莱姆（绿）",
-                GlassColor = new Color(0.15f, 0.55f, 0.3f),
-                Description = "青草绿的玻璃史莱姆，据说被扔出去时会更兴奋一点。"
+                GlassColor = new Color(0.22f, 0.75f, 0.40f),
+                Description = "青草绿的果冻史莱姆，据说被扔出去时会更兴奋一点。"
             },
             new CharacterPreset
             {
                 Id = "slime_3",
                 DisplayName = "3号史莱姆（紫）",
-                GlassColor = new Color(0.45f, 0.2f, 0.6f),
-                Description = "神秘的紫色玻璃史莱姆，夜间拖着屏幕的余晖格外好看。"
+                GlassColor = new Color(0.62f, 0.32f, 0.88f),
+                Description = "神秘的紫色果冻史莱姆，夜间拖着屏幕的余晖格外好看。"
             }
         };
 

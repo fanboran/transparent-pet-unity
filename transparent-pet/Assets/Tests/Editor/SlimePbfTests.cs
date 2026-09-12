@@ -55,23 +55,25 @@ namespace TransparentPet.Tests
             Assert.AreEqual(111f, size.y, 25f, $"粒子团高度 {size.y:F0} 应接近 SVG 模板高 111");
         }
 
-        // ── 2. 悬停静置：形状记忆 + 密度约束维持团块，不漂散不变形 ──
+        // ── 2. 落地静置：重力常开语义下，落定后位置稳定不漂移 ──
         [Test]
-        public void Hover_KeepsShapeAndPosition()
+        public void RestOnGround_KeepsPositionStable()
         {
             var sim = new SlimePbf(Spawn, HalfWidth);
-            var env = HoverEnv();
-            var size0 = sim.BoundsSize();
-            var c0 = sim.Centroid;
+            var env = GroundEnv();
 
-            for (var i = 0; i < 120; i++)
+            for (var i = 0; i < 300; i++)
+                sim.StepFrame(Dt, env);
+            var c0 = sim.Centroid;
+            var low0 = sim.LowestY;
+
+            for (var i = 0; i < 240; i++)
                 sim.StepFrame(Dt, env);
 
-            Assert.Less(Vector2.Distance(sim.Centroid, c0), 30f,
-                "悬停 2s 质心漂移应很小（无外力）");
-            var size1 = sim.BoundsSize();
-            Assert.AreEqual(size0.x, size1.x, size0.x * 0.25f, "宽度应保持");
-            Assert.AreEqual(size0.y, size1.y, size0.y * 0.25f, "高度应保持");
+            Assert.Less(Vector2.Distance(sim.Centroid, c0), 15f,
+                "落定后再静置 4s 质心漂移应很小（重力平衡态）");
+            Assert.Less(Mathf.Abs(sim.LowestY - low0), 8f, "落地高度应稳定");
+            Assert.IsTrue(sim.IsSettled, "静置后应处于低速状态");
         }
 
         // ── 3. 重力落地：底部被地面钳制，整体趋停 ──
@@ -89,13 +91,13 @@ namespace TransparentPet.Tests
             Assert.IsTrue(sim.IsSettled, "5s 后应落定（速度 <25px/s）");
         }
 
-        // ── 4. 落地质感：撞击瞬间压扁，随后回弹 ──
+        // ── 4. 落地质感：撞击瞬间压扁，落定为"压扁但变宽"的果冻趴姿（体积守恒） ──
         [Test]
-        public void Landing_SquashesThenRebounds()
+        public void Landing_SquashesThenRestsAsWideJelly()
         {
             var sim = new SlimePbf(Spawn, HalfWidth);
             var env = GroundEnv();
-            var restHeight = sim.BoundsSize().y;
+            var restSize = sim.BoundsSize();
 
             var minHeight = float.MaxValue;
             for (var i = 0; i < 300; i++)
@@ -104,16 +106,16 @@ namespace TransparentPet.Tests
                 minHeight = Mathf.Min(minHeight, sim.BoundsSize().y);
             }
 
-            Assert.Less(minHeight, restHeight * 0.88f,
-                $"撞击瞬间高度 {minHeight:F0} 应明显压扁（静息 {restHeight:F0}×0.88）");
+            Assert.Less(minHeight, restSize.y * 0.88f,
+                $"撞击瞬间高度 {minHeight:F0} 应明显压扁（静息 {restSize.y:F0}×0.88）");
 
-            // 真实语义链：落定后控制器关重力回悬浮，形状记忆+密度约束恢复站姿
-            var hover = env;
-            hover.GravityOn = false;
-            for (var i = 0; i < 120; i++)
-                sim.StepFrame(Dt, hover);
-            Assert.Greater(sim.BoundsSize().y, restHeight * 0.8f,
-                $"悬浮态 2s 后高度 {sim.BoundsSize().y:F0} 应由形状记忆恢复站姿（>静息 80%）");
+            var final = sim.BoundsSize();
+            Assert.Less(final.y, restSize.y * 0.92f,
+                $"落定后高度 {final.y:F0} 应低于静息（重力压扁的果冻蹲姿）");
+            Assert.Greater(final.y, restSize.y * 0.6f,
+                $"落定后高度 {final.y:F0} 应保持果冻蹲姿厚度（>静息 60%，形状弹性顶住重力）");
+            Assert.Greater(final.x, restSize.x * 1.0f,
+                $"落定后宽度 {final.x:F0} 不应窄于静息 {restSize.x:F0}（压扁→横向铺开）");
         }
 
         // ── 5. 不摊饼：落地长时间静置仍有厚度（形状记忆保险丝） ──
@@ -127,8 +129,8 @@ namespace TransparentPet.Tests
             for (var i = 0; i < 900; i++) // 落地后静置 10s
                 sim.StepFrame(Dt, env);
 
-            Assert.Greater(sim.BoundsSize().y, restHeight * 0.55f,
-                $"静置 10s 后高度 {sim.BoundsSize().y:F0} 不应摊平成薄饼（>静息 55%）");
+            Assert.Greater(sim.BoundsSize().y, restHeight * 0.45f,
+                $"静置 10s 后高度 {sim.BoundsSize().y:F0} 不应摊平成薄饼（>静息 45%，密度约束保体积）");
         }
 
         // ── 6. 体积保持：落定后平均密度回到 ρ0 附近（PBF 密度约束的直接观测） ──

@@ -119,7 +119,7 @@ namespace TransparentPet.Tests
 
             Assert.AreEqual("slime_2", preset.Id);
             Assert.IsFalse(string.IsNullOrEmpty(preset.DisplayName));
-            Assert.AreEqual(new Color(0.15f, 0.55f, 0.3f), preset.GlassColor);
+            Assert.AreEqual(new Color(0.22f, 0.75f, 0.4f), preset.GlassColor); // 亮度锚定原版观感（2026-09 提亮）
         }
 
         [Test]

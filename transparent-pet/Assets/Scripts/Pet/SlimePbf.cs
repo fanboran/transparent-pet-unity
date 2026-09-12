@@ -43,13 +43,19 @@ namespace TransparentPet.Pet
         public const float Spacing = 9f;       // 撒点间距（px）
         public const float KernelH = 20f;      // 核半径（px）≈ 2.2 × Spacing
         const int SubSteps = 2;                 // 每帧子步（项目 FixedUpdate×2 同款）
+        const int DensityLoops = 3;             // 每子步密度约束迭代环：单遍太软，
+                                                // 重力会把趴姿压成薄饼；3 遍接近不可压缩，
+                                                // 落地后保持"压扁但有厚度"的果冻趴姿
         const float VelocityDamping = 0.99f;    // 每子步速度保留（项目 ×0.99）
         const float MaxSpeed = 1800f;           // 速度硬上限 px/s（项目 clamp 30 单位）
         const float DensityClampLow = -0.2f;    // C 下限（项目防表面负压）
-        const float TensileK = 0.1f;            // s_corr k（论文 0.1）
+        const float TensileK = 0.3f;            // s_corr k（论文 0.1；桌面果冻加大到 0.3 换更顺滑的表层）
         const float TensileDqRatio = 0.25f;     // dq = 0.25h（论文 0.2~0.3h）
         const float XsphViscosity = 6f;         // XSPH 强度（果冻内聚，观感项）
-        const float ShapeMemoryAccel = 6f;      // 静置形状记忆加速度（px/s²，弱保险丝）
+        const float ShapeMemoryAccel = 100f;    // 静置形状记忆加速度（px/s²，≈重力15%）：
+                                                // 果冻的"形状弹性"——纯流体在平底锅上物理上
+                                                // 必摊成薄饼，弹性恢复力顶住重力才蹲得住
+                                                // （平衡高差 = g/k ≈ 8px → 静息 ~85% 高度）
         const float GrabRadiusMul = 2.8f;       // 拖拽影响半径 = mul × h
         const float GrabFollowLerp = 0.5f;      // 影响区内粒子速度向控制器速度的 lerp 系数
         const float GrabPullAccel = 1200f;      // 影响区内粒子向抓取点的吸引加速度
@@ -196,8 +202,11 @@ namespace TransparentPet.Pet
         {
             ApplyForces(dt, env);
             BuildNeighbors();
-            ComputeLambda();
-            ApplyDeltaPos();
+            for (var k = 0; k < DensityLoops; k++)
+            {
+                ComputeLambda();
+                ApplyDeltaPos();
+            }
             ProjectBounds(env);
             FinishStep(dt);
             ApplyXsphViscosity();
@@ -207,6 +216,8 @@ namespace TransparentPet.Pet
         void ApplyForces(float dt, in PbfEnvironment env)
         {
             var h = EffectiveH;
+            // 形状记忆全局权重：质心速度低（已落定/静止）才生效
+            var memoryWeight = 1f - Mathf.Clamp01(Velocity.magnitude / 350f);
             for (var i = 0; i < ParticleCount; i++)
             {
                 var v = vel[i] * VelocityDamping;
@@ -228,14 +239,14 @@ namespace TransparentPet.Pet
                     }
                 }
 
-                // 形状记忆（保险丝）：低速时把粒子拉回 SVG 静息锚（跟随质心缩放），
-                // 高速时权重归零——不妨碍甩动/压扁等真实形变。
-                var speed = v.magnitude;
-                var memoryW = 1f - Mathf.Clamp01(speed / 350f);
-                if (memoryW > 0f)
+                // 形状记忆（果冻形状弹性）：把粒子拉回 SVG 静息锚（跟随质心缩放）。
+                // 权重必须全局统一（用质心速度）——若按各粒子自身速度加权，
+                // 飞溅时左右粒子权重不对称会产生净侧向力，整团缓慢漂移；
+                // 全局权重保证锚力合力恒为零。高速（自由飞落）整体关闭。
+                if (memoryWeight > 0f)
                 {
                     var anchor = Centroid + restOffset[i] * scale;
-                    v += (anchor - pos[i]) * (ShapeMemoryAccel * memoryW * dt);
+                    v += (anchor - pos[i]) * (ShapeMemoryAccel * memoryWeight * dt);
                 }
 
                 vel[i] = v;
