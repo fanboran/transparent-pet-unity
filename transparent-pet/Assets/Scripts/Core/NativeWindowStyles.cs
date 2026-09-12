@@ -32,6 +32,24 @@ namespace TransparentPet.Core
         static extern bool IsWindowVisible(IntPtr hWnd);
 
         [DllImport("user32.dll")]
+        static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        const int SW_HIDE = 0;
+        const int SW_SHOW = 5;
+
+        /// <summary>
+        /// 显示/隐藏窗口。用途：Unity 个人版强制播放启动画面（PlayerSettings 的
+        /// m_ShowUnitySplashScreen 对免费版无效），桌面宠物不该有开场——启动画面
+        /// 期间把窗口藏起来，场景就绪后由 PetWindowSetup 恢复显示。
+        /// </summary>
+        public static void SetVisible(IntPtr hWnd, bool visible)
+        {
+            if (hWnd == IntPtr.Zero)
+                return;
+            ShowWindow(hWnd, visible ? SW_SHOW : SW_HIDE);
+        }
+
+        [DllImport("user32.dll")]
         static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
 
         [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
