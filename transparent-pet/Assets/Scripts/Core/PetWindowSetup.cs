@@ -19,11 +19,17 @@ namespace TransparentPet.Core
         [Tooltip("像素不透明度阈值，≥ 该值可交互、低于则穿透（对应 UniWinC opacityThreshold）")]
         public float OpacityThreshold = 0.1f;
 
+        /// <summary>主循环跑到这么多帧才认为"已进入正常渲染循环"（放行启动看门狗）</summary>
+        const int HealthyFrameCount = 30;
+
         UniWindowController window;
         NativeTray tray;
 
         void Awake()
         {
+            // 兜底安装崩溃保护（正常情况下 RuntimeInitializeOnLoadMethod 已装好，这里是幂等二次入口）
+            CrashGuard.EnsureInstalled();
+
             window = GetComponent<UniWindowController>();
         }
 
@@ -83,6 +89,11 @@ namespace TransparentPet.Core
 
         void Update()
         {
+            // 启动看门狗放行：主循环稳定运行后标记健康（若卡在窗口/图形初始化，
+            // CrashGuard 会在超时后硬退出，不留占屏的空窗）
+            if (Time.frameCount >= HealthyFrameCount)
+                CrashGuard.MarkRenderLoopHealthy();
+
             // 退出在顶层栈执行：先摘托盘图标（防悬空鬼图标），再三级强退
             if (exitRequested)
             {

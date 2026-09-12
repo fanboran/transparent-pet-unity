@@ -33,6 +33,15 @@ namespace TransparentPet.EditorTools
             // 构建后注入应用图标（Unity 的 PlayerSettings 图标设置在 batchmode 下不落盘）
             AppIconSetup.InjectIntoExe(outputPath);
 
+            // 移除崩溃处理器：它在崩溃时会挂起进程收集信息，对全屏置顶的桌面工具是有害行为
+            // （进程挂着不走、窗口残留在桌面上）。宁可"死得干净"——异常路径由 CrashGuard 兜底。
+            var crashHandler = Path.Combine(Path.GetDirectoryName(outputPath) ?? ".", "UnityCrashHandler64.exe");
+            if (File.Exists(crashHandler))
+            {
+                File.Delete(crashHandler);
+                Debug.Log("[BuildPlayer] 已移除崩溃处理器（避免崩溃时进程被挂起占屏）");
+            }
+
             Debug.Log("[BuildPlayer] 构建成功: " + report.summary.outputPath);
         }
     }
