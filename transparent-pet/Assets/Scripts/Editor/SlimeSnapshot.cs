@@ -81,8 +81,10 @@ namespace TransparentPet.EditorTools
                 new Vector3(0.5f, 0.5f, 0f), new Vector3(-0.5f, 0.5f, 0f)
             };
             quad.triangles = new[] { 0, 2, 1, 0, 3, 2 };
+            quad.bounds = new Bounds(Vector3.zero, Vector3.one);
             mf.sharedMesh = quad;
             using var field = new SlimeFieldRenderer(mr.sharedMaterial, sim.Count);
+            mr.sharedMaterial = field.MaterialInstance; // 渲染器换用带 buffer 的实例（与运行时同路径）
 
             Func<Vector2, Vector3> ToWorld = p => new Vector3((p.x - W * 0.5f) / PPU, (H * 0.5f - p.y) / PPU, 0f);
 

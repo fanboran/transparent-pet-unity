@@ -104,6 +104,10 @@ namespace TransparentPet.Pet
             material.SetFloat(SquashId, sim.SquashPulse);
         }
 
+        /// <summary>带粒子 buffer 的材质实例——调用方必须把它赋给渲染器，
+        /// 否则渲染器用的还是无 buffer 的原材质（player 下读空=全透明不可见）。</summary>
+        public Material MaterialInstance => material;
+
         public void Dispose()
         {
             buffer.Release();

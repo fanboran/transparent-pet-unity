@@ -35,6 +35,7 @@ namespace TransparentPet.Pet
                 new Vector3(-0.5f, 0.5f, 0f)
             };
             mesh.triangles = new[] { 0, 2, 1, 0, 3, 2 };
+            mesh.bounds = new Bounds(Vector3.zero, Vector3.one); // 防零尺寸包围盒被剔除
             GetComponent<MeshFilter>().sharedMesh = mesh;
         }
 
@@ -42,7 +43,11 @@ namespace TransparentPet.Pet
         public void Push(SlimePbf sim, Func<Vector2, Vector3> toWorld, Color bodyColor)
         {
             if (field == null)
+            {
                 field = new SlimeFieldRenderer(SharedMaterial, sim.Count);
+                // 渲染器必须换用带粒子 buffer 的实例（原材质无 buffer → 全透明）
+                meshRenderer.sharedMaterial = field.MaterialInstance;
+            }
             field.Render(transform, sim, toWorld, bodyColor);
         }
 
