@@ -40,7 +40,7 @@
 
 1. **Spike 优先**：透明窗口 spike（`docs/spike-透明窗口.md`）未通过验收清单前，**禁止编写任何业务功能代码**。项目生死未定时不堆功能，防止弃坑成本膨胀。
 2. **参照库强制**：写新系统（尤其 Win32 互操作）前，先下载星标多、维护活跃的开源参照项目到 `external/`（已 gitignore），读懂后**翻译改编，不凭记忆写**。简单参数调整不需要。
-3. **测试驱动**：核心逻辑（宠物状态机、alpha 命中检测、物理参数）必须附带 Unity Test Framework（NUnit）测试，放 `transparent-pet/Assets/Tests/`。
+3. **测试驱动**：核心逻辑（软体物理模拟、抛射物理参数、事件总线、配置持久化）必须附带 Unity Test Framework（NUnit）测试，放 `transparent-pet/Assets/Tests/`。
 4. **安全第一**：`transparent-pet/Assets/Scripts/Core/`（窗口互操作层）一经 spike 验收，修改须谨慎——它是全项目唯一碰 Win32 API 的地方，改动可能破坏透明/穿透行为，改前跑全量测试。
 5. **原子化提交 + 主动沟通**：每次提交一个独立最小功能；任务描述不清或与架构原则冲突时主动提问，不做危险假设。
 
@@ -51,10 +51,10 @@
 > 从 Godot 模块化四原则翻译而来，精神一致、载体不同。
 
 1. **两层结构**：仓库根放文档与 AGENTS.md，Unity 工程本体放 `transparent-pet/` 子目录（Unity Hub 打开的是它，不是仓库根）。
-2. **模块划分**：`Assets/Scripts/` 下按功能分 `Core/`（窗口互操作）、`Pet/`（状态机与行为）、`Input/`（alpha 命中检测）、`UI/`（托盘/右键菜单）；一个模块一个 C# 命名空间（`TransparentPet.Pet` 等）。
+2. **模块划分**：`Assets/Scripts/` 下按功能分 `Core/`（窗口互操作 + 事件总线 + 配置）、`Pet/`（软体物理模拟、动态 Mesh 渲染、行为编排——鼠标命中是软体多边形几何判定，内聚在 `Pet/SlimeSimulation.cs`）、`UI/`（托盘/设置面板/HUD）；一个模块一个 C# 命名空间（`TransparentPet.Pet` 等）。
 3. **耦合原则**：模块间通信走 `Core/EventBus.cs`（静态 C# 事件中心，对应 Godot 的 event_bus autoload）；**禁止** `GameObject.Find`、跨模块 `GetComponent` 裸引用。跨模块调用的公共出口放各模块 `XxxApi.cs`。
 4. **命名规范**：C# 类型与文件 PascalCase（文件名=类名）；资产与目录 PascalCase（Godot 版搬来的 snake_case 资产入 Assets 时重命名）。场景每个一个目录，Prefab 按模块归位。
-5. **依赖分层**：`Core/`（互操作+事件总线）← `Pet/`、`Input/`、`UI/`（玩法）← Bootstrapper 场景（组装根，`DontDestroyOnLoad` 挂全局服务）。高层可依赖低层，反向禁止。
+5. **依赖分层**：`Core/`（互操作+事件总线）← `Pet/`、`UI/`（玩法）← Bootstrapper 场景（组装根，`DontDestroyOnLoad` 挂全局服务）。高层可依赖低层，反向禁止。（历史注：曾有 `Input/` 模块做贴图 alpha 命中检测，2026-09 软体重构时随贴图方案一并移除，命中逻辑并入软体模拟。）
 6. **单例约定**：全局服务（窗口控制器、事件总线）由 Bootstrapper 场景创建并 `DontDestroyOnLoad`，禁止场景里手工摆放重复实例。
 
 ***
@@ -69,7 +69,7 @@ transparent-pet-unity/          # 仓库根（文档与规则）
 ├── external/                   # 开源参照库（gitignored，不入库）
 └── transparent-pet/            # Unity 工程本体（Unity Hub 打开这个）
     ├── Assets/
-    │   ├── Scripts/{Core,Pet,Input,UI}/
+    │   ├── Scripts/{Core,Pet,UI}/
     │   ├── Tests/              # NUnit 测试
     │   ├── Prefabs/  Resources/  Scenes/  Art/  Plugins/
     ├── Packages/               # manifest.json（包依赖）

@@ -63,3 +63,5 @@ Spike 结束时留下：可运行的验证场景 + 一页结论（走了哪条�
 ### 结论（待真机验收后定稿）
 
 代码层面六项验收全部有着落，无路线性阻塞。**倾向继续投入**；若真机出现穿透失效/闪烁/帧率不达标，按 UniWinC issue 区与 `external/UniWindowController` 源码排查后再定。
+
+> **后记（2026-09-12 软体重构）**：本文提到的 ThrowPhysics/AlphaHitTestCore/烘焙贴图方案已被整体替换——现为 Verlet 粒子环+面积压力软体（SlimeSimulation）、动态 Mesh+程序化液态玻璃着色器（SlimeBody/SlimeLiquid.shader），鼠标命中改为软体多边形几何判定。本文保留作为 spike 阶段的历史记录。

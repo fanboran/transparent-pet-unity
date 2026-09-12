@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-**产品化冲刺完成（Subagent 并行开发），覆盖 Godot 版绝大部分功能**：透明窗口/穿透/拖抛物理/动态着色器/设置面板/多角色/配置与位置持久化/托盘菜单/开机自启。30 项单元测试全过。验收 exe 在 `F:/Downloads/PetSpike/`，开发迭代节奏见 [docs/待办事项.md](docs/待办事项.md)。
+**软体重构完成（Subagent 并行开发）**：贴图+刚体方案整体升级为 **Verlet 粒子环 + 面积压力软体模拟**（Q 弹/压扁回弹/甩动拉伸由物理自然涌现）+ **全程序化液态玻璃着色器**（fwidth 抗锯齿、伪 3D 打光、色散伪折射、会眨眼看方向的眼睛），外加撞墙分裂/飘回融合玩法。透明窗口/穿透/设置面板/多角色/持久化/托盘/开机自启齐备。27 项单元测试全过。验收 exe 在 `F:/Downloads/PetSpike/`，开发迭代节奏见 [docs/待办事项.md](docs/待办事项.md)。
 
 - 引擎：Unity 2022.3.62f1c1（已装于 `F:\Unity\2022.3.62f1c1`）
 - 打开方式：Unity Hub → Open → 选择 `transparent-pet-unity/transparent-pet/` 目录（工程本体子目录）
@@ -14,28 +14,22 @@
 ```
 Assets/
 ├── Scripts/
-│   ├── Core/        # 透明窗口、置顶、点击穿透等 Win32 互操作（ spike 首战场）
-│   ├── Pet/         # 宠物状态机：待机/拖拽/抛射物理/动画
-│   ├── Input/       # per-pixel alpha 命中检测（对应 Godot 版的像素级鼠标检测）
-│   └── UI/          # 右键菜单、系统托盘
-├── Prefabs/         # 宠物本体 Prefab
-├── Resources/       # 运行时加载资产
-├── Scenes/          # 主场景
-├── Art/             # 宠物贴图（SVG 转 PNG 序列，缩放不失真参考 Godot 版方案）
-└── Plugins/         # 第三方插件（透明窗口方案落地后入此）
+│   ├── Core/        # 透明窗口、置顶、点击穿透、工作区查询等 Win32 互操作 + 事件总线 + 配置
+│   ├── Pet/         # 软体物理模拟（SlimeSimulation）、动态 Mesh 渲染（SlimeBody）、行为编排（PetController）
+│   └── UI/          # 设置面板、HUD、系统托盘
+├── Scenes/          # 主场景（SceneGenerator 程序化生成）
+├── Art/Shaders/     # SlimeLiquid.shader（全程序化液态玻璃，无贴图）
+└── Tests/           # NUnit 测试（软体模拟/事件总线/配置）
 ```
 
-## 移植对标（Godot 版功能清单）
+## 技术对标（Godot 版功能清单 + 软体升级）
 
-| Godot 版已有 | Unity 版对应 | 难点 |
+| Godot 版已有 | Unity 版对应 | 状态 |
 |---|---|---|
-| 无边框透明窗口 + 置顶 | ✅ UniWindowController v0.9.8（全 alpha，UPM 接入） | ~~高危~~ 已落地，待真机验收 |
-| 像素 Alpha 鼠标检测 | ✅ PetInput.AlphaHitTestCore（贴图 alpha 表）+ UniWinC 画面读回穿透 | 已完成 |
-| 系统托盘 | ✅ Shell_NotifyIcon（设置/退出菜单） | 已完成 |
-| 拖拽 + 抛射物理 | ✅ ThrowPhysics 纯逻辑 1:1 移植（非 Rigidbody2D，忠实 Godot 手写物理） | 已完成 |
-| 史莱姆着色器 | ✅ Slime.shader 忠实移植（FBM流动/菲涅尔/高光/晃动） | 已完成 |
-| SVG 矢量渲染 | ✅ Inkscape 预烘焙 4x PNG（源 SVG 留 Art/Sources） | 已完成 |
-
-## 下一步：48 小时 Spike（决定项目生死）
-
-见 [docs/spike-透明窗口.md](docs/spike-透明窗口.md)。Spike 通过才继续投入，不通过则项目降级或终止。
+| 无边框透明窗口 + 置顶 | UniWindowController v0.9.8（全 alpha，UPM 接入） | ✅ 已落地 |
+| 像素 Alpha 鼠标检测 | 软体多边形几何命中（模拟轮廓点包含测试）+ UniWinC 画面读回穿透 | ✅ 已升级 |
+| 系统托盘 | Shell_NotifyIcon（设置/退出菜单） | ✅ 已完成 |
+| 拖拽 + 抛射物理 | 软体粒子 pin 拖拽 + Verlet 抛射（甩出才有重力，轻放原地悬浮） | ✅ 已升级 |
+| 史莱姆着色器 | SlimeLiquid.shader（FBM 流动/菲涅尔/Blinn-Phong/RGB 色散伪折射/程序化眼睛） | ✅ 已升级 |
+| SVG 矢量渲染 | 程序化动态 Mesh（28 粒子轮廓每帧重建，无贴图无像素阶梯） | ✅ 已升级 |
+| —（Unity 版新增） | 撞墙面积转移式分裂 + 分身吸引融合（面积守恒）；Windows 工作区地面（扣任务栏） | ✅ 新增 |
