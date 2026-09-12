@@ -1,37 +1,64 @@
-// 别名引用命中检测；Input 模块命名空间为 PetInput（避开 UnityEngine.Input 遮蔽问题，详见 AlphaHitTest.cs）
+// ============================================================================
+// PetController.cs — 软体宠物总控：输入、物理编排、分裂/合并、配置联动
+// ============================================================================
+// 架构位置（Pet 模块）：持有主体 SlimeSimulation 与动态生成的分身列表；
+// 命中/拖拽交给模拟的多边形几何（不再依赖贴图 alpha 读回）；
+// 渲染委托给同物体上的 SlimeBody；窗口互操作在 Core 层。
+//
+// 行为语义（对齐 Godot 原版）：
+//   · 平时悬浮（无重力）；甩出（松手速度 ≥ minSpeed×判定）才开启重力抛射
+//   · 轻放（速度不足）= 原地悬停，不坠落
+//   · 抛射落定（速度小且贴地）→ 回到悬浮
+// 新增（本轮产品化）：
+//   · 使劲摔侧墙 → 面积转移式分裂出小史莱姆；分身飘回主体并融合（面积守恒）
+//   · 地面 = Windows 工作区底边（扣任务栏），根治"落底被任务栏吃掉点击"
+// ============================================================================
 using System;
-using AlphaHit = TransparentPet.PetInput.AlphaHitTestCore;
+using System.Collections.Generic;
 using TransparentPet.Core;
 using UnityEngine;
 
 namespace TransparentPet.Pet
 {
-    /// <summary>
-    /// 宠物本体控制器：贴图显示 + 拖拽跟随 + 抛射运动 + 本体命中判定。
-    /// 相机为正交、位于原点，1 世界单位 = PixelsPerUnit 像素；
-    /// 屏幕像素坐标（左上原点、Y 向下，与 Godot/ThrowPhysics 一致）由此层与世界坐标互转。
-    /// 产品化阶段：订阅 EventBus 响应设置变更（缩放/角色/抛射参数），位置变化自动落盘。
-    /// </summary>
-    [RequireComponent(typeof(SpriteRenderer))]
+    /// <summary>软体宠物总控：唯一持有主体模拟实例与分身生命周期。</summary>
+    [RequireComponent(typeof(SlimeBody))]
     public class PetController : MonoBehaviour
     {
-        /// <summary>与 PetSlime.png 的导入设置（Pixels Per Unit）保持一致</summary>
+        /// <summary>正交相机缩放基准（1 世界单位 = 100 屏幕像素），与场景相机设置一致</summary>
         public const float PixelsPerUnit = 100f;
 
-        /// <summary>场景内基准缩放：4x 烘焙贴图 ÷ 4 = Godot 版 200×132 的屏幕显示尺寸</summary>
-        const float BaseScale = 0.25f;
+        // ── 静息尺寸（屏幕像素）：≈ Godot 版 200×132 的观感 ──
+        const float BaseRadiusX = 92f;
+        const float BaseRadiusY = 60f;
 
-        /// <summary>用户缩放范围（对应 Godot 版 pet_scale 语义）</summary>
         const float MinUserScale = 0.25f;
         const float MaxUserScale = 2f;
 
-        Camera mainCamera;
-        SpriteRenderer spriteRenderer;
-        AlphaHit hitTest;
-        readonly ThrowPhysics physics = new ThrowPhysics();
-        MaterialPropertyBlock materialBlock;
+        // ── 分裂/合并参数 ──
+        const float SplitImpactSpeed = 620f;   // 侧墙撞击法向速度阈值（px/s）
+        const float ChildAreaFraction = 0.3f;  // 每次分裂转移 30% 面积
+        const int MaxOffspring = 3;            // 分身数量上限
+        const float AttractionAccel = 260f;    // 分身飘回母体的加速度（px/s²）
 
-        // 位置自动保存（节流：移动超阈值且距上次保存 ≥1s 才落盘，硬退出也不丢位置）
+        Camera mainCamera;
+        SlimeBody body;
+        SlimeSimulation sim;
+        Material bodyMaterial;
+
+        // 分身（模拟 + 渲染体成对管理；分身落定一次后永久悬浮并受吸引）
+        readonly List<SlimeSimulation> children = new List<SlimeSimulation>();
+        readonly List<SlimeBody> childBodies = new List<SlimeBody>();
+        readonly List<bool> childHadGravity = new List<bool>();
+
+        // 配置状态（EventBus 驱动）
+        ThrowParams throwParams = new ThrowParams();
+        Color bodyColor = new Color(0.1f, 0.3f, 0.6f);
+        float userScale = 1f;
+
+        // 主体抛射进行中（重力开启）；分身各自管理
+        bool gravityOn;
+
+        // 位置自动保存（节流：移动 >5px 且距上次 ≥1s 才落盘）
         Vector2 lastSavedScreenPos;
         float nextSaveTime;
 
@@ -51,29 +78,33 @@ namespace TransparentPet.Pet
 
         void Start()
         {
-            spriteRenderer = GetComponent<SpriteRenderer>();
-            materialBlock = new MaterialPropertyBlock();
-            hitTest = BuildHitTest(spriteRenderer.sprite);
+            body = GetComponent<SlimeBody>();
+            bodyMaterial = GetComponent<MeshRenderer>().sharedMaterial;
+            body.Initialize(bodyMaterial);
             SyncCameraToScreen();
 
-            // 启动即应用持久化配置（对应 Godot 版 ConfigManager + DataManager 的启动恢复）
+            // 启动即应用持久化配置（对应 Godot 版 ConfigManager 启动恢复）
             var config = PetConfigStore.Load();
-            ApplyThrowParams(config.throwParams);
-            ApplyCharacter(config.characterId);
-            transform.localScale = Vector3.one * (BaseScale * Mathf.Clamp(config.petScale, MinUserScale, MaxUserScale));
+            throwParams = config.throwParams;
+            var preset = CharacterRegistry.GetById(config.characterId);
+            bodyColor = preset.GlassColor;
+            userScale = Mathf.Clamp(config.petScale, MinUserScale, MaxUserScale);
 
-            // 初始位置：保存过的位置优先，否则屏幕中央（对应 Godot 版 center_sprite）
+            // 初始位置：保存过的位置优先，否则工作区中央偏下（显眼但不挡视线）
+            var ground = NativeScreen.GetWorkAreaBottomY();
+            var width = NativeScreen.GetWorkAreaWidth();
             var spawn = config.petScreenX >= 0f
                 ? new Vector2(config.petScreenX, config.petScreenY)
-                : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
-            transform.position = ScreenToWorld(spawn);
+                : new Vector2(width * 0.5f, ground * 0.66f);
+            sim = new SlimeSimulation(
+                spawn, BaseRadiusX * userScale, BaseRadiusY * userScale);
             lastSavedScreenPos = spawn;
             nextSaveTime = Time.time + 1f;
         }
 
         void Update()
         {
-            // 安全网：spike 阶段窗口全屏置顶且无托盘/菜单，ESC 是唯一可靠的退出手段
+            // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段
             if (Input.GetKeyDown(KeyCode.Escape))
             {
                 Application.Quit();
@@ -81,111 +112,145 @@ namespace TransparentPet.Pet
             }
 
             SyncCameraToScreen();
+            var dt = Time.deltaTime;
+            var env = BuildEnvironment();
+
             HandleInput();
-            UpdatePhysics();
+
+            // 主体推进
+            sim.StepFrame(dt, env);
+            if (gravityOn && sim.IsSettled && sim.IsNearGround(env.GroundY))
+                gravityOn = false; // 抛射落定 → 回悬浮（Godot 原版语义）
+
+            StepChildren(dt, env);
+            HandleSplit(env);
+
+            // 渲染推送（主体与分身共用转换委托）
+            body.Push(sim, sim.Velocity, ScreenToWorld, bodyColor, dt);
+            for (var i = 0; i < children.Count; i++)
+                childBodies[i].Push(children[i], children[i].Velocity, ScreenToWorld, bodyColor, dt);
+
             SavePositionIfNeeded();
             if (Time.frameCount % 60 == 0)
                 LogDiagnostics();
         }
 
-        // ── EventBus 处理器（SettingsPanel 发布 → 此处应用）──
-
-        void OnScaleChanged(float scale) =>
-            transform.localScale = Vector3.one * (BaseScale * Mathf.Clamp(scale, MinUserScale, MaxUserScale));
-
-        void OnCharacterChanged(string id) => ApplyCharacter(id);
-
-        void OnThrowParamsChanged(ThrowParams p) => ApplyThrowParams(p);
-
-        void ApplyCharacter(string id)
-        {
-            // 角色预设 → 玻璃基色（Slime.shader 的 _GlassColor），用 PropertyBlock 避免材质实例化
-            var preset = CharacterRegistry.GetById(id);
-            spriteRenderer.GetPropertyBlock(materialBlock);
-            materialBlock.SetColor("_GlassColor", preset.GlassColor);
-            spriteRenderer.SetPropertyBlock(materialBlock);
-        }
-
-        void ApplyThrowParams(ThrowParams p)
-        {
-            physics.Gravity = p.gravity;
-            physics.MinSpeed = p.minSpeed;
-            physics.MaxSpeed = p.maxSpeed;
-            physics.Multiplier = p.multiplier;
-            physics.ThrowEnabled = p.enabled;
-        }
-
-        void SavePositionIfNeeded()
-        {
-            if (Time.time < nextSaveTime)
-                return;
-
-            var screenPos = WorldToScreen(transform.position);
-            if ((screenPos - lastSavedScreenPos).sqrMagnitude < 25f) // 移动小于 5px 不存
-                return;
-
-            // Load-modify-Save：只动位置字段，其余字段以磁盘/设置面板的最新值为准
-            var config = PetConfigStore.Load();
-            config.petScreenX = screenPos.x;
-            config.petScreenY = screenPos.y;
-            PetConfigStore.Save(config);
-            lastSavedScreenPos = screenPos;
-            nextSaveTime = Time.time + 1f;
-        }
-
-        /// <summary>spike 排查用：把渲染链路关键状态写进 Player.log，定位"看不见史莱姆"用。</summary>
-        void LogDiagnostics()
-        {
-            try
-            {
-                var sprite = spriteRenderer ? spriteRenderer.sprite : null;
-                Debug.Log($"[PetDiag] screen={Screen.width}x{Screen.height}" +
-                    $" camOrtho={(mainCamera ? mainCamera.orthographicSize.ToString("0.##") : "null")}" +
-                    $" camPos={(mainCamera ? mainCamera.transform.position.ToString() : "null")}" +
-                    $" petPos={transform.position} petScale={transform.lossyScale.x}" +
-                    $" spriteNull={(sprite == null)}" +
-                    $" rendererEnabled={(spriteRenderer ? spriteRenderer.enabled.ToString() : "null")}" +
-                    $" visible={(spriteRenderer ? spriteRenderer.isVisible : false)}");
-            }
-            catch (System.Exception e)
-            {
-                Debug.Log("[PetDiag] 诊断本身出错: " + e.Message);
-            }
-        }
+        // ── 输入：抓取 / 拖拽 / 释放（命中 = 模拟多边形几何判定）──
 
         void HandleInput()
         {
-            var mouseScreen = MouseScreenPos();
+            var mouse = MouseScreenPos();
 
-            if (Input.GetMouseButtonDown(0) && IsOnPet(mouseScreen))
-                physics.DragBegin(mouseScreen, WorldToScreen(transform.position), NowMs());
-            if (Input.GetMouseButtonUp(0))
-                physics.DragEnd();
+            if (Input.GetMouseButtonDown(0) && sim.TryGrab(mouse))
+                gravityOn = false; // 抓住即悬浮（拖拽中不施重力）
+
+            if (sim.IsGrabbed)
+                sim.MoveGrab(mouse, NowMs());
+
+            if (Input.GetMouseButtonUp(0) && sim.IsGrabbed)
+            {
+                var throwVel = sim.Release(
+                    throwParams.minSpeed, throwParams.maxSpeed,
+                    throwParams.multiplier, throwParams.enabled, NowMs());
+                // 甩出（速度达标）→ 开启重力抛射；轻放（速度不足）→ 原地悬浮
+                if (throwVel != Vector2.zero)
+                    gravityOn = true;
+            }
         }
 
-        void UpdatePhysics()
+        // ── 分身：吸引飘回 + 落定转悬浮 + 合并吸收 ──
+
+        void StepChildren(float dt, in SimEnvironment env)
         {
-            if (physics.IsDragging)
+            for (var i = children.Count - 1; i >= 0; i--)
             {
-                var screenPos = physics.DragMove(MouseScreenPos(), NowMs());
-                transform.position = ScreenToWorld(screenPos);
+                var child = children[i];
+
+                // 分身朝主体持续吸引（面积想回家）
+                child.ApplyAttraction(sim.Centroid(), AttractionAccel);
+
+                var childEnv = env;
+                childEnv.GravityOn = childHadGravity[i];
+                child.StepFrame(dt, childEnv);
+                if (childHadGravity[i] && child.IsSettled && child.IsNearGround(env.GroundY))
+                    childHadGravity[i] = false; // 落定一次后永久悬浮，靠吸引飘回
+
+                // 合并：贴得足够近 → 面积归还主体、销毁分身
+                //（"穿树后合拢"效果：分身被吸进主体，主体鼓一下）
+                if (child.ShouldMergeWith(sim.Centroid(), sim.BoundsRadius, child.BoundsRadius))
+                {
+                    sim.AcceptMerge(child.TargetArea);
+                    Destroy(childBodies[i].gameObject);
+                    children.RemoveAt(i);
+                    childBodies.RemoveAt(i);
+                    childHadGravity.RemoveAt(i);
+                }
             }
-            else if (physics.IsThrowing)
+        }
+
+        // ── 分裂：主体猛撞侧墙 → 面积转移式派生分身 ──
+
+        void HandleSplit(in SimEnvironment env)
+        {
+            var impact = sim.WallImpact;
+            if (!impact.Occurred || impact.Speed < SplitImpactSpeed)
+                return;
+            if (!throwParams.enabled || children.Count >= MaxOffspring)
+                return;
+
+            // 分身从撞点沿法线弹出，带反弹分量与随机竖向扰动的初速
+            var childScale = Mathf.Sqrt(ChildAreaFraction);
+            var spawnCenter = impact.Point + impact.Normal * (BaseRadiusX * childScale + 10f);
+            var childVel = impact.Normal * (impact.Speed * 0.4f) +
+                           new Vector2(0f, UnityEngine.Random.Range(-140f, 40f));
+
+            var child = sim.SplitOff(spawnCenter, childVel, ChildAreaFraction);
+
+            var go = new GameObject("SlimeChild_" + (children.Count + 1));
+            go.AddComponent<MeshFilter>();
+            var renderer = go.AddComponent<MeshRenderer>();
+            renderer.sharedMaterial = bodyMaterial;
+            var childBody = go.AddComponent<SlimeBody>();
+            childBody.Initialize(bodyMaterial);
+
+            children.Add(child);
+            childBodies.Add(childBody);
+            childHadGravity.Add(true); // 分身出生即有重力，落定后转悬浮
+        }
+
+        // ── EventBus 处理器（SettingsPanel 发布 → 此处应用）──
+
+        void OnScaleChanged(float scale)
+        {
+            var clamped = Mathf.Clamp(scale, MinUserScale, MaxUserScale);
+            sim.SetUserScale(clamped, userScale); // 面积按平方比调整，压力约束自然过渡
+            userScale = clamped;
+        }
+
+        void OnCharacterChanged(string id) =>
+            bodyColor = CharacterRegistry.GetById(id).GlassColor;
+
+        void OnThrowParamsChanged(ThrowParams p) => throwParams = p;
+
+        // ── 环境/坐标工具 ──
+
+        SimEnvironment BuildEnvironment()
+        {
+            return new SimEnvironment
             {
-                var spriteSize = new Vector2(
-                    spriteRenderer.sprite.texture.width,
-                    spriteRenderer.sprite.texture.height);
-                var result = physics.Step(
-                    WorldToScreen(transform.position), Time.deltaTime,
-                    new Vector2(Screen.width, Screen.height), spriteSize, transform.lossyScale.x);
-                transform.position = ScreenToWorld(result.Position);
-            }
+                BoundsWidth = NativeScreen.GetWorkAreaWidth(),
+                GroundY = NativeScreen.GetWorkAreaBottomY(),
+                GravityOn = gravityOn,
+                Gravity = throwParams.gravity,
+                Restitution = 0.3f,          // Godot 版 ground_bounce
+                WallRestitution = 0.7f,      // Godot 版 wall_bounce
+                GroundFriction = 500f,       // Godot 版 ground_friction
+            };
         }
 
         /// <summary>
         /// Unity 的 Input.mousePosition 原点在左下、Y 向上；
-        /// 本工程物理与转换层统一用 Godot 语义（左上原点、Y 向下），此处翻转 Y。
-        /// 漏掉这一步会导致拖动上下反向、且命中判定查到镜像位置（放下后再也抓不到）。
+        /// 工程物理与转换层统一用 Godot 语义（左上原点、Y 向下），此处翻转 Y。
         /// </summary>
         static Vector2 MouseScreenPos()
         {
@@ -201,48 +266,50 @@ namespace TransparentPet.Pet
                 mainCamera.orthographicSize = Screen.height * 0.5f / PixelsPerUnit;
         }
 
-        /// <summary>屏幕像素 → 世界坐标：先转为中心原点再按 PPU 缩放，Y 轴翻转（屏幕向下为正）</summary>
-        public Vector2 ScreenToWorld(Vector2 screenPixel)
+        /// <summary>屏幕像素（Y 向下）→ 世界坐标（Y 向上）</summary>
+        public Vector3 ScreenToWorld(Vector2 screenPixel)
         {
-            var centered = new Vector2(
-                screenPixel.x - Screen.width * 0.5f,
-                Screen.height * 0.5f - screenPixel.y);
-            return centered / PixelsPerUnit;
+            return new Vector3(
+                (screenPixel.x - Screen.width * 0.5f) / PixelsPerUnit,
+                (Screen.height * 0.5f - screenPixel.y) / PixelsPerUnit,
+                0f);
         }
 
-        /// <summary>世界坐标 → 屏幕像素（ScreenToWorld 的逆变换）</summary>
-        public Vector2 WorldToScreen(Vector2 world)
+        void SavePositionIfNeeded()
         {
-            var centered = world * PixelsPerUnit;
-            return new Vector2(
-                centered.x + Screen.width * 0.5f,
-                Screen.height * 0.5f - centered.y);
+            if (Time.time < nextSaveTime)
+                return;
+
+            var screenPos = sim.Centroid();
+            if ((screenPos - lastSavedScreenPos).sqrMagnitude < 25f) // <5px 不存
+                return;
+
+            // Load-modify-Save：只动位置字段，其余以磁盘/设置面板最新值为准
+            var config = PetConfigStore.Load();
+            config.petScreenX = screenPos.x;
+            config.petScreenY = screenPos.y;
+            PetConfigStore.Save(config);
+            lastSavedScreenPos = screenPos;
+            nextSaveTime = Time.time + 1f;
         }
 
-        bool IsOnPet(Vector2 mouseScreen)
+        static float NowMs() => Time.realtimeSinceStartup * 1000f;
+
+        /// <summary>排查用：软体链路关键状态 60 帧一报。</summary>
+        void LogDiagnostics()
         {
-            if (hitTest == null || spriteRenderer == null || spriteRenderer.sprite == null)
-                return false;
-
-            var local = transform.InverseTransformPoint(ScreenToWorld(mouseScreen));
-            var boundsSize = spriteRenderer.sprite.bounds.size;
-            return AlphaHit.TryWorldToPixel(local, boundsSize, hitTest.Width, hitTest.Height, out var pixelX, out var pixelY)
-                && hitTest.Hit(pixelX, pixelY);
-        }
-
-        static double NowMs() => Time.realtimeSinceStartup * 1000.0;
-
-        static AlphaHit BuildHitTest(Sprite sprite)
-        {
-            if (!sprite)
-                return null;
-
-            var texture = sprite.texture;
-            var pixels = texture.GetPixels32(); // 要求导入设置 isReadable = true
-            var alphas = new float[pixels.Length];
-            for (var i = 0; i < pixels.Length; i++)
-                alphas[i] = pixels[i].a / 255f;
-            return new AlphaHit(texture.width, texture.height, alphas);
+            try
+            {
+                Debug.Log($"[PetDiag] screen={Screen.width}x{Screen.height}" +
+                          $" centroid={sim.Centroid()} vel={sim.Velocity}" +
+                          $" area={sim.CurrentArea:F0}/{sim.TargetArea:F0}" +
+                          $" gravityOn={gravityOn} children={children.Count}" +
+                          $" grabbed={sim.IsGrabbed} mat={(bodyMaterial ? bodyMaterial.name : "null")}");
+            }
+            catch (Exception e)
+            {
+                Debug.Log("[PetDiag] 诊断本身出错: " + e.Message);
+            }
         }
     }
 }
