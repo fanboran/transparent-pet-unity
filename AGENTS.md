@@ -22,6 +22,9 @@
   ```
   退出码 0 = 工程可打开；非 0 先查输出里的 error 再处置。
 - 改进待办项记录在 `docs/待办事项.md`
+- **commit 后必须立即 `git push`**：用户以 GitHub（fanboran/transparent-pet-unity）为准确认进度，本地领先远端 = 用户认为"什么都没提交"（2026-09-12 曾因此积压 35 笔）
+- **效果版本保留约定（用户拍板）**：一切观感/行为迭代都作为**独立版本场景**永久保留在 `Assets/Scenes/Versions/`（一版本一目录，SceneGenerator.Versions 表登记，GenerateAll 成套生成并全部收录构建设置，index 0 = 交付默认）；不做运行时开关、不删旧版本。构建 exe 默认只打 index 0（BuildPlayer 显式指定场景）；体验其他版本用编辑器打开对应场景
+- **视觉锚定验收**：改观感前先跑 `TransparentPet.EditorTools.SlimeSnapshot.CaptureHeadless`（batchmode），与原版烘焙图（git 历史提取 PetSlime_ref.png 放输出目录）同底同比例渲染对比，亲自看图确认后再动手；关键数值：原版轮廓 160×101px、静息半宽 80
 - **验收 exe 交付**：构建出的验收 exe（Builds 整目录内容：exe、PetSpike_Data、UnityPlayer.dll、MonoBleedingEdge 缺一不可）直接复制到用户下载目录 `F:/Downloads/PetSpike/` 供其双击（用户下载目录已迁移，勿用 C 盘默认路径），别让用户去工程目录里翻；命令行构建入口 `-executeMethod TransparentPet.EditorTools.BuildPlayer.BuildWindows64`（2022.3 的 `-buildWindowsPlayer64` 参数已失效）
 - **Unity MCP**：本工程已装 MCP for Unity（v10.0.0），ZCode 已配 `unity-mcp` server——Unity 编辑器打开本工程时，新会话的 AI 可直接用 manage_scene / manage_gameobject / manage_asset / read_console 工具操作编辑器（写完脚本先 read_console 查编译错误再用）；编辑器没开时这些工具不可用，改用 batchmode 验证
 
