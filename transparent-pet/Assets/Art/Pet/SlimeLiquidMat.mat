@@ -1,0 +1,43 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: SlimeLiquidMat
+  m_Shader: {fileID: 4800000, guid: 666d4d3346a1f1e41b239ba0565a053b, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs: []
+    m_Ints: []
+    m_Floats:
+    - _Blink: 0
+    - _Dispersion: 0.35
+    - _FlowSpeed: 0.6
+    - _RefractStrength: 1
+    - _RimIntensity: 0.85
+    - _RimPower: 3
+    - _SpecularIntensity: 1.1
+    - _SpecularPower: 28
+    - _Squash: 0
+    - _TransparencyBoost: 0
+    - _VelocityW: 0
+    m_Colors:
+    - _BodyColor: {r: 0.1, g: 0.3, b: 0.6, a: 1}
+    - _EyeColor: {r: 0.05, g: 0.07, b: 0.12, a: 1}
+    - _EyeDir: {r: 0, g: 0, b: 0, a: 0}
+  m_BuildTextureStacks: []
