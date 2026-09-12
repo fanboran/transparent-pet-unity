@@ -148,7 +148,9 @@ namespace TransparentPet.Pet
             BoundsWidth = NativeScreen.GetWorkAreaWidth(),
             GroundY = NativeScreen.GetWorkAreaBottomY(),
             TopY = 0f, // 安全天花板：任何版本都不许飞出屏幕
-            GravityOn = !sim.IsGrabbed && (hoverMode ? !hoverSettled : true),
+            // 重力常开（默认版）：被抓住时也保持——受力点在鼠标，身体挂在
+            // 受力点上垂坠，这才是"拎起"的物理；hover 版保留"抓住悬浮"旧语义
+            GravityOn = !(hoverMode && (hoverSettled || sim.IsGrabbed)),
             Gravity = throwParams.gravity,
         };
 

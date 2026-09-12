@@ -1,14 +1,14 @@
 // ============================================================================
-// SlimeSnapshot.cs — 无头渲染快照：PBF 史莱姆关键帧 vs 原版烘焙图对比
+// SlimeSnapshot.cs — 无头渲染快照：PBF 史莱姆关键状态 vs 原版烘焙图对比
 // ============================================================================
-// 用途（视觉锚定验收）：batchmode 下搭建"只有底部一个地面"的极简测试世界，
-// 重力常开，把 PBF 史莱姆从空中落到地面；同场景同底色同比例渲染 git 历史
-// 里的原版烘焙贴图（PetSlime_ref.png，需先放到输出目录），产出对比 PNG。
+// batchmode 下搭建"只有底部一个地面"的极简测试世界（重力常开），渲染
+// PBF 史莱姆的：出生 / 落地趴姿 / **真实拖拽**（抓偏心点绕圈拖动，途中
+// 抓拍——检验受力点是否真的是点击处、身体是否垂坠而非绕鼠标成正圆）。
 // 运行：-executeMethod TransparentPet.EditorTools.SlimeSnapshot.CaptureHeadless
 // 输出：C:/Users/fanbo/AppData/Local/Temp/pet-snapshot/*.png
 // ============================================================================
+using System; // 注：Random/Object 用 UnityEngine 限定，避免与 System 二义
 using System.IO;
-using System.Collections.Generic;
 using TransparentPet.Pet;
 using UnityEditor;
 using UnityEngine;
@@ -28,7 +28,7 @@ namespace TransparentPet.EditorTools
         public static void CaptureHeadless()
         {
             Directory.CreateDirectory(OutDir);
-            Random.InitState(42); // 撒点抖动可复现
+            UnityEngine.Random.InitState(42); // 撒点抖动可复现
 
             // ── 相机与极简世界：纯色背景 + 一条地面线 ──
             var camGo = new GameObject("SnapCam");
@@ -40,7 +40,7 @@ namespace TransparentPet.EditorTools
             cam.backgroundColor = new Color(0.16f, 0.17f, 0.20f, 1f);
 
             var ground = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            Object.DestroyImmediate(ground.GetComponent<Collider>());
+            UnityEngine.Object.DestroyImmediate(ground.GetComponent<Collider>());
             ground.GetComponent<MeshRenderer>().sharedMaterial =
                 new Material(Shader.Find("Unlit/Color")) { color = new Color(0.07f, 0.08f, 0.10f) };
             ground.transform.localScale = new Vector3(W / PPU + 2f, 0.04f, 1f);
@@ -59,46 +59,54 @@ namespace TransparentPet.EditorTools
                     new Rect(0, 0, refTex.width, refTex.height), new Vector2(0.5f, 0.5f), PPU);
                 sr.sortingOrder = 5;
                 // 贴图 800×528 = 4× 画布 200×132；缩放 0.25 → 画布 200px 宽。
-                // 路径底边在画布 y=121，画布中心 y=66 → 路径底距中心 55px，
-                // 摆到"路径底贴地"：中心 y = 地面 + 0.55 世界单位。
+                // 路径底边在画布 y=121 → 路径底距画布中心 55px → 中心抬高 0.55 贴地
                 refGo.transform.position = new Vector3(-2.0f, (H * 0.5f - GroundYpx) / PPU + 0.55f, 0f);
                 refGo.transform.localScale = Vector3.one * 0.25f;
-                refGo.SetActive(false); // 单独镜头再开
+                refGo.SetActive(false);
             }
             else
-            {
                 Debug.LogWarning($"[SlimeSnapshot] 未找到原版参考图 {refPath}，跳过对比渲染");
-            }
 
-            // ── PBF 史莱姆：重力常开，从空中落到地面 ──
-            var mat = new Material(Shader.Find("TransparentPet/SlimeLiquid"));
-            var mf = new GameObject("PbfSlime").AddComponent<MeshFilter>();
-            var mr = mf.gameObject.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = mat;
-            mr.sortingOrder = 10;
-
+            // ── PBF 史莱姆：metaball 场渲染（与运行时同路径）──
             var sim = new SlimePbf(new Vector2(560f, 150f), 80f); // 半宽 80 = 原版路径宽 160px
+            var fieldGo = new GameObject("PbfField");
+            var mf = fieldGo.AddComponent<MeshFilter>();
+            var mr = fieldGo.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = new Material(Shader.Find("TransparentPet/SlimeLiquid"));
+            mr.sortingOrder = 10;
+            var quad = new Mesh { name = "FieldQuad" };
+            quad.vertices = new[]
+            {
+                new Vector3(-0.5f, -0.5f, 0f), new Vector3(0.5f, -0.5f, 0f),
+                new Vector3(0.5f, 0.5f, 0f), new Vector3(-0.5f, 0.5f, 0f)
+            };
+            quad.triangles = new[] { 0, 2, 1, 0, 3, 2 };
+            mf.sharedMesh = quad;
+            using var field = new SlimeFieldRenderer(mr.sharedMaterial, sim.Count);
+
+            Func<Vector2, Vector3> ToWorld = p => new Vector3((p.x - W * 0.5f) / PPU, (H * 0.5f - p.y) / PPU, 0f);
+
             var env = new PbfEnvironment
             {
                 BoundsWidth = W,
                 GroundY = GroundYpx,
                 TopY = 0f,
-                GravityOn = true,   // 重力常开（用户拍板的新语义）
+                GravityOn = true,   // 重力常开
                 Gravity = 800f,
             };
 
             var rt = new RenderTexture(W, H, 24);
             cam.targetTexture = rt;
 
+            void Push() => field.Render(fieldGo.transform, sim, ToWorld, new Color(0.16f, 0.48f, 0.92f));
+
             var restSize = sim.BoundsSize();
             var impactCaptured = false;
-            bool pullPhase = false;
-            var grabAnchor = Vector2.zero;
-            for (var frame = 0; frame <= 360; frame++)
+            for (var frame = 0; frame <= 480; frame++)
             {
                 if (frame > 0)
                     sim.StepFrame(1f / 60f, env);
-                Rebuild(mf, sim);
+                Push();
 
                 if (frame == 1)
                     Snap(cam, rt, "pbf_initial.png");
@@ -107,24 +115,35 @@ namespace TransparentPet.EditorTools
                     impactCaptured = true;
                     Snap(cam, rt, "pbf_impact.png");
                 }
-                if (frame == 240) // 落定趴姿（重力常开平衡态）
+                if (frame == 240) // 落定趴姿
                 {
                     Snap(cam, rt, "pbf_settled.png");
-                    Closeup(cam, rt, sim, "closeup_settled.png"); // 特写：边界马赛克/抖动感检查
+                    Closeup(cam, rt, sim, "closeup_settled.png");
                 }
-                // 上拉相位：验证黏性（整团应被拎起拉伸，不许分身）
-                if (frame == 242)
+
+                // ── 真实拖拽复现（用户核心抱怨的交互）：抓"左上偏心点"，
+                //    提起→右移→途中抓拍。若实现退化成正圆贴图，此处立即现形
+                if (frame == 260)
                 {
-                    pullPhase = sim.TryGrab(sim.Centroid);
-                    grabAnchor = sim.Centroid;
+                    var grabPoint = sim.Centroid + new Vector2(-40f, -30f); // 偏心：左上角
+                    sim.TryGrab(grabPoint);
                 }
-                if (pullPhase && frame > 242 && frame <= 282)
-                    sim.MoveGrab(grabAnchor + new Vector2(20f, -(frame - 242) * 4f), frame * 16.7f); // 上拉 160px
-                if (frame == 282)
-                    Closeup(cam, rt, sim, "closeup_drag.png"); // 特写：上拉中的黏连状态
-                if (frame == 284 && pullPhase)
+                if (frame > 260 && frame <= 420)
+                {
+                    var k = (frame - 260) / 160f; // 0→1
+                    // 提起 140px 后水平右移 160px，带一点弧线
+                    var target = new Vector2(520f + 160f * k, 240f + 30f * Mathf.Sin(k * Mathf.PI));
+                    sim.MoveGrab(target, frame * 16.7f);
+                }
+                if (frame == 320 || frame == 420) // 拖拽途中 / 结束（悬挂态）
+                {
+                    Snap(cam, rt, frame == 320 ? "drag_moving.png" : "drag_hold.png");
+                    Closeup(cam, rt, sim, frame == 320 ? "closeup_drag_moving.png" : "closeup_drag_hold.png");
+                }
+                if (frame == 424)
                     sim.Release(350f, 800f, 2f, true);
-                if (frame == 360 && refGo != null)
+
+                if (frame == 480 && refGo != null)
                 {
                     refGo.SetActive(true); // 同框对比：左原版 / 右 PBF
                     Snap(cam, rt, "combined_compare.png");
@@ -144,7 +163,7 @@ namespace TransparentPet.EditorTools
             tex.ReadPixels(new Rect(0, 0, W, H), 0, 0);
             tex.Apply();
             File.WriteAllBytes(Path.Combine(OutDir, file), tex.EncodeToPNG());
-            Object.DestroyImmediate(tex);
+            UnityEngine.Object.DestroyImmediate(tex);
             Debug.Log("[SlimeSnapshot] 已保存 " + file);
         }
 
@@ -159,30 +178,6 @@ namespace TransparentPet.EditorTools
             Snap(cam, rt, file);
             cam.transform.position = homePos;
             cam.orthographicSize = homeSize;
-        }
-
-        static void Rebuild(MeshFilter mf, SlimePbf sim)
-        {
-            var verts = new List<Vector3>(1024);
-            var colors = new List<Color>(1024);
-            var tris = new List<int>(3072);
-            if (DensitySurface.Build(sim.Positions, sim.EffectiveH, sim.Rho0,
-                    p => new Vector3((p.x - W * 0.5f) / PPU, (H * 0.5f - p.y) / PPU, 0f),
-                    verts, colors, tris))
-            {
-                var mesh = mf.sharedMesh;
-                if (mesh == null)
-                {
-                    mesh = new Mesh { name = "SnapshotSlime" };
-                    mesh.MarkDynamic();
-                    mf.sharedMesh = mesh;
-                }
-                mesh.Clear(false);
-                mesh.SetVertices(verts);
-                mesh.SetColors(colors);
-                mesh.SetTriangles(tris, 0);
-                mesh.RecalculateBounds();
-            }
         }
     }
 }

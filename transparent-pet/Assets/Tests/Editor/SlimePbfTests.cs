@@ -301,29 +301,5 @@ namespace TransparentPet.Tests
             }
         }
 
-        // ── 10. 密度表面：Build 产出有效网格，覆盖度在 [0,1] ──
-        [Test]
-        public void Surface_ProducesValidMesh()
-        {
-            var sim = new SlimePbf(Spawn, HalfWidth);
-            var env = HoverEnv();
-            for (var i = 0; i < 30; i++)
-                sim.StepFrame(Dt, env);
-
-            var verts = new List<Vector3>();
-            var colors = new List<Color>();
-            var tris = new List<int>();
-            var ok = DensitySurface.Build(sim.Positions, sim.EffectiveH, sim.Rho0,
-                v => new Vector3(v.x / 100f, -v.y / 100f, 0f), verts, colors, tris);
-
-            Assert.IsTrue(ok, "表面重建应成功");
-            Assert.Greater(verts.Count, 60, "顶点数应可观（密度场网格）");
-            Assert.Greater(tris.Count, 100, "三角形数应可观");
-            foreach (var c in colors)
-            {
-                Assert.GreaterOrEqual(c.a, 0f);
-                Assert.LessOrEqual(c.a, 1f);
-            }
-        }
     }
 }

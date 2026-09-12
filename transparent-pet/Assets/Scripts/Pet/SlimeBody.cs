@@ -1,12 +1,10 @@
 // ============================================================================
-// SlimeBody.cs — PBF 粒子 → 密度场表面 Mesh → 纯色半透明材质
+// SlimeBody.cs — PBF 史莱姆的渲染载体：单位四边形 + metaball 场渲染器
 // ============================================================================
-// 每帧把 SlimePbf 的粒子团交给 DensitySurface 重建表面（Marching Squares，
-// 拓扑随密度场变化，轮廓天然光滑），写入动态 Mesh；顶点色 alpha 携带
-// 密度覆盖度，着色器直接用它做边缘渐变（天然抗锯齿）。
+// 网格只有一个单位四边形（罩住粒子包围盒），全部视觉由
+// SlimeFieldRenderer/SlimeLiquid 着色器逐像素计算（见其文件头注释）。
 // ============================================================================
 using System;
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace TransparentPet.Pet
@@ -15,17 +13,8 @@ namespace TransparentPet.Pet
     [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
     public sealed class SlimeBody : MonoBehaviour
     {
-        // 与 SlimeLiquid.shader 的 Properties 对应
-        static readonly int BodyColorId = Shader.PropertyToID("_BodyColor");
-        static readonly int SquashId = Shader.PropertyToID("_Squash");
-        static readonly int VelocityWId = Shader.PropertyToID("_VelocityW");
-
-        Mesh mesh;
+        SlimeFieldRenderer field;
         MeshRenderer meshRenderer;
-        MaterialPropertyBlock block;
-        readonly List<Vector3> vertices = new List<Vector3>(1024);
-        readonly List<Color> colors = new List<Color>(1024);
-        readonly List<int> triangles = new List<int>(3072);
 
         /// <summary>当前共享材质（场景组装时已挂在 MeshRenderer 上）。</summary>
         public Material SharedMaterial => meshRenderer ? meshRenderer.sharedMaterial : null;
@@ -36,30 +25,31 @@ namespace TransparentPet.Pet
             meshRenderer.sharedMaterial = material;
             meshRenderer.sortingOrder = 10;
 
-            mesh = new Mesh { name = "SlimePbfSurface" };
-            mesh.MarkDynamic();
+            // 单位四边形：真正的形状由片元着色器逐像素生成
+            var mesh = new Mesh { name = "SlimeFieldQuad" };
+            mesh.vertices = new[]
+            {
+                new Vector3(-0.5f, -0.5f, 0f),
+                new Vector3(0.5f, -0.5f, 0f),
+                new Vector3(0.5f, 0.5f, 0f),
+                new Vector3(-0.5f, 0.5f, 0f)
+            };
+            mesh.triangles = new[] { 0, 2, 1, 0, 3, 2 };
             GetComponent<MeshFilter>().sharedMesh = mesh;
-            block = new MaterialPropertyBlock();
         }
 
-        /// <summary>每帧：粒子 → 密度场表面 → Mesh + 材质动态属性。</summary>
+        /// <summary>每帧：粒子 → 场渲染。toWorld = 屏幕像素（Y 向下）→ 世界。</summary>
         public void Push(SlimePbf sim, Func<Vector2, Vector3> toWorld, Color bodyColor)
         {
-            if (DensitySurface.Build(sim.Positions, sim.EffectiveH, sim.Rho0, toWorld,
-                    vertices, colors, triangles))
-            {
-                mesh.Clear(false);
-                mesh.SetVertices(vertices);
-                mesh.SetColors(colors);
-                mesh.SetTriangles(triangles, 0);
-                mesh.RecalculateBounds();
-            }
+            if (field == null)
+                field = new SlimeFieldRenderer(SharedMaterial, sim.Count);
+            field.Render(transform, sim, toWorld, bodyColor);
+        }
 
-            meshRenderer.GetPropertyBlock(block);
-            block.SetColor(BodyColorId, bodyColor);
-            block.SetFloat(SquashId, sim.SquashPulse);
-            block.SetFloat(VelocityWId, Mathf.Min(sim.Velocity.magnitude / 800f, 1.5f));
-            meshRenderer.SetPropertyBlock(block);
+        void OnDestroy()
+        {
+            field?.Dispose();
+            field = null;
         }
     }
 }

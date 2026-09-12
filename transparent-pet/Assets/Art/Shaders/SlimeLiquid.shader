@@ -1,16 +1,14 @@
 // ================================================================
-// ██████  TransparentPet/SlimeLiquid —— 纯色半透明史莱姆（基础观感版）
+// ██████  TransparentPet/SlimeLiquid —— metaball 场着色器（逐像素密度场）
 // ================================================================
-// 观感决策（用户拍板）：先锚定最基础的"纯色半透明"形态，折射/色散/
-// 流动/打光等高级效果以后再说。形状与平滑度全部由 C# 侧的密度场
-// Marching Squares 表面提供：
-//   · 顶点位置 = 密度等值面（轮廓天然光滑，无多边形棱角）；
-//   · 顶点色 alpha = 密度覆盖度（边缘 0 → 内部 1），片元插值后即得
-//     1~2px 的密度渐变边缘——天然抗锯齿，与缩放/分辨率无关；
-//   · alpha 契约（透明窗口鼠标命中，阈值 0.1）：主体内部 coverage=1
-//     → alpha=_BodyAlpha(0.75)，远高于 0.35 下限；仅边缘渐隐。
-// 挤压脉冲（_Squash，撞地/受激时 C# 置 1 并指数衰减）只做轻微整体
-// 提亮——物理反馈，不是装饰配色。
+// 输入：粒子位置 StructuredBuffer（世界坐标 XY）+ 罩住粒子包围盒的四边形。
+// 片元对每个像素累加全部粒子的平滑核 w = (1-r²/h²)³（C² 连续），
+// alpha = smoothstep(iso±band, w)：边缘是数学级连续的等值面——
+// 任何分辨率、任何缩放都不可能出现锯齿/块状（mesh 等值线的顶点
+// 天然卡在网格上，这是其"马赛克感"无法根除的原因）。
+// 颜色：纯色半透明 + 挤压脉冲轻微提亮（物理反馈）。
+// alpha 契约：主体内部 w >> iso → alpha = _BodyAlpha(0.78)，远高于
+// 透明窗口命中阈值 0.35 下限；仅边缘 ~1.5px 渐隐。
 // ================================================================
 
 Shader "TransparentPet/SlimeLiquid"
@@ -18,9 +16,8 @@ Shader "TransparentPet/SlimeLiquid"
     Properties
     {
         _BodyColor ("主体色", Color) = (0.16, 0.48, 0.92, 1)
-        _BodyAlpha ("主体不透明度", Range(0.35, 1)) = 0.75
+        _BodyAlpha ("主体不透明度", Range(0.35, 1)) = 0.78
         _Squash ("挤压脉冲", Range(0, 1)) = 0
-        _VelocityW ("速度模长", Float) = 0
     }
 
     SubShader
@@ -36,42 +33,52 @@ Shader "TransparentPet/SlimeLiquid"
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag
-            #pragma target 3.0
+            #pragma target 4.5   // StructuredBuffer 需要 SM4.5（D3D11）
             #include "UnityCG.cginc"
 
-            float4 _BodyColor;
-            float  _BodyAlpha;
-            float  _Squash;
-            float  _VelocityW;
+            StructuredBuffer<float4> _Particles;   // xy = 世界坐标（每帧 SetData）
+            int _ParticleCount;
+            float _KernelH;   // 核半径（世界单位）
+            float _Iso;       // 等值阈值（每帧按质心核总和自标定）
+            float _Band;      // 边缘过渡带宽度（核单位）
 
-            struct appdata
-            {
-                float4 vertex : POSITION;
-                fixed4 color  : COLOR;   // 顶点色：a = 密度覆盖度（C# 侧写入）
-            };
+            float4 _BodyColor;
+            float _BodyAlpha;
+            float _Squash;
 
             struct v2f
             {
                 float4 pos : SV_POSITION;
-                fixed4 color : COLOR0;
+                float2 world : TEXCOORD0;
             };
 
-            v2f vert(appdata v)
+            v2f vert(appdata_base v)
             {
                 v2f o;
-                o.pos = UnityObjectToClipPos(v.vertex);
-                o.color = v.color;
+                float4 world = mul(unity_ObjectToWorld, v.vertex);
+                o.pos = mul(UNITY_MATRIX_VP, world);
+                o.world = world.xy;
                 return o;
             }
 
             float4 frag(v2f i) : SV_Target
             {
-                // 覆盖度（顶点插值）→ smoothstep 软化后再作为透明系数：
-                // 顶点色网格量化出的 alpha 台阶被 S 曲线抹平（马赛克感来源之一），
-                // 边缘密度低于 iso 的部分平滑渐隐，内部为 1
-                float coverage = smoothstep(0.0, 1.0, i.color.a);
-                float alpha = _BodyAlpha * coverage;
-                // 挤压脉冲轻微提亮（果冻受激反馈）
+                // 逐像素密度场：累加全部粒子的平滑核（紧支撑，C² 连续）
+                float h2 = _KernelH * _KernelH;
+                float w = 0.0;
+                for (int k = 0; k < _ParticleCount; k++)
+                {
+                    float2 d = i.world - _Particles[k].xy;
+                    float r2 = dot(d, d);
+                    if (r2 < h2)
+                    {
+                        float t = 1.0 - r2 / h2;
+                        w += t * t * t;
+                    }
+                }
+
+                // 等值面 + 平滑过渡带 = 天然逐像素抗锯齿
+                float alpha = _BodyAlpha * smoothstep(_Iso - _Band, _Iso + _Band, w);
                 float3 col = _BodyColor.rgb * (1.0 + _Squash * 0.18);
                 return float4(col, alpha);
             }
@@ -79,5 +86,5 @@ Shader "TransparentPet/SlimeLiquid"
         }
     }
 
-    Fallback "Transparent/Diffuse"
+    Fallback Off
 }

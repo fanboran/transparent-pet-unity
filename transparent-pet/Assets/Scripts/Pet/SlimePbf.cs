@@ -49,17 +49,19 @@ namespace TransparentPet.Pet
         const float VelocityDamping = 0.985f;   // 每子步速度保留（加大耗散，静止更快）
         const float MaxSpeed = 1800f;           // 速度硬上限 px/s（项目 clamp 30 单位）
         const float DensityClampLow = -0.08f;   // C 下限收紧：欠密度（被拉稀）区受到更强回拉——PBF 的"黏性"本体，防一拉就散
-        const float TensileK = 0.5f;            // s_corr k（论文 0.1；桌面果冻加大换更顺滑更强黏聚的表层）
+        const float TensileK = 0.3f;            // s_corr k（0.5 会把悬挂体收成团，降回 0.3 保垂坠）
         const float TensileDqRatio = 0.25f;     // dq = 0.25h（论文 0.2~0.3h）
         const float XsphViscosity = 10f;         // XSPH 强度（果冻内聚，观感项）
         const float ShapeMemoryAccel = 60f;     // 静置形状记忆加速度（px/s²）：模板感更低更流体，蹲姿靠张力+密度
                                                 // 果冻的"形状弹性"——纯流体在平底锅上物理上
                                                 // 必摊成薄饼，弹性恢复力顶住重力才蹲得住
                                                 // （平衡高差 = g/k ≈ 8px → 静息 ~85% 高度）
-        const float GrabRadiusMul = 3.5f;       // 拖拽影响半径 = mul × h（局部"捏皮"范围）
-        const float GrabFollowLerp = 0.5f;      // 影响区内粒子速度向控制器速度的 lerp 系数
-        const float GrabFollowStiffness = 30f;  // 全身跟随弹簧刚度（1/s²，位移比例）：
-                                                // 拎皮拽整团，黏滞平均不掉跟手速度
+        // 拖拽 = 真实的"点受力"：只钉住点击处的皮区（PinPatch），其余质量挂在
+        // 皮区上受重力垂坠/摆动——全身弹簧方案会把整团拉成以鼠标为圆心的
+        // 正圆（用户实测否决），那是贴图行为不是物理。
+        const float PinPatchRadiusMul = 1.2f;   // 皮区半径 = mul × h（更小的捏点=更明显的颈部拉伸）
+        const float PinStiffness = 60f;         // 皮区钉扎刚度（1/s²，抓哪儿钉哪儿）
+        const float PinFollowLerp = 0.35f;      // 皮区速度向鼠标速度的贴合系数
         const int MaxNeighbors = 48;
         const int VelocityBufferSize = 8;       // 甩出速度滑窗（Godot 版语义）
 
@@ -98,9 +100,15 @@ namespace TransparentPet.Pet
         Vector2 grabPos;
         Vector2 grabVel;                        // 鼠标速度（滑窗平均，来自 MoveGrab 采样）
         readonly List<(Vector2 point, float timeMs)> velocityBuffer = new List<(Vector2, float)>(VelocityBufferSize);
+        // 点受力：皮区粒子（点击半径内的一小撮）+ 各自相对点击点的偏移
+        readonly int[] pinIdx = new int[64];
+        readonly Vector2[] pinOffset = new Vector2[64];
+        readonly int[] pinOf;                   // [i] → 皮区槽位（-1 = 非皮区）
+        int pinCount;
 
         // ── 全局状态 ──
         float rho0;                             // 目标密度（构造时按初始布局自适应标定）
+        float lastGroundY = float.MaxValue;      // 接地阻尼用（StepFrame 从 env 取）
         float scale = 1f;                       // 用户缩放（h 与形状锚同步缩放，密度不变）
         float squashPulse;
         float lastSubStepDt = 1f / 120f;
@@ -151,6 +159,7 @@ namespace TransparentPet.Pet
             corrBuffer = new Vector2[ParticleCount];
             nbrCount = new int[ParticleCount];
             nbrIdx = new int[ParticleCount * MaxNeighbors];
+            pinOf = new int[ParticleCount];
 
             Array.Copy(pos, prev, ParticleCount);
             UpdateCentroid();
@@ -237,6 +246,7 @@ namespace TransparentPet.Pet
             var subDt = dt / SubSteps;
             lastSubStepDt = subDt;
 
+            lastGroundY = env.GroundY;
             var prevVelY = Velocity.y;
             for (var s = 0; s < SubSteps; s++)
                 SubStep(subDt, env);
@@ -306,21 +316,13 @@ namespace TransparentPet.Pet
                 if (env.GravityOn)
                     v.y += env.Gravity * dt;
 
-                // 拖拽控制器（捏皮拽整团）：
-                //   全身：向抓取点的位移比例弹簧（无奇异点、随距离增力）——
-                //         整团以果冻节奏跟随鼠标，速度不会被黏滞平均掉
-                //   局部：影响半径内速度再向控制器速度 lerp（捏住的"皮"贴手）
-                if (grabbed)
+                // 拖拽 = 点受力：皮区粒子被钉在 (鼠标 + 抓取时偏移) 上；
+                // 其余粒子不受任何鼠标力——它们挂在皮区上，由重力、键、
+                // 密度决定垂坠/摆动/拉伸（真实的拎起物理）
+                if (grabbed && pinOf[i] >= 0)
                 {
-                    v += (grabPos - pos[i]) * (GrabFollowStiffness * dt);
-
-                    var dist = Vector2.Distance(grabPos, pos[i]);
-                    var radius = GrabRadiusMul * h;
-                    if (dist < radius)
-                    {
-                        var w = 1f - dist / radius;
-                        v = Vector2.Lerp(v, grabVel, GrabFollowLerp * w);
-                    }
+                    v += (grabPos + pinOffset[pinOf[i]] - pos[i]) * (PinStiffness * dt);
+                    v = Vector2.Lerp(v, grabVel, PinFollowLerp);
                 }
 
                 // 形状记忆（果冻形状弹性）：把粒子拉回 SVG 静息锚（跟随质心缩放）。
@@ -476,12 +478,17 @@ namespace TransparentPet.Pet
         // ── 6. 提交：v=(pred-pos)/dt，钳速度 ──
         void FinishStep(float dt)
         {
+            var contactY = lastGroundY - EffectiveH; // 接触层：距地面一个核半径内
             for (var i = 0; i < ParticleCount; i++)
             {
                 var v = (pred[i] - pos[i]) / dt;
                 var sp = v.magnitude;
                 if (sp > MaxSpeed)
                     v = v / sp * MaxSpeed;
+                // 接地阻尼：贴地粒子垂向速度强衰减（密度修正/重力反复注入的
+                // 微小上下速度差是底边"磨蹭"地面线的来源）
+                if (pos[i].y > contactY)
+                    v.y *= 0.7f;
                 vel[i] = v;
                 pos[i] = pred[i];
             }
@@ -529,6 +536,24 @@ namespace TransparentPet.Pet
             grabPos = point;
             grabVel = Vector2.zero;
             velocityBuffer.Clear();
+
+            // 皮区 = 点击点半径 1.6h 内的粒子；记录各自相对点击点的偏移，
+            // 之后它们被钉在 (鼠标位置 + 偏移) 上——受力点就是用户点的位置
+            pinCount = 0;
+            for (var i = 0; i < ParticleCount; i++)
+                pinOf[i] = -1;
+            var r = PinPatchRadiusMul * EffectiveH;
+            var r2 = r * r;
+            for (var i = 0; i < ParticleCount && pinCount < pinIdx.Length; i++)
+            {
+                var d = pos[i] - point;
+                if (d.sqrMagnitude < r2)
+                {
+                    pinOf[i] = pinCount;
+                    pinOffset[pinCount] = d;
+                    pinIdx[pinCount++] = i;
+                }
+            }
             return true;
         }
 
@@ -563,6 +588,9 @@ namespace TransparentPet.Pet
         public Vector2 Release(float minSpeed, float maxSpeed, float multiplier, bool throwEnabled)
         {
             grabbed = false;
+            pinCount = 0;
+            for (var i = 0; i < ParticleCount; i++)
+                pinOf[i] = -1;
             var throwVel = grabVel * multiplier;
             if (!throwEnabled || throwVel.magnitude < minSpeed)
                 throwVel = Vector2.zero;
