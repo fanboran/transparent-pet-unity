@@ -24,7 +24,7 @@
 | Win32 窗口互操作（`Core/`） | 透明 / 置顶 / 点击穿透（UniWinC 接入）；`SPI_GETWORKAREA` 工作区地面（自动扣除任务栏，落底不吃点击）；`Shell_NotifyIcon` 托盘 + 隐藏消息窗口 + 手写消息泵；托盘图标由 `LoadImageW` 从 exe 资源提取；注册表开机自启；JSON 配置持久化 |
 | 交互物理（`Pet/ThrowPhysics`） | 从 Godot 版 `drag_controller.gd` 逐行移植：拖拽速度滑动窗口 → 抛射初速（夹上下限）、重力、地面/墙壁反弹、接地摩擦；纯 C# 无场景依赖，NUnit 可直接实例化测试 |
 | 生命感表现（`Pet/PetLifeMath`+`PetLifeVisual`） | 逻辑位置与渲染变换分层：物理只读写逻辑位置，表现层在 `LateUpdate` 叠加呼吸/倾角/挤压——视觉装饰永不污染模拟；落地挤压用半隐式欧拉弹簧（欠阻尼 ζ≈0.27，1~2 次回弹过冲即“Q 弹”来源）；同一套数学被离线快照工具复用，保证“演示图 = 真实行为” |
-| 工程化 | 场景程序化生成（`SceneGenerator`）：不手写场景 YAML，克隆工程一条命令复原全部场景与图标；六个历史版本场景存档（`Assets/Scenes/Versions/`，index 0 = 交付默认）；**62 项 NUnit 测试**（物理/命中/软体/配置/事件总线/表现数学） |
+| 工程化 | 场景程序化生成（`SceneGenerator`）：不手写场景 YAML，克隆工程一条命令复原全部场景与图标；五个历史版本场景存档（`Assets/Scenes/Versions/`，index 0 = 交付默认）；**57 项 NUnit 测试**（物理/命中/软体/配置/事件总线/表现数学） |
 
 ## 快速开始
 
@@ -76,9 +76,31 @@ tools/           # 图标生成 / GIF 合成脚本（Python + Pillow）
 | V6 BakedTexture | 烘焙贴图原样，零表现层 |
 | V5 SvgClassic | 贴图仅作 alpha 轮廓，颜色由 `Slime.shader` 玻璃着色器计算 |
 | V3 PbfGravity | PBF 粒子软体（重力常开趴姿版，`SlimeLiquid` metaball 场渲染） |
-| V2 PbfHover | PBF 粒子软体（落定悬浮版） |
+| **V2 SplitFusion** | 轮廓环软体（28 粒子）：撞墙面积转移式分裂 + 分身被吸引飘回融合（面积守恒） |
+| V9 PbfHover | PBF 粒子软体（落定悬浮版；原 V2 编号于 2026-09 让位给分裂版） |
 
-版本约定：观感/行为迭代一律作为独立版本场景永久保留，不做运行时开关；构建 exe 只打 index 0。
+版本约定：观感/行为迭代一律作为独立版本场景永久保留，不做运行时开关；构建 exe 只打 index 0。**新方案取代旧方案时，旧效果必须先 resurrect 成独立版本场景再下架**——历史教训：分裂/融合玩法曾在 PBF 重构时被整体替换下架，后按此约定复活为 V2。
+
+## 版本展厅（演示用）
+
+`F:/Downloads/PetGallery/` 下的 `PetGallery.exe`：**五只不同版本的史莱姆同屏**，各自独立可拖拽。
+
+| 位置 | 展项 | 看点 |
+|---|---|---|
+| 最左 | V2 · 轮廓软体 | 启动约 3.5 秒后自动甩向侧墙 → **撞墙分裂出分身 → 分身被吸引飘回融合**（也可以自己拖起来甩向侧墙） |
+| 左二 | V7 · 生命感 | 呼吸起伏、被拖时倾斜、落地压扁回弹、戳一下会弹 |
+| 中 | V5 · 玻璃着色器 | 颜色完全由着色器计算（菲涅尔 + FBM 流动 + 伪折射色散） |
+| 右二 | V3 · PBF 软体 | 重力常开：出生落下、落地压扁回弹后趴在桌面 |
+| 最右 | V9 · PBF 悬浮 | 唯一悬停在空中、不落地的版本 |
+
+同屏多只的技术要点：出生位置逐个注入、关闭位置持久化、**点击仲裁**（重叠区域只归最上层那只）、每只 PBF 独立材质实例与粒子 buffer。
+
+## 与原版（Godot）的关系
+
+本项目是 Godot 4 桌宠原版（Project Astra）的引擎迁移：玩法规则不变，实现全部重写。
+
+- 窗口交互：Godot 原版为自写 C++ GDExtension（Win32 `WS_EX_TRANSPARENT`/`WS_EX_LAYERED` 像素级点击穿透、`Shell_NotifyIcon` 系统托盘、任务栏图标隐藏）；该扩展暂未作为独立仓库公开。Unity 版改用 [UniWinC](https://github.com/kirurobo/UniWinC) 接入同类窗口能力。
+- 交互物理：`Pet/ThrowPhysics` 由 Godot 版 `drag_controller.gd` 逐行移植。
 
 ## 文档
 

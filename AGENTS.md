@@ -24,6 +24,9 @@
 - 改进待办项记录在 `docs/待办事项.md`
 - **commit 后必须立即 `git push`**：用户以 GitHub（fanboran/transparent-pet-unity）为准确认进度，本地领先远端 = 用户认为"什么都没提交"（2026-09-12 曾因此积压 35 笔）
 - **效果版本保留约定（用户拍板）**：一切观感/行为迭代都作为**独立版本场景**永久保留在 `Assets/Scenes/Versions/`（一版本一目录，SceneGenerator.Versions 表登记，GenerateAll 成套生成并全部收录构建设置，index 0 = 交付默认）；不做运行时开关、不删旧版本。构建 exe 默认只打 index 0（BuildPlayer 显式指定场景）；体验其他版本用编辑器打开对应场景
+  - **新方案取代旧方案时，必须先把旧效果 resurrect 成独立版本场景，再谈下架**——绝不能"只在 git 历史/待办里留个记录"就当保留过了
+  - **历史教训（2026-09）**：分裂/融合玩法（撞墙面积转移式分裂 + 分身吸引飘回融合）在 PBF 软体重构时被整体替换下架，用户回头验收时"我的会分裂的 V2 怎么没了"——已按本约定复活为 `V4SplitFusion` 版本场景 + 展厅展项（`SplitPetController` / `SlimeSimulation` / `SlimeRingBody` / `SlimeRing.shader`）
+  - 同理：**已拍板删除的效果（如史莱姆眼睛）在 resurrect 历史版本时必须一并删除**——复活旧场景不等于连带复活旧观感（V4 复活时曾把旧着色器的程序化眼睛带回来，用户再次提出删除）
 - **视觉锚定验收**：改观感前先跑 `TransparentPet.EditorTools.SlimeSnapshot.CaptureHeadless`（batchmode），与原版烘焙图（git 历史提取 PetSlime_ref.png 放输出目录）同底同比例渲染对比，亲自看图确认后再动手；关键数值：原版轮廓 160×101px、静息半宽 80
 - **验收 exe 交付**：构建出的验收 exe（Builds 整目录内容：exe、PetSpike_Data、UnityPlayer.dll、MonoBleedingEdge 缺一不可）直接复制到用户下载目录 `F:/Downloads/PetSpike/` 供其双击（用户下载目录已迁移，勿用 C 盘默认路径），别让用户去工程目录里翻；命令行构建入口 `-executeMethod TransparentPet.EditorTools.BuildPlayer.BuildWindows64`（2022.3 的 `-buildWindowsPlayer64` 参数已失效）
 - **Unity MCP**：本工程已装 MCP for Unity（v10.0.0），ZCode 已配 `unity-mcp` server——Unity 编辑器打开本工程时，新会话的 AI 可直接用 manage_scene / manage_gameobject / manage_asset / read_console 工具操作编辑器（写完脚本先 read_console 查编译错误再用）；编辑器没开时这些工具不可用，改用 batchmode 验证

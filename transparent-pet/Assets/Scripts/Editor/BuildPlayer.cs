@@ -15,20 +15,29 @@ namespace TransparentPet.EditorTools
         /// <summary>交付默认版本（构建设置 index 0）；体验其他保留版本改此路径（见 SceneGenerator.Versions）。</summary>
         const string ScenePath = "Assets/Scenes/Versions/V7LifeVisual/PetScene.unity";
 
-        public static void BuildWindows64()
+        /// <summary>版本展厅场景（各版本同屏，演示/面试用）。</summary>
+        const string GalleryScenePath = "Assets/Scenes/Showcase/PetGallery.unity";
+
+        /// <summary>构建交付默认版（单只宠物，透明桌宠形态）。</summary>
+        public static void BuildWindows64() => Build(ScenePath, "PetSpike.exe");
+
+        /// <summary>构建版本展厅（五只不同版本史莱姆同屏）。</summary>
+        public static void BuildGalleryWindows64() => Build(GalleryScenePath, "PetGallery.exe");
+
+        static void Build(string scenePath, string exeName)
         {
             var projectRoot = Directory.GetParent(Application.dataPath).FullName;
-            var outputPath = Path.Combine(projectRoot, "Builds", "PetSpike.exe");
+            var outputPath = Path.Combine(projectRoot, "Builds", exeName);
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
 
             var report = BuildPipeline.BuildPlayer(
-                new[] { ScenePath },
+                new[] { scenePath },
                 outputPath,
                 BuildTarget.StandaloneWindows64,
                 BuildOptions.None);
 
             if (report.summary.result != BuildResult.Succeeded)
-                throw new System.Exception("[BuildPlayer] 构建失败: " + report.summary.result);
+                throw new System.Exception($"[BuildPlayer] 构建失败({exeName}): " + report.summary.result);
 
             // 构建后注入应用图标（Unity 的 PlayerSettings 图标设置在 batchmode 下不落盘）
             AppIconSetup.InjectIntoExe(outputPath);

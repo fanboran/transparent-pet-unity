@@ -15,9 +15,15 @@ EditorBuildSettings:
     path: Assets/Scenes/Versions/V5SvgClassic/PetScene.unity
     guid: a4bdb59aa236c1640a3a60f784baeb00
   - enabled: 1
+    path: Assets/Scenes/Versions/V2SplitFusion/PetScene.unity
+    guid: 9b386b42352a0c1449b430de614e690c
+  - enabled: 1
     path: Assets/Scenes/Versions/V3PbfGravity/PetScene.unity
     guid: 90decaeee927e24449a6eca82dd11c80
   - enabled: 1
-    path: Assets/Scenes/Versions/V2PbfHover/PetScene.unity
+    path: Assets/Scenes/Versions/V9PbfHover/PetScene.unity
     guid: 1d3dc571972890c449705fbd7aa22115
+  - enabled: 1
+    path: Assets/Scenes/Showcase/PetGallery.unity
+    guid: 6bb1dee40268e934cb37c17123a5619f
   m_configObjects: {}

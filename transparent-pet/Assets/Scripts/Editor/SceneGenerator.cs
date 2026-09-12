@@ -36,6 +36,10 @@ namespace TransparentPet.EditorTools
 
             /// <summary>PBF 软体（PetController + SlimeBody + SlimeLiquid metaball 场）</summary>
             Pbf,
+
+            /// <summary>轮廓环软体（28 粒子 → 动态 Mesh）：撞墙面积转移式分裂 + 分身吸引融合
+            /// （历史实现复活版，见 SplitPetController / SlimeSimulation 文件头）</summary>
+            RingSplit,
         }
 
         /// <summary>全部保留版本：路径 + 类型 + 行为语义说明（新版本在表尾追加）。</summary>
@@ -47,14 +51,17 @@ namespace TransparentPet.EditorTools
                 "V6 · 纯烘焙贴图版：PetSlime.png 原样显示，零着色器零表现层（存档）"),
             ("Assets/Scenes/Versions/V5SvgClassic/PetScene.unity", PetKind.SvgClassic, false,
                 "V5 · 玻璃着色器版：贴图仅当 alpha 轮廓，颜色全由 Slime.shader 计算（存档）"),
+            ("Assets/Scenes/Versions/V2SplitFusion/PetScene.unity", PetKind.RingSplit, false,
+                "V2 · 轮廓环软体分裂版：撞墙分裂出分身、分身被吸引飘回融合（面积守恒；用户认知的\"会分裂的 V2\"）"),
             ("Assets/Scenes/Versions/V3PbfGravity/PetScene.unity", PetKind.Pbf, false,
                 "V3 · PBF 流体趴姿版：重力常开软体（存档）"),
-            ("Assets/Scenes/Versions/V2PbfHover/PetScene.unity", PetKind.Pbf, true,
-                "V2 · PBF 悬浮版：落定关重力悬浮软体（存档）"),
+            ("Assets/Scenes/Versions/V9PbfHover/PetScene.unity", PetKind.Pbf, true,
+                "V9 · PBF 悬浮版：落定关重力悬浮软体（存档；原 V2 编号于 2026-09 让位给分裂版）"),
         };
 
         const string SlimeMaterialPath = "Assets/Art/Pet/SlimeMat.mat";             // Slime.shader（SVG 版）
         const string SlimeLiquidMaterialPath = "Assets/Art/Pet/SlimeLiquidMat.mat"; // SlimeLiquid.shader（PBF 版）
+        const string SlimeRingMaterialPath = "Assets/Art/Pet/SlimeRingMat.mat";     // SlimeRing.shader（轮廓环软体版）
         const string BakedMaterialPath = "Assets/Art/Pet/BakedSpriteMat.mat";       // Sprites/Default（纯烘焙图版）
         const string PetTexturePath = "Assets/Art/Pet/PetSlime.png";
 
@@ -65,7 +72,7 @@ namespace TransparentPet.EditorTools
         {
             ConfigurePetTextureImporter();
 
-            var scenes = new EditorBuildSettingsScene[Versions.Length];
+            var scenes = new EditorBuildSettingsScene[Versions.Length + 1];
             for (var i = 0; i < Versions.Length; i++)
             {
                 var (path, kind, hoverMode, description) = Versions[i];
@@ -73,6 +80,11 @@ namespace TransparentPet.EditorTools
                 scenes[i] = new EditorBuildSettingsScene(path, true);
                 Debug.Log($"[SceneGenerator] 版本场景生成完成: {path} —— {description}");
             }
+
+            // 展厅排在版本场景之后：index 0 仍是交付默认版本（展厅只作演示，由 BuildPlayer 单独指定）
+            BuildGalleryScene();
+            scenes[Versions.Length] = new EditorBuildSettingsScene(GalleryScenePath, true);
+
             EditorBuildSettings.scenes = scenes;
             AssetDatabase.SaveAssets();
             // 注意：不在此调用 AppIconSetup.Apply——batchmode 下 PlayerSettings 保存会让
@@ -136,6 +148,30 @@ namespace TransparentPet.EditorTools
 
             // 宠物本体：按版本类型组装
             var petGo = new GameObject("Pet");
+            AddPetComponents(petGo, kind, hoverMode);
+
+            // UI：设置面板 + HUD（IMGUI，透明窗口上自带 alpha → 面板区域自动可交互）
+            var uiGo = new GameObject("PetUI");
+            uiGo.AddComponent<SettingsPanel>();
+            uiGo.AddComponent<HudController>();
+
+            // 窗口互操作：UniWinC 透明/置顶/穿透 + 本项目的任务栏隐藏/托盘
+            var windowGo = new GameObject("WindowController");
+            windowGo.AddComponent<UniWindowController>();
+            windowGo.AddComponent<PetWindowSetup>();
+
+            // SaveScene 对不存在的目录会"静默失败"（日志成功、磁盘无文件）——先建目录
+            var fullPath = System.IO.Path.GetFullPath(scenePath);
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath));
+            EditorSceneManager.SaveScene(scene, fullPath);
+        }
+
+        /// <summary>
+        /// 按版本类型给宠物对象装配组件——版本场景与展厅共用，保证"展厅里看到的就是
+        /// 各版本场景里的同一套实现"（避免两处装配漂移）。
+        /// </summary>
+        static void AddPetComponents(GameObject petGo, PetKind kind, bool hoverMode)
+        {
             switch (kind)
             {
                 case PetKind.SvgBaked:
@@ -178,22 +214,93 @@ namespace TransparentPet.EditorTools
                     so.ApplyModifiedProperties();
                     break;
                 }
+                case PetKind.RingSplit:
+                {
+                    // 轮廓环软体：动态 Mesh（顶点环）+ 顶点版玻璃着色器 + 分裂/融合总控
+                    petGo.AddComponent<MeshFilter>();
+                    var meshRenderer = petGo.AddComponent<MeshRenderer>();
+                    meshRenderer.sharedMaterial = EnsureMaterial("TransparentPet/SlimeRing", SlimeRingMaterialPath);
+                    petGo.AddComponent<SlimeRingBody>();
+                    petGo.AddComponent<SplitPetController>();
+                    break;
+                }
+            }
+        }
+
+        // ── 展厅场景：各版本同屏（演示/面试用；不进 Versions 版本表——它是展示场景，
+        //    不是观感/行为的某个版本，也不参与"index 0 = 交付默认"的约定）──
+
+        /// <summary>展厅场景路径。</summary>
+        const string GalleryScenePath = "Assets/Scenes/Showcase/PetGallery.unity";
+
+        /// <summary>
+        /// 展厅里的宠物（数组顺序 = 从左到右）。不放 V6 纯烘焙版：它和 V7 用同一张贴图，
+        /// 静止时外观完全一样（区别只在 V7 有呼吸/倾斜/挤压动画），同屏会让人误以为"重复"。
+        /// </summary>
+        static readonly (PetKind kind, bool hoverMode, string label)[] GalleryPets =
+        {
+            // V2 放最左：它的分裂演示要飞向侧墙，行程越短留着撞墙的速度越多（软体有速度阻尼）
+            (PetKind.RingSplit,  false, "V2 · 轮廓软体：撞墙分裂 + 分身飘回（甩向侧墙试试）"),
+            (PetKind.SvgLife,    false, "V7 · 生命感（呼吸 / 倾斜 / 落地挤压）"),
+            (PetKind.SvgClassic, false, "V5 · 玻璃着色器 Slime.shader"),
+            (PetKind.Pbf,        false, "V3 · PBF 软体（重力落地）"),
+            (PetKind.Pbf,        true,  "V9 · PBF 软体（悬浮空中 · 唯一不落地的）"),
+        };
+
+        [MenuItem("TransparentPet/生成展厅场景（各版本同屏）")]
+        public static void GenerateGalleryFromMenu()
+        {
+            ConfigurePetTextureImporter();
+            BuildGalleryScene();
+            AssetDatabase.SaveAssets();
+        }
+
+        /// <summary>
+        /// 生成"版本展厅"场景：各版本史莱姆同屏横排、各自可独立拖拽。
+        /// 出生位置与配色由 GalleryLayout 在 Awake 注入（多只同屏必须各给各的位置，
+        /// 且关闭位置持久化，否则会互相覆盖并污染单只版本记住的位置）。
+        /// </summary>
+        static void BuildGalleryScene()
+        {
+            var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+
+            // 相机：正交、纯色透明背景（与版本场景一致）
+            var cameraGo = new GameObject("Main Camera");
+            cameraGo.tag = "MainCamera";
+            var camera = cameraGo.AddComponent<Camera>();
+            camera.orthographic = true;
+            camera.orthographicSize = 5.4f;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = new Color(0f, 0f, 0f, 0f);
+            camera.allowHDR = false;
+            camera.transform.position = new Vector3(0f, 0f, -10f);
+            cameraGo.AddComponent<AudioListener>();
+
+            var root = new GameObject("GalleryRoot");
+            var labels = new string[GalleryPets.Length];
+            for (var i = 0; i < GalleryPets.Length; i++)
+            {
+                var (kind, hoverMode, label) = GalleryPets[i];
+                var petGo = new GameObject($"Pet{i}_{kind}");
+                petGo.transform.SetParent(root.transform);
+                // x 初值递增：GalleryLayout 按 transform.x 排序决定左右顺序
+                petGo.transform.position = new Vector3(i * 0.5f, 0f, 0f);
+                AddPetComponents(petGo, kind, hoverMode);
+                labels[i] = label;
             }
 
-            // UI：设置面板 + HUD（IMGUI，透明窗口上自带 alpha → 面板区域自动可交互）
-            var uiGo = new GameObject("PetUI");
-            uiGo.AddComponent<SettingsPanel>();
-            uiGo.AddComponent<HudController>();
+            var layout = root.AddComponent<GalleryLayout>();
+            layout.Labels = labels;
 
-            // 窗口互操作：UniWinC 透明/置顶/穿透 + 本项目的任务栏隐藏/托盘
+            // 窗口互操作：UniWinC 透明/置顶/穿透 + 任务栏隐藏/托盘（含退出入口）
             var windowGo = new GameObject("WindowController");
             windowGo.AddComponent<UniWindowController>();
             windowGo.AddComponent<PetWindowSetup>();
 
-            // SaveScene 对不存在的目录会"静默失败"（日志成功、磁盘无文件）——先建目录
-            var fullPath = System.IO.Path.GetFullPath(scenePath);
+            var fullPath = System.IO.Path.GetFullPath(GalleryScenePath);
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath));
             EditorSceneManager.SaveScene(scene, fullPath);
+            Debug.Log($"[SceneGenerator] 展厅场景生成完成: {GalleryScenePath}（{GalleryPets.Length} 只同屏）");
         }
     }
 }

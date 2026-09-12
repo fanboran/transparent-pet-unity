@@ -32,8 +32,12 @@ namespace TransparentPet.Core
 
         const int PollIntervalMs = 500;
 
-        /// <summary>单实例互斥体名（Local\ 前缀 = 当前登录会话内唯一）</summary>
-        const string SingleInstanceMutexName = @"Local\TransparentPet.SingleInstance";
+        /// <summary>
+        /// 单实例互斥体名（Local\ 前缀 = 当前登录会话内唯一）。带 exe 名：PetSpike（桌宠形态）
+        /// 与 PetGallery（版本展厅）是两个独立产品形态，允许各自单开一份、互不排斥。
+        /// </summary>
+        static string SingleInstanceMutexName =>
+            $@"Local\TransparentPet.{Process.GetCurrentProcess().ProcessName}.SingleInstance";
 
         static volatile bool renderLoopHealthy;
         static int installed; // Interlocked 交换：EnsureInstalled 幂等

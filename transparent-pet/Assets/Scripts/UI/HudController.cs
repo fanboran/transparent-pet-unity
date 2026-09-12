@@ -86,6 +86,11 @@ namespace TransparentPet.UI
                     fontSize = FontSize,
                     fontStyle = FontStyle.Bold,
                 };
+                // Unity 内置字体不含中文字形，透明窗口上中文提示会整段空白——显式加载系统中文字体
+                var font = Font.CreateDynamicFontFromOSFont(
+                    new[] { "Microsoft YaHei UI", "Microsoft YaHei", "SimHei", "SimSun" }, FontSize);
+                if (font != null)
+                    hudStyle.font = font;
             }
 
             // GUI.color 只影响本条 Label，画完立即恢复，避免污染后续控件

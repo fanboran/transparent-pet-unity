@@ -49,6 +49,19 @@ namespace TransparentPet.Pet
 
         float userScale = 1f;
 
+        /// <summary>展厅注入的出生位置（屏像素）；null = 用配置/默认位置（见 SetSpawnOverride）</summary>
+        Vector2? spawnOverride;
+
+        /// <summary>是否把位置写回配置（展厅等"多只同屏"场景要关掉，避免互相覆盖）</summary>
+        bool persistPosition = true;
+
+        /// <summary>
+        /// 待应用的玻璃基色。展厅在 Awake 注入配色时 spriteRenderer/materialBlock 尚未就绪
+        /// （它们在 Start 里创建），先暂存、Start 初始化完再应用——否则直接访问会抛空引用，
+        /// 打断调用方的整个注入循环。
+        /// </summary>
+        Color? pendingGlassColor;
+
         /// <summary>屏幕像素逻辑位置（左上原点、Y 向下）——位置唯一真值（见文件头说明）</summary>
         Vector2 logicScreenPos;
 
@@ -110,14 +123,17 @@ namespace TransparentPet.Pet
             var config = PetConfigStore.Load();
             ApplyThrowParams(config.throwParams);
             ApplyCharacter(config.characterId);
+            if (pendingGlassColor.HasValue)
+                ApplyGlassColor(pendingGlassColor.Value); // 展厅在 Awake 注入的配色优先
             userScale = Mathf.Clamp(config.petScale, MinUserScale, MaxUserScale);
             ApplyScaleIfStandalone();
 
-            // 初始位置：保存过的位置优先，否则屏幕中央（对应 Godot 版 center_sprite）
-            logicScreenPos = config.petScreenX >= 0f
-                ? new Vector2(config.petScreenX, config.petScreenY)
-                : new Vector2(NativeScreen.GetWorkAreaWidth() * 0.5f,
-                              NativeScreen.GetWorkAreaBottomY() * 0.5f);
+            // 初始位置：展厅注入优先，其次保存过的位置，否则屏幕中央（对应 Godot 版 center_sprite）
+            logicScreenPos = spawnOverride
+                ?? (config.petScreenX >= 0f
+                    ? new Vector2(config.petScreenX, config.petScreenY)
+                    : new Vector2(NativeScreen.GetWorkAreaWidth() * 0.5f,
+                                  NativeScreen.GetWorkAreaBottomY() * 0.5f));
             transform.position = ScreenToWorld(logicScreenPos);
             lastSavedScreenPos = logicScreenPos;
             nextSaveTime = Time.time + 1f;
@@ -158,6 +174,20 @@ namespace TransparentPet.Pet
 
         void OnCharacterChanged(string id) => ApplyCharacter(id);
 
+        // ── 展厅（多只同屏）外部注入 ──
+
+        /// <summary>注入出生位置（屏像素，左上原点）——多只史莱姆同屏时必须各给各的位置</summary>
+        public void SetSpawnOverride(Vector2 screenPos) => spawnOverride = screenPos;
+
+        /// <summary>关闭位置持久化（多只同屏时不写配置，避免互相覆盖/污染单只版本的位置记忆）</summary>
+        public void SetPersistPosition(bool persist) => persistPosition = persist;
+
+        /// <summary>直接应用角色配色（绕开 EventBus——广播会让同屏所有史莱姆一起变色）</summary>
+        public void ApplyCharacterDirect(string id) => ApplyCharacter(id);
+
+        /// <summary>撤销当前抓取（输入仲裁：被更高层宠物的点击抢占时调用）</summary>
+        public void CancelGrab() => physics.Reset();
+
         void OnThrowParamsChanged(ThrowParams p) => ApplyThrowParams(p);
 
         /// <summary>无表现层时自管缩放；有表现层时由它每帧写 transform（基准 × 呼吸 × 挤压）</summary>
@@ -169,10 +199,20 @@ namespace TransparentPet.Pet
 
         void ApplyCharacter(string id)
         {
-            // 角色预设 → 玻璃基色（Slime.shader 的 _GlassColor），用 PropertyBlock 避免材质实例化
-            var preset = CharacterRegistry.GetById(id);
+            var color = CharacterRegistry.GetById(id).GlassColor;
+            if (spriteRenderer == null || materialBlock == null)
+            {
+                pendingGlassColor = color; // Start 之前（展厅注入）→ 暂存
+                return;
+            }
+            ApplyGlassColor(color);
+        }
+
+        /// <summary>角色预设 → 玻璃基色（Slime.shader 的 _GlassColor），用 PropertyBlock 避免材质实例化</summary>
+        void ApplyGlassColor(Color color)
+        {
             spriteRenderer.GetPropertyBlock(materialBlock);
-            materialBlock.SetColor("_GlassColor", preset.GlassColor);
+            materialBlock.SetColor("_GlassColor", color);
             spriteRenderer.SetPropertyBlock(materialBlock);
         }
 
@@ -187,6 +227,9 @@ namespace TransparentPet.Pet
 
         void SavePositionIfNeeded()
         {
+            if (!persistPosition)
+                return;
+
             if (Time.time < nextSaveTime)
                 return;
 
@@ -226,7 +269,8 @@ namespace TransparentPet.Pet
         {
             var mouseScreen = MouseScreenPos();
 
-            if (Input.GetMouseButtonDown(0) && IsOnPet(mouseScreen))
+            if (Input.GetMouseButtonDown(0) && IsOnPet(mouseScreen)
+                && PetInputArbiter.TryClaim(this, spriteRenderer.sortingOrder))
             {
                 physics.DragBegin(mouseScreen, logicScreenPos, NowMs());
                 dragStartMouse = mouseScreen;

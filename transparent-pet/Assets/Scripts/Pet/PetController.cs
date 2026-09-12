@@ -39,6 +39,12 @@ namespace TransparentPet.Pet
         [SerializeField] bool hoverMode = false;
         bool hoverSettled; // hover 模式专用：落定标记（抓住/甩出即复位）
 
+        /// <summary>展厅注入的出生位置（屏像素）；null = 用配置/默认位置（见 SetSpawnOverride）</summary>
+        Vector2? spawnOverride;
+
+        /// <summary>是否把位置写回配置（展厅等"多只同屏"场景要关掉，避免互相覆盖）</summary>
+        bool persistPosition = true;
+
         // 位置自动保存（节流：移动 >5px 且距上次 ≥1s）
         Vector2 lastSavedScreenPos;
         float nextSaveTime;
@@ -72,9 +78,11 @@ namespace TransparentPet.Pet
             // 否则工作区中部 —— 出生即受重力落下（自然入场姿态）
             var ground = NativeScreen.GetWorkAreaBottomY();
             var width = NativeScreen.GetWorkAreaWidth();
-            var spawn = config.petScreenX >= 0f
-                ? new Vector2(config.petScreenX, config.petScreenY - 2f)
-                : new Vector2(width * 0.5f, ground * 0.5f);
+            // 展厅注入优先；否则保存过的位置（上方 2px，落地即还原趴姿），再否则工作区中部
+            var spawn = spawnOverride
+                ?? (config.petScreenX >= 0f
+                    ? new Vector2(config.petScreenX, config.petScreenY - 2f)
+                    : new Vector2(width * 0.5f, ground * 0.5f));
 
             sim = new SlimePbf(spawn, BaseHalfWidth * userScale);
             lastSavedScreenPos = spawn;
@@ -112,8 +120,12 @@ namespace TransparentPet.Pet
         {
             var mouse = MouseScreenPos();
 
-            if (Input.GetMouseButtonDown(0) && sim.TryGrab(mouse))
-                hoverSettled = false; // 抓住重新武装重力（hover 版本下放手会再落下）
+            // 命中预检（ContainsPoint 无副作用）→ 仲裁归属 → 再真正抓取：
+            // 顺序很重要，避免"先抓住再撤销"造成的状态抖动
+            var renderer = GetComponent<MeshRenderer>();
+            if (Input.GetMouseButtonDown(0) && sim.ContainsPoint(mouse)
+                && PetInputArbiter.TryClaim(this, renderer != null ? renderer.sortingOrder : 0))
+                sim.TryGrab(mouse);
 
             if (sim.IsGrabbed)
                 sim.MoveGrab(mouse, NowMs());
@@ -138,6 +150,36 @@ namespace TransparentPet.Pet
 
         void OnCharacterChanged(string id) =>
             bodyColor = CharacterRegistry.GetById(id).GlassColor;
+
+        // ── 展厅（多只同屏）外部注入 ──
+
+        /// <summary>注入出生位置（屏像素，左上原点）——多只史莱姆同屏时必须各给各的位置</summary>
+        public void SetSpawnOverride(Vector2 screenPos) => spawnOverride = screenPos;
+
+        /// <summary>关闭位置持久化（多只同屏时不写配置，避免互相覆盖/污染单只版本的位置记忆）</summary>
+        public void SetPersistPosition(bool persist) => persistPosition = persist;
+
+        /// <summary>直接应用角色配色（绕开 EventBus——广播会让同屏所有史莱姆一起变色）</summary>
+        public void ApplyCharacterDirect(string id) =>
+            bodyColor = CharacterRegistry.GetById(id).GlassColor;
+
+        /// <summary>当前质心屏幕位置（展厅标签绘制等展示用途；Start 之前为原点）</summary>
+        public Vector2 ScreenPosition => sim != null ? sim.Centroid : Vector2.zero;
+
+        /// <summary>
+        /// 撤销当前抓取（输入仲裁：被更高层宠物的点击抢占时调用）。
+        /// 用 Release(..., throwEnabled:false)：只解除抓取、不给任何抛射速度，粒子自然落回。
+        /// </summary>
+        public void CancelGrab() => sim?.Release(0f, 0f, 1f, false);
+
+        /// <summary>是否悬浮语义（展厅据此识别"该悬停在空中展示的那只"）</summary>
+        public bool IsHoverMode => hoverMode;
+
+        /// <summary>
+        /// 展厅用：预置"已落定"标记，让悬浮版一出生就停在空中悬停——
+        /// 否则它会先受重力落地、落地后才进入悬浮语义，与重力版看不出区别。
+        /// </summary>
+        public void SetSettledHover(bool settled) => hoverSettled = settled;
 
         void OnThrowParamsChanged(ThrowParams p) => throwParams = p;
 
@@ -183,6 +225,9 @@ namespace TransparentPet.Pet
 
         void SavePositionIfNeeded()
         {
+            if (!persistPosition)
+                return;
+
             if (Time.time < nextSaveTime)
                 return;
 

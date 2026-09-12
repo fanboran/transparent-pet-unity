@@ -51,7 +51,10 @@ namespace TransparentPet.Pet
         const float DensityClampLow = -0.08f;   // C 下限收紧：欠密度（被拉稀）区受到更强回拉——PBF 的"黏性"本体，防一拉就散
         const float TensileK = 0.3f;            // s_corr k（0.5 会把悬挂体收成团，降回 0.3 保垂坠）
         const float TensileDqRatio = 0.25f;     // dq = 0.25h（论文 0.2~0.3h）
-        const float XsphViscosity = 10f;         // XSPH 强度（果冻内聚，观感项）
+        const float XsphViscosity = 22f;         // XSPH 强度（果冻内聚，观感项）
+                                                 // 10→22：快速拖拽时粒子被拉开成"圆点链条"，
+                                                 // 提高黏度让邻域速度互相牵引（内聚），
+                                                 // 静息/落地形态不受影响（静息靠形状记忆与密度约束）
         const float ShapeMemoryAccel = 60f;     // 静置形状记忆加速度（px/s²）：模板感更低更流体，蹲姿靠张力+密度
                                                 // 果冻的"形状弹性"——纯流体在平底锅上物理上
                                                 // 必摊成薄饼，弹性恢复力顶住重力才蹲得住
@@ -70,12 +73,15 @@ namespace TransparentPet.Pet
         // 在初始邻居对之间建立 PBD 距离弹簧（LiquidFun elastic 粒子同思路）：
         // 拉拽时整团弹性跟随，抗拉由键承担——分身在结构上不可能发生。
         const float BondRadiusMul = 1.35f;      // 建键距离 = mul × Spacing（约 6 键/粒子）
-        const float BondStiffness = 0.08f;      // 单次投影刚度（×3 迭代，软果冻）
+        const float BondStiffness = 0.20f;      // 单次投影刚度（×3 迭代，软果冻）
+                                                // 0.08→0.20：抗拉更强，快拖时整团跟手而不是被拉散
         // 键塑性（黏弹性）：静止长度向当前长度缓慢松弛——果冻会"流动"，
         // 撒点抖动/表面疙瘩随时间自愈，快拉仍是弹性（不断、不撕）
         const float BondPlasticity = 1.2f;      // 松弛速率（1/s，快流）
         const float BondPlasticMin = 0.50f;     // 松弛下限（×原长）
-        const float BondPlasticMax = 2.20f;     // 松弛上限（×原长）——拎起时质量能真正下淌成液滴，不再是原地形状变体
+        const float BondPlasticMax = 1.55f;     // 松弛上限（×原长）——限制最大拉伸：
+                                                // 2.20 时拎起能拉到 2 倍长（观感变成"线条"），
+                                                // 1.55 保留下淌垂坠但守住"一只史莱姆"的整体性
 
         // ── 粒子状态（平行数组）──
         public readonly int ParticleCount;
