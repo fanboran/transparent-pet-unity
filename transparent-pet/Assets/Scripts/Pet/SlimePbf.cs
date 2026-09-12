@@ -51,14 +51,15 @@ namespace TransparentPet.Pet
         const float DensityClampLow = -0.08f;   // C 下限收紧：欠密度（被拉稀）区受到更强回拉——PBF 的"黏性"本体，防一拉就散
         const float TensileK = 0.5f;            // s_corr k（论文 0.1；桌面果冻加大换更顺滑更强黏聚的表层）
         const float TensileDqRatio = 0.25f;     // dq = 0.25h（论文 0.2~0.3h）
-        const float XsphViscosity = 14f;         // XSPH 强度（果冻内聚，观感项）
+        const float XsphViscosity = 10f;         // XSPH 强度（果冻内聚，观感项）
         const float ShapeMemoryAccel = 100f;    // 静置形状记忆加速度（px/s²，≈重力15%）：
                                                 // 果冻的"形状弹性"——纯流体在平底锅上物理上
                                                 // 必摊成薄饼，弹性恢复力顶住重力才蹲得住
                                                 // （平衡高差 = g/k ≈ 8px → 静息 ~85% 高度）
-        const float GrabRadiusMul = 3.5f;       // 拖拽影响半径 = mul × h（更宽=整团被拎起）
+        const float GrabRadiusMul = 3.5f;       // 拖拽影响半径 = mul × h（局部"捏皮"范围）
         const float GrabFollowLerp = 0.5f;      // 影响区内粒子速度向控制器速度的 lerp 系数
-        const float GrabPullAccel = 450f;        // 影响区内粒子向抓取点的吸引加速度（温和，防撕开）
+        const float GrabFollowStiffness = 30f;  // 全身跟随弹簧刚度（1/s²，位移比例）：
+                                                // 拎皮拽整团，黏滞平均不掉跟手速度
         const int MaxNeighbors = 48;
         const int VelocityBufferSize = 8;       // 甩出速度滑窗（Godot 版语义）
 
@@ -67,7 +68,12 @@ namespace TransparentPet.Pet
         // 在初始邻居对之间建立 PBD 距离弹簧（LiquidFun elastic 粒子同思路）：
         // 拉拽时整团弹性跟随，抗拉由键承担——分身在结构上不可能发生。
         const float BondRadiusMul = 1.35f;      // 建键距离 = mul × Spacing（约 6 键/粒子）
-        const float BondStiffness = 0.15f;      // 单次投影刚度（×3 迭代 ≈ 0.4 有效，软果冻）
+        const float BondStiffness = 0.10f;      // 单次投影刚度（×3 迭代 ≈ 0.3 有效，软果冻）
+        // 键塑性（黏弹性）：静止长度向当前长度缓慢松弛——果冻会"流动"，
+        // 撒点抖动/表面疙瘩随时间自愈，快拉仍是弹性（不断、不撕）
+        const float BondPlasticity = 0.6f;      // 松弛速率（1/s）
+        const float BondPlasticMin = 0.65f;     // 松弛下限（×原长）
+        const float BondPlasticMax = 1.35f;     // 松弛上限（×原长）
 
         // ── 粒子状态（平行数组）──
         public readonly int ParticleCount;
@@ -84,6 +90,7 @@ namespace TransparentPet.Pet
         readonly int[] bondA;
         readonly int[] bondB;
         readonly float[] bondRest;
+        readonly float[] bondRest0;             // 建键时的原始静止长度（塑性松弛的边界）
         readonly int bondCount;
 
         // ── 拖拽控制器 ──
@@ -172,11 +179,13 @@ namespace TransparentPet.Pet
             bondA = new int[bondCount];
             bondB = new int[bondCount];
             bondRest = new float[bondCount];
+            bondRest0 = new float[bondCount];
             for (var b = 0; b < bondCount; b++)
             {
                 bondA[b] = bondList[b * 2];      // bondList 是交错表 [a0,b0,a1,b1,...]
                 bondB[b] = bondList[b * 2 + 1];  // 按 2 步长解包，键对才与 rest 一一对应
                 bondRest[b] = restList[b];
+                bondRest0[b] = restList[b];
             }
 
             // ρ0 自适应标定：初始布局是"理想六边形填充"，其平均密度即目标密度
@@ -245,7 +254,7 @@ namespace TransparentPet.Pet
             BuildNeighbors();
             for (var k = 0; k < DensityLoops; k++)
             {
-                SolveBonds();      // 弹性键：抗拉黏性（每环先键后密度，位置投影互相收敛）
+                SolveBonds(dt);    // 弹性键：抗拉黏性（每环先键后密度，位置投影互相收敛）
                 ComputeLambda();
                 ApplyDeltaPos();
             }
@@ -257,15 +266,23 @@ namespace TransparentPet.Pet
         /// <summary>
         /// 弹性键求解：初始邻居对的距离弹簧（PBD 位置投影，对称无净力）。
         /// 拉拽时键把力传遍整团——拎起一半，另一半被键拖住跟上，不撕洞不分身。
+        /// 塑性：静止长度向当前长度缓慢松弛（有界），果冻流动自愈不锁死形状。
         /// </summary>
-        void SolveBonds()
+        void SolveBonds(float dt)
         {
+            var plastic = Mathf.Clamp01(BondPlasticity * dt);
             for (var b = 0; b < bondCount; b++)
             {
                 var a = bondA[b];
                 var c = bondB[b];
                 var d = pred[c] - pred[a];
                 var len = Mathf.Max(d.magnitude, 1e-5f);
+
+                bondRest[b] = Mathf.Clamp(
+                    Mathf.Lerp(bondRest[b], len, plastic),
+                    bondRest0[b] * BondPlasticMin,
+                    bondRest0[b] * BondPlasticMax);
+
                 var diff = (len - bondRest[b]) / len * (BondStiffness * 0.5f);
                 var shift = d * diff;
                 pred[a] += shift;
@@ -277,26 +294,32 @@ namespace TransparentPet.Pet
         void ApplyForces(float dt, in PbfEnvironment env)
         {
             var h = EffectiveH;
-            // 形状记忆全局权重：质心速度低（已落定/静止）才生效
-            var memoryWeight = 1f - Mathf.Clamp01(Velocity.magnitude / 350f);
+            // 形状记忆全局权重：质心速度低（已落定/静止）才生效；
+            // 被抓住时强制为 0——拎在空中要自然下垂（受重力+键塑形），
+            // 不能死抱着 SVG 趴姿模板把底面绷平
+            var memoryWeight = grabbed
+                ? 0f
+                : 1f - Mathf.Clamp01(Velocity.magnitude / 350f);
             for (var i = 0; i < ParticleCount; i++)
             {
                 var v = vel[i] * VelocityDamping;
                 if (env.GravityOn)
                     v.y += env.Gravity * dt;
 
-                // 拖拽控制器吸附（项目同机制）：影响半径内 → 速度向控制器 lerp
-                // + 向抓取点吸引。权重随距离线性衰减到 0（边界无硬切）。
+                // 拖拽控制器（捏皮拽整团）：
+                //   全身：向抓取点的位移比例弹簧（无奇异点、随距离增力）——
+                //         整团以果冻节奏跟随鼠标，速度不会被黏滞平均掉
+                //   局部：影响半径内速度再向控制器速度 lerp（捏住的"皮"贴手）
                 if (grabbed)
                 {
-                    var toGrab = grabPos - pos[i];
-                    var dist = toGrab.magnitude;
+                    v += (grabPos - pos[i]) * (GrabFollowStiffness * dt);
+
+                    var dist = Vector2.Distance(grabPos, pos[i]);
                     var radius = GrabRadiusMul * h;
                     if (dist < radius)
                     {
                         var w = 1f - dist / radius;
                         v = Vector2.Lerp(v, grabVel, GrabFollowLerp * w);
-                        v += toGrab / Mathf.Max(dist, 1e-4f) * (GrabPullAccel * w * dt);
                     }
                 }
 

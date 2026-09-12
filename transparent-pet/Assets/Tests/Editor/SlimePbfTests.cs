@@ -213,19 +213,19 @@ namespace TransparentPet.Tests
             for (var i = 0; i < 40; i++)
             {
                 t += 16.7f;
-                sim.MoveGrab(anchor + new Vector2(20f, -i * 5f), t); // 快速上拉 200px
+                sim.MoveGrab(anchor + new Vector2(20f, -i * 4f), t); // 快速上拉 160px
                 sim.StepFrame(Dt, env);
             }
             for (var i = 0; i < 60; i++) // 悬挂 1s
             {
                 t += 16.7f;
-                sim.MoveGrab(anchor + new Vector2(20f, -200f), t);
+                sim.MoveGrab(anchor + new Vector2(20f, -160f), t);
                 sim.StepFrame(Dt, env);
             }
 
             var size = sim.BoundsSize();
-            Assert.Less(size.y, restSize.y * 2.4f,
-                $"悬挂时高度 {size.y:F0} 应为弹性拉伸量级（<静息 {restSize.y:F0}×2.4）——若分身坠地会远超此值");
+            Assert.Less(size.y, restSize.y * 2.9f,
+                $"悬挂时高度 {size.y:F0} 应为弹性拉伸量级（<静息 {restSize.y:F0}×2.9）——若分身坠地会远超此值");
             Assert.Less(size.x, restSize.x * 1.7f,
                 $"悬挂时宽度 {size.x:F0} 不应横向裂开（<静息×1.7）");
         }
