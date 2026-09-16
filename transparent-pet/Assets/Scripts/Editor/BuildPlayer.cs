@@ -21,6 +21,10 @@ namespace TransparentPet.EditorTools
         /// <summary>构建交付默认版（单只宠物，透明桌宠形态）。</summary>
         public static void BuildWindows64() => Build(ScenePath, "PetSpike.exe");
 
+        /// <summary>构建 V8 液态玻璃版（验收/截图用）。</summary>
+        public static void BuildLiquidGlassWindows64() =>
+            Build("Assets/Scenes/Versions/V8LiquidGlass/PetScene.unity", "PetLiquidGlass.exe");
+
         /// <summary>构建版本展厅（五只不同版本史莱姆同屏）。</summary>
         public static void BuildGalleryWindows64() => Build(GalleryScenePath, "PetGallery.exe");
 
