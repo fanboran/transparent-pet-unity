@@ -24,7 +24,7 @@
 | Win32 窗口互操作（`Core/`） | 透明 / 置顶 / 点击穿透（UniWinC 接入）；`SPI_GETWORKAREA` 工作区地面（自动扣除任务栏，落底不吃点击）；`Shell_NotifyIcon` 托盘 + 隐藏消息窗口 + 手写消息泵；托盘图标由 `LoadImageW` 从 exe 资源提取；注册表开机自启；JSON 配置持久化 |
 | 交互物理（`Pet/ThrowPhysics`） | 从 Godot 版 `drag_controller.gd` 逐行移植：拖拽速度滑动窗口 → 抛射初速（夹上下限）、重力、地面/墙壁反弹、接地摩擦；纯 C# 无场景依赖，NUnit 可直接实例化测试 |
 | 生命感表现（`Pet/PetLifeMath`+`PetLifeVisual`） | 逻辑位置与渲染变换分层：物理只读写逻辑位置，表现层在 `LateUpdate` 叠加呼吸/倾角/挤压——视觉装饰永不污染模拟；落地挤压用半隐式欧拉弹簧（欠阻尼 ζ≈0.27，1~2 次回弹过冲即“Q 弹”来源）；同一套数学被离线快照工具复用，保证“演示图 = 真实行为” |
-| 工程化 | 场景程序化生成（`SceneGenerator`）：不手写场景 YAML，克隆工程一条命令复原全部场景与图标；六个历史版本场景存档（`Assets/Scenes/Versions/`，index 0 = 交付默认）；**86 项 NUnit 测试**（物理/命中/软体/配置/事件总线/表现数学） |
+| 工程化 | 场景程序化生成（`SceneGenerator`）：不手写场景 YAML，克隆工程一条命令复原全部场景与图标；七个历史版本场景存档（`Assets/Scenes/Versions/`，index 0 = 交付默认）；**87 项 NUnit 测试**（物理/命中/软体/配置/事件总线/表现数学） |
 
 ## 快速开始
 
@@ -74,6 +74,7 @@ tools/           # 图标生成 / GIF 合成脚本（Python + Pillow）
 |---|---|
 | **V7 LifeVisual**（交付默认） | 烘焙贴图原样 + 生命感表现层（呼吸/倾斜/落地挤压/戳反应） |
 | V8 LiquidGlass | 液态玻璃史莱姆：SDF 轮廓 + 折射/色散/菲涅尔/眩光（移植自 Godot 版液态玻璃演示），可拖拽、棋盘格素材只在玻璃内可见、玻璃外保持透明 |
+| V9 LiquidGlassDesktop | 真液态玻璃桌面版：窗口收缩为玻璃包围盒 + 抓屏隐形（`WDA_EXCLUDEFROMCAPTURE`），折射窗口背后的**真实桌面**；F11 切换隐形（代价：隐形时录屏/截图中桌宠不可见） |
 | V6 BakedTexture | 烘焙贴图原样，零表现层 |
 | V5 SvgClassic | 贴图仅作 alpha 轮廓，颜色由 `Slime.shader` 玻璃着色器计算 |
 | V3 PbfGravity | PBF 粒子软体（重力常开趴姿版，`SlimeLiquid` metaball 场渲染） |
