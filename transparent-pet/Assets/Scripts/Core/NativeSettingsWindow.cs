@@ -137,6 +137,26 @@ namespace TransparentPet.Core
 
         static void UiMain()
         {
+            // 设置窗口属于外围功能：UI 线程的任何异常只禁用窗口自身，
+            // 绝不带崩桌宠主进程（曾因控件数组越界触发 CrashGuard 全局强杀，实测踩坑）
+            try
+            {
+                UiMainInner();
+            }
+            catch (Exception e)
+            {
+                UnityEngine.Debug.LogError($"[NativeSettingsWindow] 设置窗口线程异常，已禁用（桌宠不受影响）: {e}");
+                lock (gate)
+                {
+                    running = false;
+                    hwnd = IntPtr.Zero;
+                    uiThread = null; // 下次点"设置"重开新线程
+                }
+            }
+        }
+
+        static void UiMainInner()
+        {
             var icc = new INITCOMMONCONTROLSEX { dwSize = 8, dwICC = (int)(ICC_STANDARD_CLASSES | ICC_BAR_CLASSES) };
             InitCommonControlsEx(ref icc);
 
@@ -168,7 +188,7 @@ namespace TransparentPet.Core
         }
 
         static IntPtr hCountText, hKindText, hScaleText, hRefractText, hDispText, hBlurText;
-        static IntPtr[] hKindButtons = new IntPtr[3];
+        static IntPtr[] hKindButtons = new IntPtr[4]; // 与 kindNames.Length(4 档)一致;扩档时同步——曾因 3/4 不一致 UI 线程越界炸进程
         static IntPtr hChkInvisible, hChkTopmost, hChkAutostart;
         static IntPtr hTrackScale, hTrackRefract, hTrackDisp, hTrackBlur;
         static string[] kindNames = { "原味", "蓝", "绿", "紫" };
