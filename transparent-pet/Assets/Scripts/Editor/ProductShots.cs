@@ -70,7 +70,7 @@ namespace TransparentPet.EditorTools
             Debug.Log("[ProductShots] 全部帧渲染完成 → " + OutDir);
         }
 
-        const string SceneGeneratorTexturePath = "Assets/Art/Pet/PetSlime.png";
+        const string SceneGeneratorTexturePath = "Assets/Resources/PetSlime.png"; // 与 SceneGenerator.PetTexturePath 同步(贴图已迁 Resources 供运行时加载)
 
         static Sprite LoadPetSprite()
         {

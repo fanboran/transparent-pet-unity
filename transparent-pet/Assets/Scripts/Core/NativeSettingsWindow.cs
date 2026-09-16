@@ -47,6 +47,9 @@ namespace TransparentPet.Core
         /// <summary>UI 线程产出的设置变更；LiquidGlassController 在主线程 Drain。</summary>
         public static readonly ConcurrentQueue<SettingChange> Changes = new();
 
+        /// <summary>UI 线程产出的"多桌宠管理器"变更；PetManager 在主线程 Drain（与玻璃版 Changes 分流，互不干扰）。</summary>
+        public static readonly ConcurrentQueue<SettingChange> ManagerChanges = new();
+
         static Thread uiThread;
         static IntPtr hwnd = IntPtr.Zero;
         static volatile bool running;
@@ -73,6 +76,8 @@ namespace TransparentPet.Core
         const int IDC_TXT_BLUR = 2054;
         const int IDC_TXT_KIND = 2055;
         const int IDC_BTN_CLOSE = 2060;
+        const int IDC_BTN_ADDTEXTURED = 2061;    // 多桌宠管理器：添加贴图史莱姆
+        const int IDC_BTN_REMOVETEXTURED = 2062; // 多桌宠管理器：移除贴图史莱姆
 
         const int WM_APP_SHOW = 0x8000; // 主线程请求显示/前置
         static SettingsSnapshot pendingSnapshot;
@@ -146,7 +151,7 @@ namespace TransparentPet.Core
             RegisterClassW(ref wc);
 
             hwnd = CreateWindowExW(0, className, "液态玻璃史莱姆 · 设置",
-                0x00C80000u /*WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX*/, 0, 0, 376, 660,
+                0x00C80000u /*WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX*/, 0, 0, 376, 694,
                 IntPtr.Zero, IntPtr.Zero, GetModuleHandleW(null), IntPtr.Zero);
             CreateChildren();
             ApplySnapshot(pendingSnapshot);
@@ -189,32 +194,37 @@ namespace TransparentPet.Core
             const uint BS_PUSHBUTTON = 0x0u;
             const uint SS_LEFT = 0x0u;
 
-            CreateControl("BUTTON", "史莱姆", WS_CHILD_VIS | BS_GROUPBOX, 10, 10, 340, 96, 0);
+            // "史莱姆"分组：玻璃版数量/种类 + 贴图版增删（多桌宠管理器入口）
+            // 新增两枚按钮占一行（各 160 宽并排），分组框随之加高 34px，
+            // 下方所有控件整体下移 34px 以腾出这一行（纯布局平移，不改逻辑）
+            CreateControl("BUTTON", "史莱姆", WS_CHILD_VIS | BS_GROUPBOX, 10, 10, 340, 130, 0);
             hCountText = CreateControl("STATIC", "数量: 1", WS_CHILD_VIS | SS_LEFT, 24, 36, 100, 22, IDC_TXT_COUNT);
             CreateControl("BUTTON", "−  移除", WS_CHILD_VIS | BS_PUSHBUTTON, 150, 32, 92, 28, IDC_REMOVE);
             CreateControl("BUTTON", "+  添加", WS_CHILD_VIS | BS_PUSHBUTTON, 250, 32, 92, 28, IDC_ADD);
             hKindText = CreateControl("STATIC", "种类:", WS_CHILD_VIS | SS_LEFT, 24, 70, 60, 22, IDC_TXT_KIND);
             for (var i = 0; i < 4; i++)
                 hKindButtons[i] = CreateControl("BUTTON", KindName(i), WS_CHILD_VIS | BS_PUSHBUTTON, 84 + i * 66, 66, 62, 28, IDC_KIND0 + i);
+            CreateControl("BUTTON", "添加贴图史莱姆", WS_CHILD_VIS | BS_PUSHBUTTON, 16, 100, 160, 26, IDC_BTN_ADDTEXTURED);
+            CreateControl("BUTTON", "移除贴图", WS_CHILD_VIS | BS_PUSHBUTTON, 184, 100, 160, 26, IDC_BTN_REMOVETEXTURED);
 
-            CreateControl("BUTTON", "玻璃观感", WS_CHILD_VIS | BS_GROUPBOX, 10, 114, 340, 210, 0);
-            hScaleText = CreateControl("STATIC", "总缩放: 1.00", WS_CHILD_VIS | SS_LEFT, 24, 140, 200, 22, IDC_TXT_SCALE);
-            hTrackScale = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 162, 320, 30, IDC_TRACK_SCALE);
-            hRefractText = CreateControl("STATIC", "折射强度: 80", WS_CHILD_VIS | SS_LEFT, 24, 198, 200, 22, IDC_TXT_REFRACT);
-            hTrackRefract = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 220, 320, 30, IDC_TRACK_REFRACT);
-            hDispText = CreateControl("STATIC", "色散: 7.0", WS_CHILD_VIS | SS_LEFT, 24, 256, 200, 22, IDC_TXT_DISP);
-            hTrackDisp = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 278, 320, 30, IDC_TRACK_DISP);
-            hBlurText = CreateControl("STATIC", "背景模糊: 6", WS_CHILD_VIS | SS_LEFT, 24, 294 - 20, 200, 22, IDC_TXT_BLUR);
-            hTrackBlur = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 294, 320, 30, IDC_TRACK_BLUR);
+            CreateControl("BUTTON", "玻璃观感", WS_CHILD_VIS | BS_GROUPBOX, 10, 148, 340, 210, 0);
+            hScaleText = CreateControl("STATIC", "总缩放: 1.00", WS_CHILD_VIS | SS_LEFT, 24, 174, 200, 22, IDC_TXT_SCALE);
+            hTrackScale = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 196, 320, 30, IDC_TRACK_SCALE);
+            hRefractText = CreateControl("STATIC", "折射强度: 80", WS_CHILD_VIS | SS_LEFT, 24, 232, 200, 22, IDC_TXT_REFRACT);
+            hTrackRefract = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 254, 320, 30, IDC_TRACK_REFRACT);
+            hDispText = CreateControl("STATIC", "色散: 7.0", WS_CHILD_VIS | SS_LEFT, 24, 290, 200, 22, IDC_TXT_DISP);
+            hTrackDisp = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 312, 320, 30, IDC_TRACK_DISP);
+            hBlurText = CreateControl("STATIC", "背景模糊: 6", WS_CHILD_VIS | SS_LEFT, 24, 308, 200, 22, IDC_TXT_BLUR);
+            hTrackBlur = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 328, 320, 30, IDC_TRACK_BLUR);
 
-            hChkInvisible = CreateControl("BUTTON", "录屏/截图中隐藏（折射真实桌面）", WS_CHILD_VIS | BS_AUTOCHECKBOX, 12, 334, 336, 24, IDC_CHK_INVISIBLE);
+            hChkInvisible = CreateControl("BUTTON", "录屏/截图中隐藏（折射真实桌面）", WS_CHILD_VIS | BS_AUTOCHECKBOX, 12, 368, 336, 24, IDC_CHK_INVISIBLE);
 
-            CreateControl("BUTTON", "系统", WS_CHILD_VIS | BS_GROUPBOX, 10, 366, 340, 120, 0);
-            hChkTopmost = CreateControl("BUTTON", "窗口始终置顶", WS_CHILD_VIS | BS_AUTOCHECKBOX, 24, 392, 300, 24, IDC_CHK_TOPMOST);
-            hChkAutostart = CreateControl("BUTTON", "开机自启", WS_CHILD_VIS | BS_AUTOCHECKBOX, 24, 422, 300, 24, IDC_CHK_AUTOSTART);
-            CreateControl("STATIC", "提示: 拖动玻璃即可移动, 相邻玻璃会融合", WS_CHILD_VIS | SS_LEFT, 24, 452, 320, 22, 0);
+            CreateControl("BUTTON", "系统", WS_CHILD_VIS | BS_GROUPBOX, 10, 400, 340, 120, 0);
+            hChkTopmost = CreateControl("BUTTON", "窗口始终置顶", WS_CHILD_VIS | BS_AUTOCHECKBOX, 24, 426, 300, 24, IDC_CHK_TOPMOST);
+            hChkAutostart = CreateControl("BUTTON", "开机自启", WS_CHILD_VIS | BS_AUTOCHECKBOX, 24, 456, 300, 24, IDC_CHK_AUTOSTART);
+            CreateControl("STATIC", "提示: 拖动玻璃即可移动, 相邻玻璃会融合", WS_CHILD_VIS | SS_LEFT, 24, 486, 320, 22, 0);
 
-            CreateControl("BUTTON", "关闭", WS_CHILD_VIS | BS_PUSHBUTTON, 256, 500, 94, 32, IDC_BTN_CLOSE);
+            CreateControl("BUTTON", "关闭", WS_CHILD_VIS | BS_PUSHBUTTON, 256, 534, 94, 32, IDC_BTN_CLOSE);
 
             // 统一字体 + trackbar 范围
             EnumChildWindows(hwnd, (child, lp) =>
@@ -343,6 +353,10 @@ namespace TransparentPet.Core
                         Changes.Enqueue(new SettingChange { Key = "count", Value = -1 });
                     else if (id == IDC_ADD)
                         Changes.Enqueue(new SettingChange { Key = "count", Value = 1 });
+                    else if (id == IDC_BTN_ADDTEXTURED)
+                        ManagerChanges.Enqueue(new SettingChange { Key = "addtextured", Value = 1 });
+                    else if (id == IDC_BTN_REMOVETEXTURED)
+                        ManagerChanges.Enqueue(new SettingChange { Key = "removetextured", Value = 1 });
                     else if (id >= IDC_KIND0 && id < IDC_KIND0 + 4)
                     {
                         lastKind = id - IDC_KIND0;

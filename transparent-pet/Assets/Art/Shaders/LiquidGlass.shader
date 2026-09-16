@@ -73,6 +73,7 @@ Shader "TransparentPet/LiquidGlass"
 
             sampler2D _Bg;
             sampler2D _BlurredBg;
+            sampler2D _PetRTTex;   // PetRefract 层的画面(其他史莱姆),PetRefractLayer 每帧更新
             float4 _Resolution;
             int _Step;
 
@@ -238,21 +239,21 @@ Shader "TransparentPet/LiquidGlass"
             // smin 平滑融合（多物品 metaball 式合并；单物品时退化为 min）。
             // 颜色按同一混合权重 h 同步过渡：两色玻璃相邻时融出平滑渐变色。
             // colA 为 inout：融合链上逐物品累积。
-            float sminTinted(float a, float b, float k, inout float3 colA, float3 colB)
+            float sminTinted(float a, float b, float k, inout float4 colA, float4 colB)
             {
                 float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
                 colA = lerp(colB, colA, h);
                 return lerp(b, a, h) - k * h * (1.0 - h);
             }
 
-            float mainSDF(float2 pixelTopDown, out float3 tintOut)
+            float mainSDF(float2 pixelTopDown, out float4 tintOut)
             {
                 float result = 1.0;
-                float3 col = float3(1.0, 1.0, 1.0);
+                float4 col = float4(1.0, 1.0, 1.0, 0.0);
                 for (int i = 0; i < MAX_ITEMS; i++)
                 {
                     float d = getItemSDF(i, pixelTopDown);
-                    float3 itemCol = _ItemTints[i].rgb;
+                    float4 itemCol = _ItemTints[i];
                     result = sminTinted(result, d, _MergeRate, col, itemCol);
                 }
                 tintOut = col;
@@ -263,7 +264,7 @@ Shader "TransparentPet/LiquidGlass"
             // 乘回分辨率）；Godot 原版此处乘 1414 的放大系数只为可视化，这里语义化
             float2 getNormal(float2 pixelTopDown)
             {
-                float3 tintIgnore; // mainSDF 同时输出种类色，法线计算只关心梯度
+                float4 tintIgnore; // mainSDF 同时输出种类色，法线计算只关心梯度
                 float2 h = float2(max(abs(ddx(pixelTopDown.x)), 0.0001), max(abs(ddy(pixelTopDown.y)), 0.0001));
                 float2 grad = float2(
                     mainSDF(pixelTopDown + float2(h.x, 0.0), tintIgnore) - mainSDF(pixelTopDown - float2(h.x, 0.0), tintIgnore),
@@ -380,7 +381,7 @@ Shader "TransparentPet/LiquidGlass"
                 float2 pixel = i.uv * resolution;              // GL 语义（左下原点），用于 UV 采样换算
                 float2 pixelTD = float2(pixel.x, resolution.y - pixel.y); // y 向下（top-origin），SDF/法线/眩光统一在此空间计算
 
-                float3 kindTint;
+                float4 kindTint; // rgb = 融合后的种类基色，a = 着色强度（原味档 0）
                 float merged = mainSDF(pixelTD, kindTint);
 
                 float4 outColor;
@@ -494,6 +495,11 @@ Shader "TransparentPet/LiquidGlass"
                         float shadow = exp(-merged * resolution.y / max(_ShadowExpand, 1.0)) * 0.5 * _ShadowFactor;
                         outColor = float4(0, 0, 0, shadow);
                     }
+
+                    // 玻璃覆盖到的其他史莱姆(PetRefract 层)被折射显示;玻璃外区域 pet.a=0 无影响
+                    float4 pet = tex2D(_PetRTTex, i.uv);
+                    outColor.rgb = lerp(outColor.rgb, pet.rgb, pet.a);
+                    outColor.a = max(outColor.a, pet.a * 0.9);
 
                     // 抗锯齿：SDF 屏幕梯度自适应带宽，边缘平滑归零
                     float aaWidth = sqrt(ddx(merged) * ddx(merged) + ddy(merged) * ddy(merged)) * 2.0;

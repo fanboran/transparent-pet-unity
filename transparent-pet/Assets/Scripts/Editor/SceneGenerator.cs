@@ -83,7 +83,7 @@ namespace TransparentPet.EditorTools
         const string SlimeRingMaterialPath = "Assets/Art/Pet/SlimeRingMat.mat";     // SlimeRing.shader（轮廓环软体版）
         const string SlimeMeshMaterialPath = "Assets/Art/Pet/SlimeMeshMat.mat";     // SlimeMesh.shader（第一个流体版）
         const string BakedMaterialPath = "Assets/Art/Pet/BakedSpriteMat.mat";       // Sprites/Default（纯烘焙图版）
-        const string PetTexturePath = "Assets/Art/Pet/PetSlime.png";
+        const string PetTexturePath = "Assets/Resources/PetSlime.png"; // 移入 Resources：PetManager 运行时 Resources.Load 动态加载（贴图物种）
         const string LiquidGlassShaderPath = "Assets/Art/Shaders/LiquidGlass.shader";       // V8 液态玻璃主合成
         const string LiquidGlassBgShaderPath = "Assets/Art/Shaders/LiquidGlassBg.shader";   // V8 折射素材生成
         const string LiquidGlassBlurShaderPath = "Assets/Art/Shaders/LiquidGlassBlur.shader"; // V8 分离式模糊
@@ -276,7 +276,7 @@ namespace TransparentPet.EditorTools
                 }
                 case PetKind.LiquidGlassDesktop:
                 {
-                    // V9 真液态玻璃桌面版：窗口收缩 + 抓屏隐形 + 折射真实桌面
+                    // V9 真液态玻璃桌面版：抓屏隐形 + 折射真实桌面 + 多物种管理
                     petGo.AddComponent<MeshFilter>();
                     petGo.AddComponent<MeshRenderer>();
                     var glass = petGo.AddComponent<LiquidGlassController>();
@@ -286,6 +286,9 @@ namespace TransparentPet.EditorTools
                     glass.DesktopReflection = true;
                     glass.CaptureInvisible = true;
                     glass.WindowController = windowController;
+                    // 多桌宠：贴图物种管理 + 玻璃折射其他史莱姆的捕获相机
+                    petGo.AddComponent<PetManager>();
+                    petGo.AddComponent<PetRefractLayer>();
                     break;
                 }
             }
