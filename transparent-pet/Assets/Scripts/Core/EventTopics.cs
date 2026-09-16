@@ -19,6 +19,9 @@ namespace TransparentPet.Core
         /// <summary>请求开/关设置面板。载荷 bool：true 打开 / false 关闭。</summary>
         public const string SettingsPanelToggleRequested = "SettingsPanelToggleRequested";
 
+        /// <summary>请求打开独立原生设置窗口。载荷 bool：true（托盘"设置"→ 液态玻璃控制器响应）。</summary>
+        public const string SettingsOpenRequested = "SettingsOpenRequested";
+
         /// <summary>配置已写盘。载荷 PetConfig：刚保存的完整配置（其他模块可据此同步内存状态）。</summary>
         public const string ConfigSaved = "ConfigSaved";
     }

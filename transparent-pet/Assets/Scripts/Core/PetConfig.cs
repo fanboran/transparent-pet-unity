@@ -61,6 +61,9 @@ namespace TransparentPet.Core
         /// 空数组 = 从未保存过（回退单只居中）；上限与 shader 槽位数一致（3）。</summary>
         public float[] glassSlimeX = System.Array.Empty<float>();
         public float[] glassSlimeY = System.Array.Empty<float>();
+
+        /// <summary>液态玻璃各只史莱姆的种类索引（对应 CharacterRegistry.All）。</summary>
+        public int[] glassSlimeKind = System.Array.Empty<int>();
     }
 
     /// <summary>

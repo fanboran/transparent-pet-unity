@@ -107,6 +107,7 @@ namespace TransparentPet.Pet
             public Vector2 lastSaved;
             public bool dragging;
             public Vector2 grab;
+            public int kind; // 种类索引，对应 CharacterRegistry.All
         }
 
         // ── 运行时状态 ──
@@ -165,14 +166,100 @@ namespace TransparentPet.Pet
         void OnEnable()
         {
             EventBus.Subscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
+            EventBus.Subscribe<bool>(EventTopics.SettingsOpenRequested, OnSettingsOpenRequested);
             LiquidGlassPresence.Active = this; // 设置面板据此显示液态玻璃区块
         }
 
         void OnDisable()
         {
             EventBus.Unsubscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
+            EventBus.Unsubscribe<bool>(EventTopics.SettingsOpenRequested, OnSettingsOpenRequested);
             if (LiquidGlassPresence.Active == this)
                 LiquidGlassPresence.Active = null;
+        }
+
+        /// <summary>托盘"设置"→ 打开独立原生设置窗口（快照含当前值）。</summary>
+        void OnSettingsOpenRequested(bool show)
+        {
+            if (!show)
+                return;
+            NativeSettingsWindow.ShowOrActivate(new SettingsSnapshot
+            {
+                Count = slimes.Count,
+                Kind = slimes.Count > 0 ? slimes[0].kind : 0,
+                Invisible = captureInvisibleActive,
+                Topmost = configTopmost,
+                Autostart = NativeStartup.IsEnabled(),
+                Scale = Mathf.Clamp(userScale, MinUserScale, MaxUserScale),
+                Refract = RefThickness,
+                Disp = RefDispersion,
+                Blur = BlurRadius,
+                KindNames = System.Array.Empty<string>(),
+            });
+        }
+
+        bool configTopmost = true; // 窗口置顶当前值（原生窗口勾选回显用）
+
+        /// <summary>设置全部史莱姆的种类（原生窗口"种类"按钮 → 应用到所有只）。</summary>
+        public void SetAllKinds(int kind)
+        {
+            kind = Mathf.Clamp(kind, 0, CharacterRegistry.All.Count - 1);
+            foreach (var s in slimes)
+                s.kind = kind;
+            UpdateSave();
+        }
+
+        /// <summary>
+        /// 主线程消费原生设置窗口的变更队列（Unity API 禁止跨线程，见 NativeSettingsWindow）。
+        /// </summary>
+        void DrainSettingChanges()
+        {
+            while (NativeSettingsWindow.Changes.TryDequeue(out var change))
+            {
+                switch (change.Key)
+                {
+                    case "count":
+                        if (change.Value > 0) AddSlime();
+                        else RemoveSlime();
+                        break;
+                    case "scale":
+                        userScale = Mathf.Clamp(change.Value, MinUserScale, MaxUserScale);
+                        EventBus.Publish(EventTopics.PetScaleChanged, userScale);
+                        break;
+                    case "refract":
+                        RefThickness = change.Value;
+                        break;
+                    case "disp":
+                        RefDispersion = change.Value;
+                        break;
+                    case "blur":
+                        BlurRadius = change.Value;
+                        break;
+                    case "kind":
+                        SetAllKinds((int)change.Value);
+                        break;
+                    case "invisible":
+                        SetCaptureInvisible(change.Value > 0.5f);
+                        var c1 = PetConfigStore.Load();
+                        c1.captureInvisible = captureInvisibleActive;
+                        PetConfigStore.Save(c1);
+                        break;
+                    case "topmost":
+                        configTopmost = change.Value > 0.5f;
+                        EventBus.Publish(EventTopics.AlwaysOnTopChanged, configTopmost);
+                        var c2 = PetConfigStore.Load();
+                        c2.alwaysOnTop = configTopmost;
+                        PetConfigStore.Save(c2);
+                        break;
+                    case "autostart":
+                        var on = change.Value > 0.5f;
+                        NativeStartup.SetStartup(on);
+                        var c3 = PetConfigStore.Load();
+                        c3.autoStart = on;
+                        PetConfigStore.Save(c3);
+                        break;
+                }
+            }
         }
 
         void Start()
@@ -184,6 +271,7 @@ namespace TransparentPet.Pet
             hwnd = NativeWindowStyles.FindCurrentProcessTopLevelWindow(requireVisible: false);
 
             userScale = Mathf.Clamp(config.petScale, MinUserScale, MaxUserScale);
+            configTopmost = config.alwaysOnTop;
             LoadSlimes(config);
 
             if (CaptureInvisible || config.captureInvisible)
@@ -206,6 +294,7 @@ namespace TransparentPet.Pet
             SyncQuadToCamera();
             HandleInput();
             UpdateSave();
+            DrainSettingChanges();
 
             RenderPipeline();
         }
@@ -246,6 +335,19 @@ namespace TransparentPet.Pet
             UpdateSave(); // 立即持久化（移除不等节流）
         }
 
+        /// <summary>读取第 index 只的种类索引（CharacterRegistry.All 下标）。</summary>
+        public int KindOf(int index) =>
+            (index >= 0 && index < slimes.Count) ? slimes[index].kind : 0;
+
+        /// <summary>设置第 index 只的种类（CharacterRegistry.All 下标，越界回退 0）。</summary>
+        public void SetKind(int index, int kind)
+        {
+            if (index < 0 || index >= slimes.Count)
+                return;
+            slimes[index].kind = Mathf.Clamp(kind, 0, CharacterRegistry.All.Count - 1);
+            UpdateSave(); // 立即持久化
+        }
+
         /// <summary>抓屏隐形开关（设置面板/F11 共用入口）。开启有代价：录屏/截图中桌宠消失。</summary>
         public void SetCaptureInvisible(bool on)
         {
@@ -280,7 +382,10 @@ namespace TransparentPet.Pet
                 for (var i = 0; i < count; i++)
                 {
                     var pos = ClampToWorkArea(new Vector2(config.glassSlimeX[i], config.glassSlimeY[i]));
-                    slimes.Add(new Slime { pos = pos, lastSaved = pos });
+                    var kind = (config.glassSlimeKind != null && i < config.glassSlimeKind.Length)
+                        ? Mathf.Clamp(config.glassSlimeKind[i], 0, CharacterRegistry.All.Count - 1)
+                        : 0;
+                    slimes.Add(new Slime { pos = pos, lastSaved = pos, kind = kind });
                 }
                 return;
             }
@@ -317,10 +422,12 @@ namespace TransparentPet.Pet
             var config = PetConfigStore.Load();
             config.glassSlimeX = new float[slimes.Count];
             config.glassSlimeY = new float[slimes.Count];
+            config.glassSlimeKind = new int[slimes.Count];
             for (var i = 0; i < slimes.Count; i++)
             {
                 config.glassSlimeX[i] = slimes[i].pos.x;
                 config.glassSlimeY[i] = slimes[i].pos.y;
+                config.glassSlimeKind[i] = slimes[i].kind;
                 slimes[i].lastSaved = slimes[i].pos;
             }
             PetConfigStore.Save(config);
@@ -496,11 +603,12 @@ namespace TransparentPet.Pet
             mainMat.SetInt("_Step", Step);
 
             // 物品槽位打包：shader 端 SDF 坐标系为 y 向下（top-origin），与逻辑坐标同系；
-            // 空槽位 enabled=0，相邻只经 smin 融合
+            // 空槽位 enabled=0，相邻只经 smin 融合（颜色也按同一权重过渡）
             var positions = new Vector4[MaxSlimes];
             var widths = new float[MaxSlimes];
             var scales = new float[MaxSlimes];
             var enabled = new float[MaxSlimes];
+            var tints = new Vector4[MaxSlimes];
             for (var i = 0; i < MaxSlimes; i++)
             {
                 var live = i < slimes.Count;
@@ -508,11 +616,14 @@ namespace TransparentPet.Pet
                 widths[i] = live ? SlimeWidthPx : 0f;
                 scales[i] = live ? Mathf.Clamp(userScale, MinUserScale, MaxUserScale) : 0f;
                 enabled[i] = live ? 1f : 0f;
+                var baseColor = live ? CharacterRegistry.All[slimes[i].kind].GlassColor : Color.white;
+                tints[i] = new Vector4(baseColor.r, baseColor.g, baseColor.b, 0.25f); // a = 着色强度
             }
             mainMat.SetVectorArray("_ItemPositions", positions);
             mainMat.SetFloatArray("_ItemWidths", widths);
             mainMat.SetFloatArray("_ItemScales", scales);
             mainMat.SetFloatArray("_ItemEnabled", enabled);
+            mainMat.SetVectorArray("_ItemTints", tints);
         }
 
         void EnsureTargets(int w, int h)

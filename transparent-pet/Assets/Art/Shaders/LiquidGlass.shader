@@ -49,7 +49,6 @@ Shader "TransparentPet/LiquidGlass"
         _GlareAngle ("眩光角度(度)", Float) = -45
         [Header(Shape)]
         _MergeRate ("融合宽度(SDF空间)", Range(0.001, 0.5)) = 0.05
-        _Tint ("色调(RGBA, A=强度)", Color) = (1, 1, 1, 0.08)
         _BlurEdge ("边缘模糊(0=渐进 1=全模糊)", Float) = 1
         [Header(Shadow)]
         _ShadowExpand ("阴影扩散(px)", Float) = 26
@@ -90,19 +89,19 @@ Shader "TransparentPet/LiquidGlass"
             float _GlareFactor;
             float _GlareAngle; // 已换算为弧度
             float _MergeRate;
-            float4 _Tint;
             float _BlurEdge;
             float _ShadowExpand;
             float _ShadowFactor;
 
             // 物品数组（与 CPU 端 LiquidGlassController 一一对应）：
-            // xy = 中心（GL 像素，左下原点）；目前只装配史莱姆形状一种，
-            // 保留 3 槽位 + smin 融合，多只玻璃史莱姆融合零成本可加。
+            // xy = 中心（GL 像素，左下原点）；rgb = 该只的种类基色（CharacterRegistry 预设），
+            // a = 着色强度。多只相邻时 smin 融合，颜色按同一权重过渡——两色玻璃融出渐变色。
             #define MAX_ITEMS 3
             float4 _ItemPositions[MAX_ITEMS];
             float _ItemWidths[MAX_ITEMS];
             float _ItemScales[MAX_ITEMS];
             float _ItemEnabled[MAX_ITEMS];
+            float4 _ItemTints[MAX_ITEMS];
 
             #define PI 3.14159265359
 
@@ -236,18 +235,26 @@ Shader "TransparentPet/LiquidGlass"
                 return slimeD * span / _Resolution.y;
             }
 
-            // smin 平滑融合（多物品 metaball 式合并；单物品时退化为 min）
-            float smin(float a, float b, float k)
+            // smin 平滑融合（多物品 metaball 式合并；单物品时退化为 min）。
+            // 颜色按同一混合权重 h 同步过渡：两色玻璃相邻时融出平滑渐变色。
+            float sminTinted(float a, float b, float k, float3 colA, float3 colB, out float3 colOut)
             {
                 float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+                colOut = lerp(colB, colA, h);
                 return lerp(b, a, h) - k * h * (1.0 - h);
             }
 
-            float mainSDF(float2 pixelTopDown)
+            float mainSDF(float2 pixelTopDown, out float3 tintOut)
             {
                 float result = 1.0;
+                float3 col = float3(1.0, 1.0, 1.0);
                 for (int i = 0; i < MAX_ITEMS; i++)
-                    result = smin(result, getItemSDF(i, pixelTopDown), _MergeRate);
+                {
+                    float d = getItemSDF(i, pixelTopDown);
+                    float3 itemCol = _ItemTints[i].rgb;
+                    result = sminTinted(result, d, _MergeRate, col, itemCol, col);
+                }
+                tintOut = col;
                 return result;
             }
 
@@ -371,7 +378,7 @@ Shader "TransparentPet/LiquidGlass"
                 float2 pixel = i.uv * resolution;              // GL 语义（左下原点），用于 UV 采样换算
                 float2 pixelTD = float2(pixel.x, resolution.y - pixel.y); // y 向下（top-origin），SDF/法线/眩光统一在此空间计算
 
-                float merged = mainSDF(pixelTD);
+                float merged = mainSDF(pixelTD, out float3 kindTint);
 
                 float4 outColor;
 
@@ -429,9 +436,9 @@ Shader "TransparentPet/LiquidGlass"
 
                         if (edgeFactor <= 0.0)
                         {
-                            // 无偏移 → 直接模糊底 + 色调
+                            // 无偏移 → 直接模糊底 + 种类着色
                             outColor = tex2D(_BlurredBg, i.uv);
-                            outColor.rgb = lerp(outColor.rgb, _Tint.rgb, _Tint.a * 0.8);
+                            outColor.rgb = lerp(outColor.rgb, kindTint, 0.25);
                         }
                         else
                         {
@@ -446,13 +453,13 @@ Shader "TransparentPet/LiquidGlass"
                                 _RefDispersion,
                                 i.uv);
 
-                            outColor = float4(lerp(refracted.rgb, _Tint.rgb, _Tint.a * 0.8), 1.0);
+                            outColor = float4(lerp(refracted.rgb, kindTint, 0.25), 1.0);
 
                             // 菲涅尔：掠射边缘增亮（LCH 空间提 L，色相不漂）
                             float fresnelFactor = clamp(
                                 pow(1.0 + merged * resolution.y / 1500.0 * pow(500.0 / _RefFresnelRange, 2.0) + _RefFresnelHardness, 5.0),
                                 0.0, 1.0);
-                            float3 fresnelTintLCH = SRGB_TO_LAB(lerp(float3(1.0, 1.0, 1.0), _Tint.rgb, _Tint.a * 0.5));
+                            float3 fresnelTintLCH = SRGB_TO_LAB(lerp(float3(1.0, 1.0, 1.0), kindTint, 0.5));
                             fresnelTintLCH.x = clamp(fresnelTintLCH.x + 20.0 * fresnelFactor * _RefFresnelFactor, 0.0, 100.0);
                             outColor = lerp(outColor, float4(LCH_TO_SRGB(fresnelTintLCH), 1.0),
                                 fresnelFactor * _RefFresnelFactor * 0.7);
@@ -470,7 +477,7 @@ Shader "TransparentPet/LiquidGlass"
                                 * (glareFarside ? 1.2 * _GlareOppositeFactor : 1.2) * _GlareFactor;
                             glareAngleFactor = clamp(pow(glareAngleFactor, 0.1 + _GlareConvergence * 2.0), 0.0, 1.0);
 
-                            float3 glareTintLCH = SRGB_TO_LAB(lerp(refracted.rgb, _Tint.rgb, _Tint.a * 0.5));
+                            float3 glareTintLCH = SRGB_TO_LAB(lerp(refracted.rgb, kindTint, 0.5));
                             glareTintLCH.x = clamp(glareTintLCH.x + 150.0 * glareAngleFactor * glareGeoFactor, 0.0, 120.0);
                             glareTintLCH.y += 30.0 * glareAngleFactor * glareGeoFactor;
 

@@ -65,7 +65,7 @@ namespace TransparentPet.Core
             // "退出"先点 HardExit 的延迟强杀引信再摘图标，见 ExitFromTray
             tray = new NativeTray("透明宠物", new[]
             {
-                new TrayMenuItem("设置", () => EventBus.Publish(EventTopics.SettingsPanelToggleRequested, true)),
+                new TrayMenuItem("设置", () => EventBus.Publish(EventTopics.SettingsOpenRequested, true)),
                 new TrayMenuItem(), // 分隔线
                 new TrayMenuItem("退出", ExitFromTray),
             });
@@ -157,10 +157,15 @@ namespace TransparentPet.Core
             yield break;
 #else
             // SplashHider 在启动画面期间把窗口藏起来了。UniWinC 的透明要几帧才真正生效，
-            // 显示太早会闪现一下未透明窗口（用户报告的"很短一瞬间灰屏"），故先等渲染稳定再显示
+            // 显示太早会闪现一下未透明窗口（用户报告的"很短一瞬间灰屏"）。故先等渲染稳定再显示
             yield return new WaitForSecondsRealtime(1.2f);
             if (!NativeWindowStyles.ReleaseMainWindow())
                 Debug.LogWarning("[PetWindowSetup] 未找到主窗口句柄，启动画面屏蔽的恢复显示未执行");
+
+            // 防闪现：窗口级 alpha 先压到 0（Unity 记忆的全屏窗口即便显示也不可见），
+            // 待 UniWinC attach + 透明管线就绪后再渐入。alphaValue 由 UniWinC 缓存，
+            // attach 时序内设置也能在就绪后正确下发。
+            window.alphaValue = 0f;
 
             // 等窗口就绪；UniWinC 在切换透明/置顶时会重设窗口样式，做多次重试兜底
             var delays = new[] { 0.5f, 1f, 3f };
@@ -173,6 +178,21 @@ namespace TransparentPet.Core
                 NativeWindowStyles.HideFromTaskbar(hwnd);
                 NativeWindowStyles.SetVisible(hwnd, true);
             }
+
+            // 等透明管线确认就绪后渐入（超时 5s 兜底强显，避免永远隐形）
+            var waited = 0f;
+            while (!window.isTransparent && waited < 5f)
+            {
+                waited += 0.1f;
+                yield return new WaitForSeconds(0.1f);
+            }
+            yield return new WaitForSeconds(0.3f);
+            for (var a = 0f; a < 1f; a += 0.1f)
+            {
+                window.alphaValue = Mathf.Clamp01(a);
+                yield return new WaitForSeconds(0.04f);
+            }
+            window.alphaValue = 1f;
 #endif
         }
     }
