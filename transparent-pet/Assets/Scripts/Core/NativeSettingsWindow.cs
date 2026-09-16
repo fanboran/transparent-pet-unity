@@ -2,16 +2,18 @@
 // NativeSettingsWindow.cs — 独立原生 Win32 设置窗口（托盘"设置"的目标）
 // ============================================================================
 // 为什么是原生窗口：设置必须"蹦出来一个真正的新窗口"——可拖动、可点击、
-// 有系统标题栏，不受透明覆盖层的穿透机制影响。透明层上的自绘面板（IMGUI）
-// 依赖悬停上报解除穿透，链路长且脆弱（两轮实测踩坑），原生窗口天然免疫。
+// 有系统标题栏，不受透明覆盖层的穿透机制影响。
 //
-// 线程模型：专用后台线程创建窗口并跑 GetMessage 泵（Win32 窗口必须由创建
-// 线程泵消息）。控件变更不直接改 Unity 对象（Unity API 非线程安全），而是
-// 写入 Changes 并发队列，由 LiquidGlassController 在主线程每帧取出应用。
+// 线程模型：专用后台线程创建窗口并跑 GetMessage 泵。控件变更不直接改 Unity
+// 对象（Unity API 非线程安全），写入 Changes/ManagerChanges 并发队列，由
+// LiquidGlassController / PetManager 在主线程取出应用。
 //
-// 与 UniWinC 的关系：本窗口独立于 Unity 主窗口，不经过 UniWinC。
-// InitCommonControlsEx 注册通用控件（trackbar 等）。
-// 控件初值：ShowOrActivate 时由调用方（主线程）传入 Snapshot。
+// 【事件驱动，不做轮询】滑条走 WM_HSCROLL、勾选/按钮走 WM_COMMAND——只在
+// 用户真正操作时产生变更。早期版本用 200ms 定时器反向读取控件状态，范围
+// 参数倒挂时会把乱值当"用户改动"写回配置（史莱姆被改小改平，实测踩坑）。
+//
+// 布局：实体（液态玻璃 ± / 贴图史莱姆 ±）→ 玻璃观感（材质预设/色调/五滑条）
+// → 抓屏隐形 → 系统（置顶/自启）。控件初值在 ApplySnapshot 由主线程快照填入。
 // ============================================================================
 using System;
 using System.Collections.Concurrent;
@@ -23,11 +25,11 @@ namespace TransparentPet.Core
     /// <summary>一条设置变更（主线程消费）。</summary>
     public struct SettingChange
     {
-        public string Key;   // count / scale / refract / disp / blur / kind / invisible / topmost / autostart
+        public string Key;   // count / addtextured / removetextured / scale / refract / disp / blur / gloss / mat / kind / invisible / topmost / autostart
         public float Value;
     }
 
-    /// <summary>设置窗口快照（打开时渲染初始控件状态）。</summary>
+    /// <summary>设置窗口快照（打开/同步时渲染初始控件状态）。</summary>
     public struct SettingsSnapshot
     {
         public int Count;
@@ -39,15 +41,15 @@ namespace TransparentPet.Core
         public float Refract;
         public float Disp;
         public float Blur;
-        public string[] KindNames;
+        public float Gloss;
     }
 
     public static class NativeSettingsWindow
     {
-        /// <summary>UI 线程产出的设置变更；LiquidGlassController 在主线程 Drain。</summary>
+        /// <summary>液态玻璃设置变更；LiquidGlassController 在主线程 Drain。</summary>
         public static readonly ConcurrentQueue<SettingChange> Changes = new();
 
-        /// <summary>UI 线程产出的"多桌宠管理器"变更；PetManager 在主线程 Drain（与玻璃版 Changes 分流，互不干扰）。</summary>
+        /// <summary>多桌宠管理变更；PetManager 在主线程 Drain。</summary>
         public static readonly ConcurrentQueue<SettingChange> ManagerChanges = new();
 
         static Thread uiThread;
@@ -58,15 +60,16 @@ namespace TransparentPet.Core
         static IntPtr WndProcThunk(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam) => WndProc(hWnd, msg, wParam, lParam);
         static readonly WndProcDelegate wndProcDelegate = WndProcThunk;
 
-        // 控件 ID
-        const int IDC_REMOVE = 2001;
-        const int IDC_ADD = 2002;
-        const int IDC_KIND0 = 2010; // KIND0..2 连续
+        // ── 控件 ID ──
+        const int IDC_REMOVE = 2001;       // 液态玻璃 −
+        const int IDC_ADD = 2002;          // 液态玻璃 +
+        const int IDC_KIND0 = 2010;        // KIND0..3 连续（色调档）
         const int IDC_CHK_INVISIBLE = 2020;
         const int IDC_TRACK_SCALE = 2030;
         const int IDC_TRACK_REFRACT = 2031;
         const int IDC_TRACK_DISP = 2032;
         const int IDC_TRACK_BLUR = 2033;
+        const int IDC_TRACK_GLOSS = 2034;
         const int IDC_CHK_TOPMOST = 2040;
         const int IDC_CHK_AUTOSTART = 2041;
         const int IDC_TXT_COUNT = 2050;
@@ -74,30 +77,27 @@ namespace TransparentPet.Core
         const int IDC_TXT_REFRACT = 2052;
         const int IDC_TXT_DISP = 2053;
         const int IDC_TXT_BLUR = 2054;
-        const int IDC_TXT_KIND = 2055;
+        const int IDC_TXT_GLOSS = 2055;
         const int IDC_BTN_CLOSE = 2060;
-        const int IDC_BTN_ADDTEXTURED = 2061;    // 多桌宠管理器：添加贴图史莱姆
-        const int IDC_BTN_REMOVETEXTURED = 2062; // 多桌宠管理器：移除贴图史莱姆
+        const int IDC_BTN_ADDTEXTURED = 2061;
+        const int IDC_BTN_REMOVETEXTURED = 2062;
+        const int IDC_MAT0 = 2070;         // MAT0..2 连续（材质预设）
 
-        const int WM_APP_SHOW = 0x8000; // 主线程请求显示/前置
+        const uint WM_APP_SHOW = 0x8000;   // 主线程请求显示/前置
         static SettingsSnapshot pendingSnapshot;
 
-        // Win32
+        // ── Win32 ──
         const uint SW_HIDE = 0;
         const uint SW_SHOW = 5;
-        const uint SWP_NOSIZE = 0x0001;
-        const uint SWP_NOMOVE = 0x0002;
-        const uint SWP_NOZORDER = 0x0004;
         const uint WM_CLOSE = 0x0010;
         const uint WM_COMMAND = 0x0111;
         const uint WM_HSCROLL = 0x0114;
-        const uint WM_TIMER = 0x0113;
         const uint WM_CTLCOLORSTATIC = 0x0138;
-        const uint WM_APP_SHOW_MSG = 0x8000;
         const uint BM_GETCHECK = 0x00F0;
-        const uint TBM_GETPOS = 0x0410; // WM_USER+16
-        const uint TBM_SETRANGE = 0x0406; // WM_USER+6
-        const uint TBM_SETPOS = 0x0411; // WM_USER+17
+        const uint BM_SETCHECK = 0x00F1;
+        const uint TBM_GETPOS = 0x0410;
+        const uint TBM_SETRANGE = 0x0406;
+        const uint TBM_SETPOS = 0x0411;
         const uint ICC_STANDARD_CLASSES = 0x4000;
         const uint ICC_BAR_CLASSES = 0x0004;
 
@@ -128,7 +128,7 @@ namespace TransparentPet.Core
                 }
                 else if (hwnd != IntPtr.Zero)
                 {
-                    PostMessage(hwnd, WM_APP_SHOW_MSG, IntPtr.Zero, IntPtr.Zero);
+                    PostMessage(hwnd, WM_APP_SHOW, IntPtr.Zero, IntPtr.Zero);
                 }
             }
         }
@@ -171,13 +171,11 @@ namespace TransparentPet.Core
             RegisterClassW(ref wc);
 
             hwnd = CreateWindowExW(0, className, "液态玻璃史莱姆 · 设置",
-                0x00C80000u /*WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX*/, 0, 0, 376, 694,
+                0x00C80000u /*WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX*/, 0, 0, 376, 772,
                 IntPtr.Zero, IntPtr.Zero, GetModuleHandleW(null), IntPtr.Zero);
             CreateChildren();
             ApplySnapshot(pendingSnapshot);
-            SendMessageW(hwnd, WM_APP_SHOW_MSG, IntPtr.Zero, IntPtr.Zero);
-
-            SetTimer(hwnd, (IntPtr)1, 200, IntPtr.Zero);
+            SendMessageW(hwnd, WM_APP_SHOW, IntPtr.Zero, IntPtr.Zero);
 
             var msg = new MSG();
             while (running && GetMessageW(ref msg, IntPtr.Zero, 0, 0) > 0)
@@ -187,16 +185,16 @@ namespace TransparentPet.Core
             }
         }
 
-        static IntPtr hCountText, hKindText, hScaleText, hRefractText, hDispText, hBlurText;
-        static IntPtr[] hKindButtons = new IntPtr[4]; // 与 kindNames.Length(4 档)一致;扩档时同步——曾因 3/4 不一致 UI 线程越界炸进程
+        static IntPtr hCountText, hScaleText, hRefractText, hDispText, hBlurText, hGlossText;
+        static IntPtr[] hKindButtons = new IntPtr[4]; // 与 KindNames.Length 一致；扩档时同步（曾因 3/4 不一致越界炸进程）
+        static IntPtr[] hMatButtons = new IntPtr[3];
         static IntPtr hChkInvisible, hChkTopmost, hChkAutostart;
-        static IntPtr hTrackScale, hTrackRefract, hTrackDisp, hTrackBlur;
-        static string[] kindNames = { "原味", "蓝", "绿", "紫" };
+        static IntPtr hTrackScale, hTrackRefract, hTrackDisp, hTrackBlur, hTrackGloss;
+        static readonly string[] KindNames = { "原味", "蓝", "绿", "紫" };
+        static readonly string[] MatNames = { "原味玻璃", "亚克力", "磨砂" };
         static int lastKind = -1;
+        static int lastMat = -1;
         static int lastCount = -1;
-        static float lastSentScale = float.NaN, lastSentRefract = float.NaN,
-                     lastSentDisp = float.NaN, lastSentBlur = float.NaN;
-        static int lastSentInvisible = -1, lastSentTopmost = -1, lastSentAutostart = -1;
 
         static IntPtr CreateControl(string cls, string text, uint style, int x, int y, int w, int h, int id)
         {
@@ -208,151 +206,104 @@ namespace TransparentPet.Core
         {
             hFont = CreateFontW(-15, 0, 0, 0, 400, 0, 0, 0, 1 /*DEFAULT_CHARSET*/, 0, 0, 4 /*CLEARTYPE_QUALITY*/, 0, "Microsoft YaHei UI");
 
-            const uint WS_CHILD_VIS = 0x40000000u | 0x10000000u;
             const uint BS_GROUPBOX = 0x7u;
             const uint BS_AUTOCHECKBOX = 0x3u;
             const uint BS_PUSHBUTTON = 0x0u;
             const uint SS_LEFT = 0x0u;
 
-            // "史莱姆"分组：玻璃版数量/种类 + 贴图版增删（多桌宠管理器入口）
-            // 新增两枚按钮占一行（各 160 宽并排），分组框随之加高 34px，
-            // 下方所有控件整体下移 34px 以腾出这一行（纯布局平移，不改逻辑）
-            CreateControl("BUTTON", "史莱姆", WS_CHILD_VIS | BS_GROUPBOX, 10, 10, 340, 130, 0);
-            hCountText = CreateControl("STATIC", "数量: 1", WS_CHILD_VIS | SS_LEFT, 24, 36, 100, 22, IDC_TXT_COUNT);
-            CreateControl("BUTTON", "−  移除", WS_CHILD_VIS | BS_PUSHBUTTON, 150, 32, 92, 28, IDC_REMOVE);
-            CreateControl("BUTTON", "+  添加", WS_CHILD_VIS | BS_PUSHBUTTON, 250, 32, 92, 28, IDC_ADD);
-            hKindText = CreateControl("STATIC", "种类:", WS_CHILD_VIS | SS_LEFT, 24, 70, 60, 22, IDC_TXT_KIND);
-            for (var i = 0; i < 4; i++)
-                hKindButtons[i] = CreateControl("BUTTON", KindName(i), WS_CHILD_VIS | BS_PUSHBUTTON, 84 + i * 66, 66, 62, 28, IDC_KIND0 + i);
-            CreateControl("BUTTON", "添加贴图史莱姆", WS_CHILD_VIS | BS_PUSHBUTTON, 16, 100, 160, 26, IDC_BTN_ADDTEXTURED);
-            CreateControl("BUTTON", "移除贴图", WS_CHILD_VIS | BS_PUSHBUTTON, 184, 100, 160, 26, IDC_BTN_REMOVETEXTURED);
+            // ── 实体 ──
+            CreateControl("BUTTON", "实体", BS_GROUPBOX, 10, 10, 340, 140, 0);
+            hCountText = CreateControl("STATIC", "液态玻璃 × 1", SS_LEFT, 24, 38, 140, 22, IDC_TXT_COUNT);
+            CreateControl("BUTTON", "−  移除", BS_PUSHBUTTON, 170, 34, 82, 28, IDC_REMOVE);
+            CreateControl("BUTTON", "+  添加", BS_PUSHBUTTON, 258, 34, 84, 28, IDC_ADD);
+            CreateControl("STATIC", "贴图史莱姆", SS_LEFT, 24, 76, 120, 22, 0);
+            CreateControl("BUTTON", "−  移除", BS_PUSHBUTTON, 170, 72, 82, 28, IDC_BTN_REMOVETEXTURED);
+            CreateControl("BUTTON", "+  添加", BS_PUSHBUTTON, 258, 72, 84, 28, IDC_BTN_ADDTEXTURED);
+            CreateControl("STATIC", "提示: 拖动即可移动; 相邻的玻璃会融合", SS_LEFT, 24, 112, 320, 22, 0);
 
-            CreateControl("BUTTON", "玻璃观感", WS_CHILD_VIS | BS_GROUPBOX, 10, 148, 340, 210, 0);
-            hScaleText = CreateControl("STATIC", "总缩放: 1.00", WS_CHILD_VIS | SS_LEFT, 24, 174, 200, 22, IDC_TXT_SCALE);
-            hTrackScale = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 196, 320, 30, IDC_TRACK_SCALE);
-            hRefractText = CreateControl("STATIC", "折射强度: 80", WS_CHILD_VIS | SS_LEFT, 24, 232, 200, 22, IDC_TXT_REFRACT);
-            hTrackRefract = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 254, 320, 30, IDC_TRACK_REFRACT);
-            hDispText = CreateControl("STATIC", "色散: 7.0", WS_CHILD_VIS | SS_LEFT, 24, 290, 200, 22, IDC_TXT_DISP);
-            hTrackDisp = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 312, 320, 30, IDC_TRACK_DISP);
-            hBlurText = CreateControl("STATIC", "背景模糊: 6", WS_CHILD_VIS | SS_LEFT, 24, 308, 200, 22, IDC_TXT_BLUR);
-            hTrackBlur = CreateControl("msctls_trackbar32", "", WS_CHILD_VIS, 20, 328, 320, 30, IDC_TRACK_BLUR);
+            // ── 玻璃观感 ──
+            CreateControl("BUTTON", "玻璃观感", BS_GROUPBOX, 10, 158, 340, 366, 0);
+            CreateControl("STATIC", "材质", SS_LEFT, 24, 184, 60, 22, 0);
+            for (var i = 0; i < hMatButtons.Length; i++)
+                hMatButtons[i] = CreateControl("BUTTON", MatNames[i], BS_PUSHBUTTON, 90 + i * 84, 180, 80, 26, IDC_MAT0 + i);
+            CreateControl("STATIC", "色调", SS_LEFT, 24, 216, 60, 22, 0);
+            for (var i = 0; i < hKindButtons.Length; i++)
+                hKindButtons[i] = CreateControl("BUTTON", KindName(i), BS_PUSHBUTTON, 84 + i * 64, 212, 60, 28, IDC_KIND0 + i);
 
-            hChkInvisible = CreateControl("BUTTON", "录屏/截图中隐藏（折射真实桌面）", WS_CHILD_VIS | BS_AUTOCHECKBOX, 12, 368, 336, 24, IDC_CHK_INVISIBLE);
+            hScaleText = CreateControl("STATIC", "总缩放: 1.00", SS_LEFT, 24, 250, 200, 22, IDC_TXT_SCALE);
+            hTrackScale = CreateControl("msctls_trackbar32", "", 0, 20, 272, 320, 26, IDC_TRACK_SCALE);
+            hRefractText = CreateControl("STATIC", "折射强度: 80", SS_LEFT, 24, 304, 200, 22, IDC_TXT_REFRACT);
+            hTrackRefract = CreateControl("msctls_trackbar32", "", 0, 20, 326, 320, 26, IDC_TRACK_REFRACT);
+            hDispText = CreateControl("STATIC", "色散: 7.0", SS_LEFT, 24, 358, 200, 22, IDC_TXT_DISP);
+            hTrackDisp = CreateControl("msctls_trackbar32", "", 0, 20, 380, 320, 26, IDC_TRACK_DISP);
+            hBlurText = CreateControl("STATIC", "背景模糊: 6", SS_LEFT, 24, 412, 200, 22, IDC_TXT_BLUR);
+            hTrackBlur = CreateControl("msctls_trackbar32", "", 0, 20, 434, 320, 26, IDC_TRACK_BLUR);
+            hGlossText = CreateControl("STATIC", "边缘高光: 50", SS_LEFT, 24, 466, 200, 22, IDC_TXT_GLOSS);
+            hTrackGloss = CreateControl("msctls_trackbar32", "", 0, 20, 488, 320, 26, IDC_TRACK_GLOSS);
 
-            CreateControl("BUTTON", "系统", WS_CHILD_VIS | BS_GROUPBOX, 10, 400, 340, 120, 0);
-            hChkTopmost = CreateControl("BUTTON", "窗口始终置顶", WS_CHILD_VIS | BS_AUTOCHECKBOX, 24, 426, 300, 24, IDC_CHK_TOPMOST);
-            hChkAutostart = CreateControl("BUTTON", "开机自启", WS_CHILD_VIS | BS_AUTOCHECKBOX, 24, 456, 300, 24, IDC_CHK_AUTOSTART);
-            CreateControl("STATIC", "提示: 拖动玻璃即可移动, 相邻玻璃会融合", WS_CHILD_VIS | SS_LEFT, 24, 486, 320, 22, 0);
+            // ── 抓屏隐形 ──
+            hChkInvisible = CreateControl("BUTTON", "录屏/截图中隐藏（折射真实桌面）", BS_AUTOCHECKBOX, 12, 532, 336, 24, IDC_CHK_INVISIBLE);
 
-            CreateControl("BUTTON", "关闭", WS_CHILD_VIS | BS_PUSHBUTTON, 256, 534, 94, 32, IDC_BTN_CLOSE);
+            // ── 系统 ──
+            CreateControl("BUTTON", "系统", BS_GROUPBOX, 10, 564, 340, 116, 0);
+            hChkTopmost = CreateControl("BUTTON", "窗口始终置顶", BS_AUTOCHECKBOX, 24, 590, 300, 24, IDC_CHK_TOPMOST);
+            hChkAutostart = CreateControl("BUTTON", "开机自启", BS_AUTOCHECKBOX, 24, 620, 300, 24, IDC_CHK_AUTOSTART);
+            CreateControl("STATIC", "材质预设会覆盖模糊与边缘高光滑条", SS_LEFT, 24, 650, 320, 22, 0);
 
-            // 统一字体 + trackbar 范围
+            CreateControl("BUTTON", "关闭", BS_PUSHBUTTON, 256, 690, 94, 32, IDC_BTN_CLOSE);
+
+            // 统一字体 + trackbar 范围（TBM_SETRANGE lParam = MAKELONG(min,max)：低字 min、
+            // 高字 max——此前写反导致滑条倒挂拉不动，且轮询把乱值写回配置）
             EnumChildWindows(hwnd, (child, lp) =>
             {
                 SendMessageW(child, 0x0030 /*WM_SETFONT*/, hFont, (IntPtr)1);
                 return true;
             }, IntPtr.Zero);
-            SendMessageW(hTrackScale, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x00640000L);   // MAKELONG(min 0, max 100)
-            SendMessageW(hTrackRefract, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x000A00A0L); // 10..160
-            SendMessageW(hTrackDisp, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x000F0000L);    // MAKELONG(min 0, max 15)
-            SendMessageW(hTrackBlur, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x00140000L);    // MAKELONG(min 0, max 20)
+            SendMessageW(hTrackScale, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x00640000L);   // min 0 .. max 100（映射 0.5~2.5）
+            SendMessageW(hTrackRefract, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x00A0000AL); // min 10 .. max 160
+            SendMessageW(hTrackDisp, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x000F0000L);    // min 0 .. max 15
+            SendMessageW(hTrackBlur, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x00140000L);    // min 0 .. max 20
+            SendMessageW(hTrackGloss, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x00640000L);   // min 0 .. max 100（映射 0~1）
         }
 
-        static string KindName(int i) =>
-            (lastKind == i ? "● " : "") + kindNames[i];
+        static string KindName(int i) => (lastKind == i ? "● " : "") + KindNames[i];
+
+        static string MatName(int i) => (lastMat == i ? "● " : "") + MatNames[i];
 
         static void ApplySnapshot(SettingsSnapshot s)
         {
             lastKind = s.Kind;
             lastCount = s.Count;
-            Check(hChkInvisible, s.Invisible); lastSentInvisible = s.Invisible ? 1 : 0;
-            Check(hChkTopmost, s.Topmost); lastSentTopmost = s.Topmost ? 1 : 0;
-            Check(hChkAutostart, s.Autostart); lastSentAutostart = s.Autostart ? 1 : 0;
-            Pos(hTrackScale, (int)(System.Math.Clamp((s.Scale - 0.5f) / 2f, 0f, 1f) * 100));
+            Check(hChkInvisible, s.Invisible);
+            Check(hChkTopmost, s.Topmost);
+            Check(hChkAutostart, s.Autostart);
+            Pos(hTrackScale, (int)(Math.Clamp((s.Scale - 0.5f) / 2f, 0f, 1f) * 100));
             Pos(hTrackRefract, (int)s.Refract);
             Pos(hTrackDisp, (int)s.Disp);
             Pos(hTrackBlur, (int)s.Blur);
-            lastSentScale = s.Scale; lastSentRefract = s.Refract; lastSentDisp = s.Disp; lastSentBlur = s.Blur;
-
-            SetText(hCountText, $"数量: {s.Count}");
-            for (var i = 0; i < 4; i++)
-                SetText(hKindButtons[i], (i == s.Kind ? "● " : "") + kindNames[i]);
+            Pos(hTrackGloss, (int)Math.Clamp(s.Gloss, 0f, 1f) * 100);
             InvalidateTexts();
         }
-
-        static float Mathf01(float v, float max) => Math.Clamp(v / max, 0f, 1f);
 
         static void InvalidateTexts()
         {
-            var scale = TrackPos(hTrackScale) / 100f * 2f + 0.5f;
-            SetText(hCountText, $"数量: {lastCount}");
-            SetText(hScaleText, $"总缩放: {scale:0.00}");
+            SetText(hCountText, $"液态玻璃 × {lastCount}");
+            SetText(hScaleText, $"总缩放: {TrackPos(hTrackScale) / 100f * 2f + 0.5f:0.00}");
             SetText(hRefractText, $"折射强度: {TrackPos(hTrackRefract)}");
             SetText(hDispText, $"色散: {TrackPos(hTrackDisp):0.0}");
             SetText(hBlurText, $"背景模糊: {TrackPos(hTrackBlur)}");
-            for (var i = 0; i < 4; i++)
-                SetText(hKindButtons[i], (i == lastKind ? "● " : "") + kindNames[i]);
-        }
-
-        static void OnTimerPoll()
-        {
-            // 控件 → 队列（主线程应用）
-            var inv = (int)SendMessageW(hChkInvisible, BM_GETCHECK, IntPtr.Zero, IntPtr.Zero);
-            if (inv != lastSentInvisible)
-            {
-                lastSentInvisible = inv;
-                Changes.Enqueue(new SettingChange { Key = "invisible", Value = inv });
-            }
-            var top = (int)SendMessageW(hChkTopmost, BM_GETCHECK, IntPtr.Zero, IntPtr.Zero);
-            if (top != lastSentTopmost)
-            {
-                lastSentTopmost = top;
-                Changes.Enqueue(new SettingChange { Key = "topmost", Value = top });
-            }
-            var auto = (int)SendMessageW(hChkAutostart, BM_GETCHECK, IntPtr.Zero, IntPtr.Zero);
-            if (auto != lastSentAutostart)
-            {
-                lastSentAutostart = auto;
-                Changes.Enqueue(new SettingChange { Key = "autostart", Value = auto });
-            }
-
-            var scalePos = TrackPos(hTrackScale);
-            var scale = scalePos / 100f * 2f + 0.5f;
-            if (!float.IsNaN(lastSentScale) && Math.Abs(scale - lastSentScale) > 0.005f)
-            {
-                lastSentScale = scale;
-                Changes.Enqueue(new SettingChange { Key = "scale", Value = scale });
-            }
-
-            var refract = (float)TrackPos(hTrackRefract);
-            if (!float.IsNaN(lastSentRefract) && Math.Abs(refract - lastSentRefract) > 0.5f)
-            {
-                lastSentRefract = refract;
-                Changes.Enqueue(new SettingChange { Key = "refract", Value = refract });
-            }
-
-            var disp = (float)TrackPos(hTrackDisp);
-            if (!float.IsNaN(lastSentDisp) && Math.Abs(disp - lastSentDisp) > 0.5f)
-            {
-                lastSentDisp = disp;
-                Changes.Enqueue(new SettingChange { Key = "disp", Value = disp });
-            }
-
-            var blur = (float)TrackPos(hTrackBlur);
-            if (!float.IsNaN(lastSentBlur) && Math.Abs(blur - lastSentBlur) > 0.5f)
-            {
-                lastSentBlur = blur;
-                Changes.Enqueue(new SettingChange { Key = "blur", Value = blur });
-            }
-
-            InvalidateTexts();
+            SetText(hGlossText, $"边缘高光: {TrackPos(hTrackGloss)}");
+            for (var i = 0; i < hKindButtons.Length; i++)
+                SetText(hKindButtons[i], KindName(i));
+            for (var i = 0; i < hMatButtons.Length; i++)
+                SetText(hMatButtons[i], MatName(i));
         }
 
         static int TrackPos(IntPtr track) => (int)SendMessageW(track, TBM_GETPOS, IntPtr.Zero, IntPtr.Zero);
 
         static void Pos(IntPtr track, int pos) => SendMessageW(track, TBM_SETPOS, (IntPtr)1, (IntPtr)pos);
 
-        static void Check(IntPtr chk, bool on) => SendMessageW(chk, 0x00F1 /*BM_SETCHECK*/, (IntPtr)(on ? 1 : 0), IntPtr.Zero);
+        static void Check(IntPtr chk, bool on) => SendMessageW(chk, BM_SETCHECK, (IntPtr)(on ? 1 : 0), IntPtr.Zero);
 
         static void SetText(IntPtr ctrl, string text) => SetWindowTextW(ctrl, text);
 
@@ -360,7 +311,7 @@ namespace TransparentPet.Core
         {
             switch (msg)
             {
-                case WM_APP_SHOW_MSG:
+                case WM_APP_SHOW:
                 {
                     ShowWindow(hWnd, SW_SHOW);
                     SetForegroundWindow(hWnd);
@@ -369,28 +320,71 @@ namespace TransparentPet.Core
                 case WM_COMMAND:
                 {
                     var id = (int)(wParam.ToInt64() & 0xFFFF);
-                    if (id == IDC_REMOVE)
-                        Changes.Enqueue(new SettingChange { Key = "count", Value = -1 });
-                    else if (id == IDC_ADD)
-                        Changes.Enqueue(new SettingChange { Key = "count", Value = 1 });
-                    else if (id == IDC_BTN_ADDTEXTURED)
-                        ManagerChanges.Enqueue(new SettingChange { Key = "addtextured", Value = 1 });
-                    else if (id == IDC_BTN_REMOVETEXTURED)
-                        ManagerChanges.Enqueue(new SettingChange { Key = "removetextured", Value = 1 });
-                    else if (id >= IDC_KIND0 && id < IDC_KIND0 + 4)
+                    switch (id)
                     {
-                        lastKind = id - IDC_KIND0;
-                        Changes.Enqueue(new SettingChange { Key = "kind", Value = lastKind });
-                        InvalidateTexts();
+                        case IDC_REMOVE:
+                            lastCount = Math.Max(1, lastCount - 1);
+                            Changes.Enqueue(new SettingChange { Key = "count", Value = -1 });
+                            InvalidateTexts();
+                            break;
+                        case IDC_ADD:
+                            lastCount = Math.Min(3, lastCount + 1);
+                            Changes.Enqueue(new SettingChange { Key = "count", Value = 1 });
+                            InvalidateTexts();
+                            break;
+                        case IDC_BTN_REMOVETEXTURED:
+                            ManagerChanges.Enqueue(new SettingChange { Key = "removetextured", Value = 1 });
+                            break;
+                        case IDC_BTN_ADDTEXTURED:
+                            ManagerChanges.Enqueue(new SettingChange { Key = "addtextured", Value = 1 });
+                            break;
+                        case IDC_BTN_CLOSE:
+                            ShowWindow(hWnd, SW_HIDE);
+                            break;
+                        case IDC_CHK_INVISIBLE:
+                            Changes.Enqueue(new SettingChange { Key = "invisible", Value = (int)SendMessageW(hChkInvisible, BM_GETCHECK, IntPtr.Zero, IntPtr.Zero) });
+                            break;
+                        case IDC_CHK_TOPMOST:
+                            Changes.Enqueue(new SettingChange { Key = "topmost", Value = (int)SendMessageW(hChkTopmost, BM_GETCHECK, IntPtr.Zero, IntPtr.Zero) });
+                            break;
+                        case IDC_CHK_AUTOSTART:
+                            Changes.Enqueue(new SettingChange { Key = "autostart", Value = (int)SendMessageW(hChkAutostart, BM_GETCHECK, IntPtr.Zero, IntPtr.Zero) });
+                            break;
+                        default:
+                            if (id >= IDC_KIND0 && id < IDC_KIND0 + hKindButtons.Length)
+                            {
+                                lastKind = id - IDC_KIND0;
+                                Changes.Enqueue(new SettingChange { Key = "kind", Value = lastKind });
+                                InvalidateTexts();
+                            }
+                            else if (id >= IDC_MAT0 && id < IDC_MAT0 + hMatButtons.Length)
+                            {
+                                lastMat = id - IDC_MAT0;
+                                Changes.Enqueue(new SettingChange { Key = "mat", Value = lastMat });
+                                InvalidateTexts();
+                            }
+                            break;
                     }
-                    else if (id == IDC_BTN_CLOSE)
-                        ShowWindow(hWnd, SW_HIDE);
                     break;
                 }
-                case WM_TIMER:
+                case WM_HSCROLL:
                 {
-                    if (wParam.ToInt64() == 1)
-                        OnTimerPoll();
+                    // lParam = 滑条句柄；只有用户拖动才触发（无轮询、无漂移）
+                    var track = lParam;
+                    if (track == hTrackScale)
+                    {
+                        var scale = TrackPos(hTrackScale) / 100f * 2f + 0.5f;
+                        Changes.Enqueue(new SettingChange { Key = "scale", Value = scale });
+                    }
+                    else if (track == hTrackRefract)
+                        Changes.Enqueue(new SettingChange { Key = "refract", Value = TrackPos(hTrackRefract) });
+                    else if (track == hTrackDisp)
+                        Changes.Enqueue(new SettingChange { Key = "disp", Value = TrackPos(hTrackDisp) });
+                    else if (track == hTrackBlur)
+                        Changes.Enqueue(new SettingChange { Key = "blur", Value = TrackPos(hTrackBlur) });
+                    else if (track == hTrackGloss)
+                        Changes.Enqueue(new SettingChange { Key = "gloss", Value = TrackPos(hTrackGloss) / 100f });
+                    InvalidateTexts();
                     break;
                 }
                 case WM_CTLCOLORSTATIC:
@@ -445,7 +439,6 @@ namespace TransparentPet.Core
         [DllImport("user32.dll")] static extern int GetMessageW(ref MSG msg, IntPtr hWnd, uint min, uint max);
         [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG msg);
         [DllImport("user32.dll")] static extern IntPtr DispatchMessageW(ref MSG msg);
-        [DllImport("user32.dll")] static extern void SetTimer(IntPtr hWnd, IntPtr id, uint ms, IntPtr proc);
         [DllImport("gdi32.dll")] static extern IntPtr CreateSolidBrush(uint color);
         [DllImport("gdi32.dll")] static extern uint SetTextColor(IntPtr hdc, uint color);
         [DllImport("gdi32.dll")] static extern uint SetBkColor(IntPtr hdc, uint color);

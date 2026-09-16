@@ -80,7 +80,9 @@ namespace TransparentPet.Pet
                 Random.Range(-SpawnJitterPx, SpawnJitterPx),
                 Random.Range(-SpawnJitterPx, SpawnJitterPx));
 
-            texturedPets.Add(TexturedPet.Create(transform, petTexture, spawnPx));
+            // 注意：绝不挂到 petGo 下——它同时是全屏 quad,被 SyncQuadToCamera 拉伸到
+            // 数十倍(贴图宠会变成与屏幕等大,实测踩坑)。贴图宠一律挂在场景根。
+            texturedPets.Add(TexturedPet.Create(null, petTexture, spawnPx));
         }
 
         /// <summary>销毁最后一只贴图史莱姆；本物种可为 0 只，空了就忽略。</summary>

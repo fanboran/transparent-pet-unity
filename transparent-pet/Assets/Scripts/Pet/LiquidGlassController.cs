@@ -203,7 +203,7 @@ namespace TransparentPet.Pet
                 Refract = RefThickness,
                 Disp = RefDispersion,
                 Blur = BlurRadius,
-                KindNames = System.Array.Empty<string>(),
+                Gloss = FresnelFactor,
             });
         }
 
@@ -234,6 +234,12 @@ namespace TransparentPet.Pet
                         break;
                     case "blur":
                         BlurRadius = change.Value;
+                        break;
+                    case "gloss":
+                        FresnelFactor = Mathf.Clamp01(change.Value);
+                        break;
+                    case "mat":
+                        ApplyMaterial((int)change.Value);
                         break;
                     case "kind":
                         SetAllKinds((int)change.Value);
@@ -375,6 +381,29 @@ namespace TransparentPet.Pet
 
         /// <summary>抓屏隐形当前是否生效（面板显示用）。</summary>
         public bool IsCaptureInvisible => captureInvisibleActive;
+
+        /// <summary>玻璃材质预设（原味玻璃 / 亚克力 / 磨砂）——覆盖模糊、渐进模糊与边缘高光参数。</summary>
+        public void ApplyMaterial(int index)
+        {
+            switch (Mathf.Clamp(index, 0, 2))
+            {
+                case 1: // 亚克力:厚、磨砂感、低色散、柔边缘
+                    BlurRadius = 16f;
+                    BlurEdge = true;
+                    FresnelFactor = 0.3f;
+                    break;
+                case 2: // 磨砂:最重的散射,几乎无色散
+                    BlurRadius = 20f;
+                    BlurEdge = true;
+                    FresnelFactor = 0.15f;
+                    break;
+                default: // 原味玻璃:中心清透、边缘磨砂
+                    BlurRadius = 6f;
+                    BlurEdge = false;
+                    FresnelFactor = 0.5f;
+                    break;
+            }
+        }
 
         void OnScaleChanged(float scale) => userScale = Mathf.Clamp(scale, MinUserScale, MaxUserScale);
 
