@@ -237,10 +237,11 @@ Shader "TransparentPet/LiquidGlass"
 
             // smin 平滑融合（多物品 metaball 式合并；单物品时退化为 min）。
             // 颜色按同一混合权重 h 同步过渡：两色玻璃相邻时融出平滑渐变色。
-            float sminTinted(float a, float b, float k, float3 colA, float3 colB, out float3 colOut)
+            // colA 为 inout：融合链上逐物品累积。
+            float sminTinted(float a, float b, float k, inout float3 colA, float3 colB)
             {
                 float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-                colOut = lerp(colB, colA, h);
+                colA = lerp(colB, colA, h);
                 return lerp(b, a, h) - k * h * (1.0 - h);
             }
 
@@ -252,7 +253,7 @@ Shader "TransparentPet/LiquidGlass"
                 {
                     float d = getItemSDF(i, pixelTopDown);
                     float3 itemCol = _ItemTints[i].rgb;
-                    result = sminTinted(result, d, _MergeRate, col, itemCol, col);
+                    result = sminTinted(result, d, _MergeRate, col, itemCol);
                 }
                 tintOut = col;
                 return result;
@@ -262,10 +263,11 @@ Shader "TransparentPet/LiquidGlass"
             // 乘回分辨率）；Godot 原版此处乘 1414 的放大系数只为可视化，这里语义化
             float2 getNormal(float2 pixelTopDown)
             {
+                float3 tintIgnore; // mainSDF 同时输出种类色，法线计算只关心梯度
                 float2 h = float2(max(abs(ddx(pixelTopDown.x)), 0.0001), max(abs(ddy(pixelTopDown.y)), 0.0001));
                 float2 grad = float2(
-                    mainSDF(pixelTopDown + float2(h.x, 0.0)) - mainSDF(pixelTopDown - float2(h.x, 0.0)),
-                    mainSDF(pixelTopDown + float2(0.0, h.y)) - mainSDF(pixelTopDown - float2(0.0, h.y))
+                    mainSDF(pixelTopDown + float2(h.x, 0.0), tintIgnore) - mainSDF(pixelTopDown - float2(h.x, 0.0), tintIgnore),
+                    mainSDF(pixelTopDown + float2(0.0, h.y), tintIgnore) - mainSDF(pixelTopDown - float2(0.0, h.y), tintIgnore)
                 ) / (2.0 * h);
                 return grad * _Resolution.y;
             }
@@ -378,7 +380,8 @@ Shader "TransparentPet/LiquidGlass"
                 float2 pixel = i.uv * resolution;              // GL 语义（左下原点），用于 UV 采样换算
                 float2 pixelTD = float2(pixel.x, resolution.y - pixel.y); // y 向下（top-origin），SDF/法线/眩光统一在此空间计算
 
-                float merged = mainSDF(pixelTD, out float3 kindTint);
+                float3 kindTint;
+                float merged = mainSDF(pixelTD, kindTint);
 
                 float4 outColor;
 
