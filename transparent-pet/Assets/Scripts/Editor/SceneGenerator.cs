@@ -18,6 +18,7 @@ namespace TransparentPet.EditorTools
     /// （BuildPlayer 显式指定）；体验其他版本：编辑器打开对应场景 Play。
     /// 当前交付默认 = V7 生命感版（V6 原图原样 + PetLifeVisual 呼吸/倾斜/挤压/戳反应）；
     /// V6 纯烘焙贴图版（零表现层）作为存档保留。
+    /// V8 液态玻璃为实验版本（全屏渲染效果，无法与其他版本同屏，故不进展厅）。
     /// </summary>
     public static class SceneGenerator
     {
@@ -44,6 +45,11 @@ namespace TransparentPet.EditorTools
             /// <summary>第一个流体版本（PBF + Marching Squares 等值线渲染，git e7341a2/e1653e1）：
             /// 粒子被拉散时等值线会断裂成一块块——即"碎成渣"的观感来源</summary>
             PbfMesh,
+
+            /// <summary>液态玻璃（移植自 Godot 版液态玻璃演示，源头参考 liquid-glass-studio）：
+            /// 史莱姆形状 SDF + 折射/色散/菲涅尔/眩光，可拖拽、命中由 CPU 侧 SDF 判定
+            /// （LiquidGlassController / LiquidGlassSlimeSdf / LiquidGlass.shader）</summary>
+            LiquidGlass,
         }
 
         /// <summary>全部保留版本：路径 + 类型 + 行为语义说明（新版本在表尾追加）。</summary>
@@ -61,6 +67,8 @@ namespace TransparentPet.EditorTools
                 "V3 · PBF 流体趴姿版：重力常开软体（存档）"),
             ("Assets/Scenes/Versions/V2PbfHover/PetScene.unity", PetKind.PbfMesh, true,
                 "V2 · 第一个流体物理版本（PBF + 等值线 mesh 渲染）：落定关重力漂浮，拉扯过猛时轮廓断裂成块（碎成渣）"),
+            ("Assets/Scenes/Versions/V8LiquidGlass/PetScene.unity", PetKind.LiquidGlass, false,
+                "V8 · 液态玻璃版：史莱姆形状 SDF 液态玻璃，折射/色散/菲涅尔/眩光（移植自 Godot 液态玻璃演示；棋盘格素材只在玻璃内可见，玻璃外保持透明）"),
         };
 
         const string SlimeMaterialPath = "Assets/Art/Pet/SlimeMat.mat";             // Slime.shader（SVG 版）
@@ -69,6 +77,9 @@ namespace TransparentPet.EditorTools
         const string SlimeMeshMaterialPath = "Assets/Art/Pet/SlimeMeshMat.mat";     // SlimeMesh.shader（第一个流体版）
         const string BakedMaterialPath = "Assets/Art/Pet/BakedSpriteMat.mat";       // Sprites/Default（纯烘焙图版）
         const string PetTexturePath = "Assets/Art/Pet/PetSlime.png";
+        const string LiquidGlassShaderPath = "Assets/Art/Shaders/LiquidGlass.shader";       // V8 液态玻璃主合成
+        const string LiquidGlassBgShaderPath = "Assets/Art/Shaders/LiquidGlassBg.shader";   // V8 折射素材生成
+        const string LiquidGlassBlurShaderPath = "Assets/Art/Shaders/LiquidGlassBlur.shader"; // V8 分离式模糊
 
         [MenuItem("TransparentPet/生成宠物场景")]
         public static void GenerateFromMenu() => GenerateAll();
@@ -240,6 +251,18 @@ namespace TransparentPet.EditorTools
                     var so = new SerializedObject(controller);
                     so.FindProperty("hoverMode").boolValue = hoverMode;
                     so.ApplyModifiedProperties();
+                    break;
+                }
+                case PetKind.LiquidGlass:
+                {
+                    // 液态玻璃：全屏 quad + RT 管线（材质由 controller 运行时创建，
+                    // shader 引用必须序列化进场景，否则构建后 Shader.Find 返回 null）
+                    petGo.AddComponent<MeshFilter>();
+                    petGo.AddComponent<MeshRenderer>();
+                    var glass = petGo.AddComponent<LiquidGlassController>();
+                    glass.MainShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassShaderPath);
+                    glass.BgShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBgShaderPath);
+                    glass.BlurShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBlurShaderPath);
                     break;
                 }
             }
