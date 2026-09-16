@@ -127,6 +127,7 @@ namespace TransparentPet.Pet
         bool dragging;
         Vector2 dragGrabOffset;
         bool captureInvisibleActive; // affinity 当前生效中（F11 可切换）
+        bool windowBoxReady;         // V9：窗口包围盒已生效（UniWinC 就绪前 setter 会静默失败，需重试）
 
         // 位置自动保存（节流同 SvgPetController：移动超阈值且距上次 ≥1s）
         Vector2 lastSavedScreenPos;
@@ -220,6 +221,7 @@ namespace TransparentPet.Pet
             if (mainCamera == null || mainMat == null || bgMat == null || blurMat == null)
                 return;
 
+            EnsureWindowBox();
             SyncQuadToCamera();
             HandleInput();
             UpdateSave();
@@ -231,15 +233,39 @@ namespace TransparentPet.Pet
         /// <summary>
         /// V9：窗口跟随玻璃（窗口中心 = 玻璃中心）。拖拽与缩放都会走到这里；
         /// 非 V9（全屏覆盖层）无窗口几何可言，直接返回。
+        /// 尺寸必须走 Screen.SetWindowSize（引擎接受后 pixelWidth 才会跟上）——
+        /// 仅用 SetWindowPos 会被 Unity 按自身分辨率设置改回（实测踩坑：全屏残留）。
         /// </summary>
         void ApplyWindowPlacement()
         {
-            if (!DesktopReflection || WindowController == null)
+            if (!DesktopReflection || hwnd == System.IntPtr.Zero)
                 return;
             var box = GlassBoxSize(ScaleValue, BoxMarginPx);
-            WindowController.windowSize = box;
-            WindowController.windowPosition = new Vector2(
-                logicScreenPos.x - box.x * 0.5f, logicScreenPos.y - box.y * 0.5f);
+            var iw = (int)box.x;
+            var ih = (int)box.y;
+            var ix = (int)(logicScreenPos.x - iw * 0.5f);
+            var iy = (int)(logicScreenPos.y - ih * 0.5f);
+
+            if (Screen.width != iw || Screen.height != ih || Screen.fullScreen)
+            {
+                Screen.SetResolution(iw, ih, false);
+            }
+            NativeWindowStyles.SetWindowBounds(hwnd, ix, iy, iw, ih);
+        }
+
+        /// <summary>
+        /// V9 窗口收缩的重试入口：窗口几何走自有 Win32（按句柄 SetWindowPos），
+        /// 不依赖 UniWinC 的 attach 状态；以渲染分辨率读回为成功判据。
+        /// </summary>
+        void EnsureWindowBox()
+        {
+            if (!DesktopReflection || windowBoxReady || mainCamera == null)
+                return;
+
+            ApplyWindowPlacement();
+            windowBoxReady = Mathf.Abs(mainCamera.pixelWidth - GlassBoxSize(ScaleValue, BoxMarginPx).x) < 4f;
+            if (windowBoxReady)
+                Debug.Log($"[LiquidGlass] 窗口收缩生效: {mainCamera.pixelWidth}x{mainCamera.pixelHeight}");
         }
 
         void OnDestroy()
@@ -288,23 +314,21 @@ namespace TransparentPet.Pet
 
         void HandleInput()
         {
-            var mouseUnity = Input.mousePosition; // 客户区相对、左下原点、Y 向上
-            // 换算为屏幕坐标（左上原点）：V9 收缩窗口需叠加窗口位置；
-            // 数学上"窗口移动 δ → 局部坐标反向变化 δ"相互抵消，拖拽无自激
-            Vector2 mouseTop;
-            if (DesktopReflection && WindowController != null)
-            {
-                var wp = WindowController.windowPosition;
-                mouseTop = new Vector2(wp.x + mouseUnity.x, wp.y + mainCamera.pixelHeight - mouseUnity.y);
-            }
-            else
-            {
-                mouseTop = new Vector2(mouseUnity.x, mainCamera.pixelHeight - mouseUnity.y);
-            }
+            // 全局光标（物理像素、左上原点）：穿透态（WS_EX_TRANSPARENT）窗口收不到
+            // 鼠标消息，Input.mousePosition 会冻结 → 命中判定死锁在穿透态（实测踩坑）。
+            // GetCursorPos 不依赖窗口消息，穿透中也能感知"鼠标进入玻璃"并解除穿透。
+            if (!NativeWindowStyles.TryGetCursorPosition(out var cx, out var cy))
+                return;
+            var mouseTop = new Vector2(cx, cy);
 
             var widthPx = ScaleValue;
             var onSlime = LiquidGlassSlimeSdf.Hits(
                 mouseTop.x, mouseTop.y, logicScreenPos.x, logicScreenPos.y, widthPx);
+
+            if (Time.frameCount % 120 == 0)
+                Debug.Log($"[LiquidGlass] mouse=({mouseTop.x:0},{mouseTop.y:0}) logic={logicScreenPos} " +
+                          $"onSlime={onSlime} dragging={dragging} pix={mainCamera.pixelWidth}x{mainCamera.pixelHeight} " +
+                          $"winPos={(WindowController != null ? WindowController.windowPosition.ToString() : "null")}");
 
             // 悬停自报：窗口层据此决定整窗穿透（与贴图/PBF 版本同契约）
             if (onSlime)
@@ -342,7 +366,8 @@ namespace TransparentPet.Pet
         void OnScaleChanged(float scale)
         {
             userScale = Mathf.Clamp(scale, MinUserScale, MaxUserScale);
-            ApplyWindowPlacement(); // V9：缩放联动窗口包围盒尺寸
+            windowBoxReady = false; // 包围盒尺寸随缩放变化，触发重设
+            ApplyWindowPlacement();
         }
 
         void UpdateSave()

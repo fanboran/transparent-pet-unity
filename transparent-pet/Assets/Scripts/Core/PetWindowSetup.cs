@@ -106,8 +106,10 @@ namespace TransparentPet.Core
 
         /// <summary>
         /// 整窗穿透：指针压在宠物不透明区域或设置面板上 → 可交互；否则穿透到桌面。
-        /// 判定输入来自各绘制方自报（见 PointerHover），不再每帧读屏回读；
-        /// 只在状态真正翻转时才改窗口 EX 样式，避免全屏窗口反复改样式引起合成抖动。
+        /// 判定输入来自各绘制方自报（见 PointerHover），不再每帧读屏回读。
+        /// 注意：必须无条件驱动（此前"相等即跳过"的优化有缺陷——初始态两者同为
+        /// false 时永不写入，窗口从启动起就一直可交互，全屏透明窗口挡住整个桌面
+        /// 的点击；实测踩坑）。native 层 SetWindowLong 幂等，重复写代价可忽略。
         /// </summary>
         void UpdateClickThrough()
         {
@@ -117,11 +119,7 @@ namespace TransparentPet.Core
 #else
             if (!window)
                 return;
-
-            var interactive = PointerHover.IsHovering(Time.frameCount);
-            if (window.isClickThrough == interactive)
-                return; // 已是目标状态（期望穿透 = !interactive）
-            window.isClickThrough = !interactive;
+            window.isClickThrough = !PointerHover.IsHovering(Time.frameCount);
 #endif
         }
 

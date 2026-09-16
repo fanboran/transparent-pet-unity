@@ -234,6 +234,38 @@ namespace TransparentPet.Core
             return true;
         }
 
+        // ── 全局光标：穿透态（WS_EX_TRANSPARENT）窗口收不到鼠标消息，Unity 的
+        //    Input.mousePosition 会冻结 → 命中判定死锁在穿透态（V8/V9 实测踩坑）。
+        //    GetCursorPos 直接读系统光标，不依赖窗口消息，穿透态下依然实时。──
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct POINT { public int X, Y; }
+
+        [DllImport("user32.dll")]
+        static extern bool GetCursorPos(ref POINT point);
+
+        /// <summary>系统光标位置（左上原点物理像素）。穿透态下也可用。</summary>
+        public static bool TryGetCursorPosition(out int x, out int y)
+        {
+            var point = new POINT();
+            var ok = GetCursorPos(ref point);
+            x = point.X;
+            y = point.Y;
+            return ok;
+        }
+
+        /// <summary>
+        /// 按句柄直接设置窗口位置与尺寸（物理像素、左上原点）。
+        /// V9 窗口收缩不走 UniWinC：其几何接口在原生层 attach 完成前会静默失效
+        /// （实测踩坑：窗口残留全屏），按句柄的 SetWindowPos 无此依赖。
+        /// </summary>
+        public static void SetWindowBounds(IntPtr hWnd, int x, int y, int w, int h)
+        {
+            if (hWnd == IntPtr.Zero)
+                return;
+            SetWindowPos(hWnd, IntPtr.Zero, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+
         static long GetStyle(IntPtr hWnd) =>
             IntPtr.Size == 8
                 ? GetWindowLongPtr64(hWnd, GWL_STYLE).ToInt64()
