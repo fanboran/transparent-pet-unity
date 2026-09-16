@@ -125,10 +125,43 @@ namespace TransparentPet.UI
 
             GUILayout.Space(6);
 
+            // ── 液态玻璃（仅液态玻璃场景显示；区块由控制器经 LiquidGlassPresence 登记）──
+            if (LiquidGlassPresence.Active is LiquidGlassController glass)
+                DrawLiquidGlassSection(glass);
+
+            GUILayout.Space(6);
+
             if (GUILayout.Button("关闭"))
                 Visible = false;
 
             GUILayout.EndArea();
+        }
+
+        /// <summary>
+        /// 液态玻璃区块：抓屏隐形开关 + 多只增减。隐形开关直接调控制器的
+        /// SetCaptureInvisible（native affinity 即时切换），同时把偏好落盘，
+        /// 下次启动按配置自动恢复。
+        /// </summary>
+        void DrawLiquidGlassSection(LiquidGlassController glass)
+        {
+            GUILayout.Space(6);
+            GUILayout.Label("液态玻璃");
+
+            var invisible = GUILayout.Toggle(glass.IsCaptureInvisible, "录屏/截图中隐藏（折射真实桌面）");
+            if (invisible != glass.IsCaptureInvisible)
+            {
+                glass.SetCaptureInvisible(invisible);
+                config.captureInvisible = invisible;
+                CommitSavedOnly();
+            }
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"史莱姆数量: {glass.SlimeCount}", GUILayout.Width(150f));
+            if (GUILayout.Button("−") && glass.SlimeCount > 1)
+                glass.RemoveSlime();
+            if (GUILayout.Button("+") && glass.SlimeCount < LiquidGlassController.MaxSlimes)
+                glass.AddSlime();
+            GUILayout.EndHorizontal();
         }
 
         // ── 控件绘制 ──
@@ -273,12 +306,14 @@ namespace TransparentPet.UI
             return titleStyle;
         }
 
-        /// <summary>右上角面板矩形；下拉展开时按项数加高背景（估算值宁大勿小），避免内容溢出深色底。</summary>
+        /// <summary>右上角面板矩形；下拉展开/液态玻璃区块按内容加高背景（估算值宁大勿小），避免内容溢出深色底。</summary>
         Rect PanelRect()
         {
             var height = PanelHeight;
             if (characterListOpen && characterNames != null)
                 height += characterNames.Length * ExpandedItemGuess + 10f;
+            if (LiquidGlassPresence.Active is LiquidGlassController)
+                height += 70f; // 液态玻璃区块（分组标题 + 开关 + 数量行）
             return new Rect(Screen.width - PanelWidth - ScreenMargin, ScreenMargin, PanelWidth, height);
         }
 

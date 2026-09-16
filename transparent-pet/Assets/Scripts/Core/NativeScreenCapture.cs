@@ -67,16 +67,23 @@ namespace TransparentPet.Core
 
         /// <summary>
         /// 抓屏幕矩形（x,y = 左上原点物理像素；w,h = 尺寸）到 pixels
-        /// （BGRA、底行在前；长度 ≥ w*h*4）。
+        /// （BGRA、底行在前；长度 ≥ w*h*4）。failStep 返回失败阶段（诊断用）。
         /// </summary>
-        public static bool TryCaptureRegion(int x, int y, int w, int h, byte[] pixels)
+        public static bool TryCaptureRegion(int x, int y, int w, int h, byte[] pixels, out string failStep)
         {
+            failStep = null;
             if (w <= 0 || h <= 0 || pixels == null || pixels.Length < w * h * 4)
+            {
+                failStep = "args";
                 return false;
+            }
 
             var screenDc = GetDC(IntPtr.Zero);
             if (screenDc == IntPtr.Zero)
+            {
+                failStep = "GetDC";
                 return false;
+            }
 
             var memDc = IntPtr.Zero;
             var bmp = IntPtr.Zero;
@@ -86,7 +93,10 @@ namespace TransparentPet.Core
                 memDc = CreateCompatibleDC(screenDc);
                 bmp = CreateCompatibleBitmap(screenDc, w, h);
                 if (memDc == IntPtr.Zero || bmp == IntPtr.Zero)
+                {
+                    failStep = "CreateDCOrBitmap";
                     return false;
+                }
 
                 var old = SelectObject(memDc, bmp);
                 ok = BitBlt(memDc, 0, 0, w, h, screenDc, x, y, SRCCOPY);
@@ -105,6 +115,12 @@ namespace TransparentPet.Core
                         }
                     };
                     ok = GetDIBits(memDc, bmp, 0, (uint)h, pixels, ref bmi, DIB_RGB_COLORS) != 0;
+                    if (!ok)
+                        failStep = "GetDIBits";
+                }
+                else
+                {
+                    failStep = "BitBlt";
                 }
                 SelectObject(memDc, old);
             }

@@ -16,9 +16,9 @@ namespace TransparentPet.EditorTools
     /// Assets/Scenes/Versions/ 下一个版本一个目录。GenerateAll 成套生成并全部
     /// 收录进构建设置（index 0 = 交付默认版本）。构建 exe 时默认只打 index 0
     /// （BuildPlayer 显式指定）；体验其他版本：编辑器打开对应场景 Play。
-    /// 当前交付默认 = V7 生命感版（V6 原图原样 + PetLifeVisual 呼吸/倾斜/挤压/戳反应）；
-    /// V6 纯烘焙贴图版（零表现层）作为存档保留。
-    /// V8 液态玻璃为实验版本（全屏渲染效果，无法与其他版本同屏，故不进展厅）。
+    /// 当前交付默认 = V9 真液态玻璃桌面版（抓屏隐形 + 折射真实桌面 + 多只同屏）；
+    /// V7 生命感版、V6 纯烘焙贴图版等作为存档保留。
+    /// V8 液态玻璃为 V9 的素材回退形态（同 shader 管线、程序化棋盘格素材）。
     /// </summary>
     public static class SceneGenerator
     {
@@ -57,11 +57,13 @@ namespace TransparentPet.EditorTools
             LiquidGlassDesktop,
         }
 
-        /// <summary>全部保留版本：路径 + 类型 + 行为语义说明（新版本在表尾追加）。</summary>
+        /// <summary>全部保留版本：路径 + 类型 + 行为语义说明（index 0 = 交付默认，其余存档）。</summary>
         static readonly (string scenePath, PetKind kind, bool hoverMode, string description)[] Versions =
         {
+            ("Assets/Scenes/Versions/V9LiquidGlassDesktop/PetScene.unity", PetKind.LiquidGlassDesktop, false,
+                "V9 · 真液态玻璃桌面版（交付默认）：抓屏隐形 + 折射真实桌面，多只同屏（≤3，smin 融合）；录屏/截图中桌宠隐形，设置面板可关"),
             ("Assets/Scenes/Versions/V7LifeVisual/PetScene.unity", PetKind.SvgLife, false,
-                "V7 · 生命感版：烘焙图原样 + 呼吸/拖拽倾斜/落地挤压/戳反应（当前交付默认）"),
+                "V7 · 生命感版：烘焙图原样 + 呼吸/拖拽倾斜/落地挤压/戳反应（存档）"),
             ("Assets/Scenes/Versions/V6BakedTexture/PetScene.unity", PetKind.SvgBaked, false,
                 "V6 · 纯烘焙贴图版：PetSlime.png 原样显示，零着色器零表现层（存档）"),
             ("Assets/Scenes/Versions/V5SvgClassic/PetScene.unity", PetKind.SvgClassic, false,
@@ -73,9 +75,7 @@ namespace TransparentPet.EditorTools
             ("Assets/Scenes/Versions/V2PbfHover/PetScene.unity", PetKind.PbfMesh, true,
                 "V2 · 第一个流体物理版本（PBF + 等值线 mesh 渲染）：落定关重力漂浮，拉扯过猛时轮廓断裂成块（碎成渣）"),
             ("Assets/Scenes/Versions/V8LiquidGlass/PetScene.unity", PetKind.LiquidGlass, false,
-                "V8 · 液态玻璃版：史莱姆形状 SDF 液态玻璃，折射/色散/菲涅尔/眩光（移植自 Godot 液态玻璃演示；棋盘格素材只在玻璃内可见，玻璃外保持透明）"),
-            ("Assets/Scenes/Versions/V9LiquidGlassDesktop/PetScene.unity", PetKind.LiquidGlassDesktop, false,
-                "V9 · 真液态玻璃桌面版：窗口收缩为玻璃包围盒，折射窗口背后的真实桌面（依赖抓屏隐形，录屏/截图中桌宠不可见；config.captureInvisible 可关）"),
+                "V8 · 液态玻璃版（V9 的素材回退形态）：史莱姆形状 SDF 液态玻璃，折射/色散/菲涅尔/眩光；棋盘格素材只在玻璃内可见，玻璃外保持透明"),
         };
 
         const string SlimeMaterialPath = "Assets/Art/Pet/SlimeMat.mat";             // Slime.shader（SVG 版）

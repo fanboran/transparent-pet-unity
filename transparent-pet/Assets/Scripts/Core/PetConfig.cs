@@ -56,6 +56,11 @@ namespace TransparentPet.Core
         /// <summary>抓屏隐形（液态玻璃折射真实桌面的前置）：本窗口设
         /// WDA_EXCLUDEFROMCAPTURE，代价是录屏/直播/截图里桌宠消失</summary>
         public bool captureInvisible = false;
+
+        /// <summary>液态玻璃各只史莱姆的屏幕位置（左上原点，成对使用）。
+        /// 空数组 = 从未保存过（回退单只居中）；上限与 shader 槽位数一致（3）。</summary>
+        public float[] glassSlimeX = System.Array.Empty<float>();
+        public float[] glassSlimeY = System.Array.Empty<float>();
     }
 
     /// <summary>

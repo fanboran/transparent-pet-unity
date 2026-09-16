@@ -12,8 +12,8 @@ namespace TransparentPet.EditorTools
     /// </summary>
     public static class BuildPlayer
     {
-        /// <summary>交付默认版本（构建设置 index 0）；体验其他保留版本改此路径（见 SceneGenerator.Versions）。</summary>
-        const string ScenePath = "Assets/Scenes/Versions/V7LifeVisual/PetScene.unity";
+        /// <summary>交付默认版本（构建设置 index 0 = V9 真液态玻璃桌面版）；体验其他保留版本改此路径（见 SceneGenerator.Versions）。</summary>
+        const string ScenePath = "Assets/Scenes/Versions/V9LiquidGlassDesktop/PetScene.unity";
 
         /// <summary>版本展厅场景（各版本同屏，演示/面试用）。</summary>
         const string GalleryScenePath = "Assets/Scenes/Showcase/PetGallery.unity";

@@ -72,10 +72,9 @@ tools/           # 图标生成 / GIF 合成脚本（Python + Pillow）
 
 | 版本 | 形态 |
 |---|---|
-| **V7 LifeVisual**（交付默认） | 烘焙贴图原样 + 生命感表现层（呼吸/倾斜/落地挤压/戳反应） |
-| V8 LiquidGlass | 液态玻璃史莱姆：SDF 轮廓 + 折射/色散/菲涅尔/眩光（移植自 Godot 版液态玻璃演示），可拖拽、棋盘格素材只在玻璃内可见、玻璃外保持透明 |
-| V9 LiquidGlassDesktop | 真液态玻璃桌面版：窗口收缩为玻璃包围盒 + 抓屏隐形（`WDA_EXCLUDEFROMCAPTURE`），折射窗口背后的**真实桌面**；F11 切换隐形（代价：隐形时录屏/截图中桌宠不可见） |
-| V6 BakedTexture | 烘焙贴图原样，零表现层 |
+| **V9 LiquidGlassDesktop**（交付默认） | 真液态玻璃桌面版：抓屏隐形（`WDA_EXCLUDEFROMCAPTURE`）+ 折射真实桌面，**多只同屏**（≤3，smin 液滴融合）；F11/设置面板切换隐形（代价：隐形时录屏/截图中桌宠不可见） |
+| V8 LiquidGlass | 液态玻璃史莱姆：SDF 轮廓 + 折射/色散/菲涅尔/眩光（移植自 Godot 版液态玻璃演示），棋盘格素材只在玻璃内可见（V9 的素材回退形态） |
+| V7 LifeVisual | 烘焙贴图原样 + 生命感表现层（呼吸/倾斜/落地挤压/戳反应） |
 | V5 SvgClassic | 贴图仅作 alpha 轮廓，颜色由 `Slime.shader` 玻璃着色器计算 |
 | V3 PbfGravity | PBF 粒子软体（重力常开趴姿版，`SlimeLiquid` metaball 场渲染） |
 | **V2 SplitFusion** | 轮廓环软体（28 粒子）：撞墙面积转移式分裂 + 分身被吸引飘回融合（面积守恒） |
