@@ -29,12 +29,12 @@ namespace TransparentPet.Pet
         /// <summary>与 PetSlime.png 的导入设置（Pixels Per Unit）保持一致</summary>
         public const float PixelsPerUnit = 100f;
 
-        /// <summary>场景内基准缩放：4x 烘焙贴图 ÷ 4 = Godot 版 200×132 的屏幕显示尺寸</summary>
-        const float BaseScale = 0.25f;
+        /// <summary>场景内基准缩放：默认 0.25 = 4x 烘焙贴图 ÷ 4 = Godot 版 200×132（版本场景
+        /// 历史观感）。多桌宠管理器生成时注入 0.4（显示全宽 320px），物种平等约定。</summary>
+        public float BaseScale = 0.25f;
 
-        /// <summary>用户缩放范围（对应 Godot 版 pet_scale 语义）</summary>
-        const float MinUserScale = 0.25f;
-        const float MaxUserScale = 2f;
+        const float MinUserScale = PetMetrics.MinScale;
+        const float MaxUserScale = PetMetrics.MaxScale;
 
         /// <summary>"戳"判定阈值：按下到抬起位移 ≤ 6px 且时长 ≤ 0.35s（否则算拖拽/抛射）</summary>
         const float TapMaxMovePx = 6f;
@@ -84,6 +84,9 @@ namespace TransparentPet.Pet
 
         public bool IsDragging => physics.IsDragging;
         public bool IsThrowing => physics.IsThrowing;
+
+        /// <summary>物理是否已就绪（Start 完成、逻辑位置有效；管理器持久化据此跳过未就绪个体）</summary>
+        public bool PhysicsReady { get; private set; }
 
         /// <summary>拖拽中的水平速度（px/s，屏幕坐标），表现层据此算倾斜角</summary>
         public float DragVelocityX => physics.LastFrameVelocity.x;
@@ -137,6 +140,7 @@ namespace TransparentPet.Pet
             transform.position = ScreenToWorld(logicScreenPos);
             lastSavedScreenPos = logicScreenPos;
             nextSaveTime = Time.time + 1f;
+            PhysicsReady = true;
         }
 
         void Update()
@@ -187,6 +191,13 @@ namespace TransparentPet.Pet
 
         /// <summary>撤销当前抓取（输入仲裁：被更高层宠物的点击抢占时调用）</summary>
         public void CancelGrab() => physics.Reset();
+
+        /// <summary>
+        /// 空中出生入场（多桌宠管理器初始入场用）：给一记微初速进入抛射积分，
+        /// 重力接管落到任务栏——复用与玻璃/果冻同一条 ThrowPhysics 链路。
+        /// 在 Start 之前调用也有效（ThrowEnabled 默认 true，Start 只刷新参数不落标志）。
+        /// </summary>
+        public void DropFromAir() => physics.StartThrow(new Vector2(0f, 30f));
 
         void OnThrowParamsChanged(ThrowParams p) => ApplyThrowParams(p);
 
@@ -328,14 +339,14 @@ namespace TransparentPet.Pet
         }
 
         /// <summary>
-        /// Unity 的 Input.mousePosition 原点在左下、Y 向上；
-        /// 本工程物理与转换层统一用 Godot 语义（左上原点、Y 向下），此处翻转 Y。
-        /// 漏掉这一步会导致拖动上下反向、且命中判定查到镜像位置（放下后再也抓不到）。
+        /// 全局光标（左上原点、Y 向下，与工程物理层同系）。穿透态下
+        /// Input.mousePosition 会冻结——命中判定死锁、悬停永远无法上报（实测踩坑）。
         /// </summary>
         static Vector2 MouseScreenPos()
         {
-            var m = Input.mousePosition;
-            return new Vector2(m.x, Screen.height - m.y);
+            return NativeWindowStyles.TryGetCursorPosition(out var x, out var y)
+                ? new Vector2(x, y)
+                : new Vector2(-1000f, -1000f); // 取不到光标的兜底：落在屏幕外 = 无命中
         }
 
         void SyncCameraToScreen()

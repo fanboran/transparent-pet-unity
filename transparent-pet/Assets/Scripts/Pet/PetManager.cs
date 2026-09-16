@@ -48,7 +48,7 @@ namespace TransparentPet.Pet
 
         class TexturedInstance
         {
-            public TexturedPet Pet;
+            public SvgPetController Pet;
             public Vector2 LastSaved;
         }
 
@@ -64,8 +64,8 @@ namespace TransparentPet.Pet
         readonly List<RingSplitInstance> ringsplits = new();
         float nextSaveTime; // 位置落盘节流（与液态玻璃同策略：≥1s 且有变化才写）
 
-        /// <summary>贴图资源（Assets/Resources/PetSlime.png）懒加载缓存；加载失败保持 null 下次重试。</summary>
-        Texture2D petTexture;
+        /// <summary>贴图精灵资源（Assets/Resources/PetSlime.png，导入即 Sprite）懒加载缓存。</summary>
+        Sprite petSprite;
 
         /// <summary>当前果冻软体数量（装配方/测试读取）。</summary>
         public int SoftbodyCount => softbodies.Count;
@@ -180,10 +180,10 @@ namespace TransparentPet.Pet
             if (textureds.Count >= max)
                 return;
 
-            if (petTexture == null)
+            if (petSprite == null)
             {
-                petTexture = Resources.Load<Texture2D>(PetTextureResourceName);
-                if (petTexture == null)
+                petSprite = Resources.Load<Sprite>(PetTextureResourceName);
+                if (petSprite == null)
                 {
                     Debug.LogError("[PetManager] Resources.Load 找不到 " + PetTextureResourceName + " 贴图，无法添加贴图史莱姆");
                     return;
@@ -221,9 +221,30 @@ namespace TransparentPet.Pet
         /// 创建一只贴图史莱姆。挂场景根（绝不挂全屏 quad——它被拉到数十倍，后代全部
         /// 等比爆炸，实测踩坑）；层用 PetRefract（进玻璃折射链路）。
         /// </summary>
-        TexturedPet CreateTextured(Vector2 spawnPx, bool dropFromAir = false)
+        /// <summary>
+        /// 创建一只贴图史莱姆——就是 V6/V7 交付默认的那一套：PetSlime.png 精灵 +
+        /// SvgPetController（ThrowPhysics 抛射/拖甩/戳 + alpha 命中）+ PetLifeVisual
+        ///（呼吸/倾斜/落地挤压）。挂场景根、层 PetRefract（进玻璃折射链路）；
+        /// Sprites/Default 是内置着色器，构建必然包含，可运行时 Shader.Find。
+        /// </summary>
+        SvgPetController CreateTextured(Vector2 spawnPx, bool dropFromAir = false)
         {
-            return TexturedPet.Create(null, petTexture, spawnPx, PetMetrics.BaseFullWidthPx, dropFromAir);
+            var go = new GameObject("TexturedPet");
+            go.layer = ResolveRefractLayer();
+
+            var renderer = go.AddComponent<SpriteRenderer>();
+            renderer.sprite = petSprite;
+            renderer.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
+            renderer.sortingOrder = 5; // 果冻软体(10)之下、液态玻璃(0)之上，与仲裁取值一致
+
+            var pet = go.AddComponent<SvgPetController>();
+            pet.BaseScale = 0.4f; // 物种平等：800px 烘焙图 × 0.4 = 显示全宽 320px
+            pet.SetSpawnOverride(spawnPx);
+            pet.SetPersistPosition(false); // 位置由本管理器按只持久化
+            if (dropFromAir)
+                pet.DropFromAir();
+            go.AddComponent<PetLifeVisual>(); // 生命感表现层（呼吸/拖拽倾斜/落地挤压）——Start 自动识别
+            return pet;
         }
 
         // ── 果冻软体物种 ──
@@ -315,10 +336,10 @@ namespace TransparentPet.Pet
                 || config.texturedX.Length == 0)
                 return; // 从未保存过：默认 0 只（用户在设置里加几只就记几只）
 
-            if (petTexture == null)
+            if (petSprite == null)
             {
-                petTexture = Resources.Load<Texture2D>(PetTextureResourceName);
-                if (petTexture == null)
+                petSprite = Resources.Load<Sprite>(PetTextureResourceName);
+                if (petSprite == null)
                 {
                     Debug.LogError("[PetManager] Resources.Load 找不到 " + PetTextureResourceName + "，贴图史莱姆恢复失败");
                     return;
@@ -354,7 +375,14 @@ namespace TransparentPet.Pet
                 if (inst.Pet == null)
                     return; // 场景卸载中（Unity 伪 null）：本帧不写
 
-                var pos = inst.Pet.ScreenPosPx;
+                if (!inst.Pet.PhysicsReady)
+                {
+                    config.texturedX[i] = inst.LastSaved.x; // Start 前逻辑位置无效，沿用上次值
+                    config.texturedY[i] = inst.LastSaved.y;
+                    continue;
+                }
+
+                var pos = inst.Pet.LogicScreenPos;
                 config.texturedX[i] = pos.x;
                 config.texturedY[i] = pos.y;
                 if ((pos - inst.LastSaved).sqrMagnitude >= 25f)
