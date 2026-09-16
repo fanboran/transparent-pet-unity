@@ -107,9 +107,13 @@ namespace TransparentPet.Core
         /// <summary>
         /// 整窗穿透：指针压在宠物不透明区域或设置面板上 → 可交互；否则穿透到桌面。
         /// 判定输入来自各绘制方自报（见 PointerHover），不再每帧读屏回读。
-        /// 注意：必须无条件驱动（此前"相等即跳过"的优化有缺陷——初始态两者同为
-        /// false 时永不写入，窗口从启动起就一直可交互，全屏透明窗口挡住整个桌面
-        /// 的点击；实测踩坑）。native 层 SetWindowLong 幂等，重复写代价可忽略。
+        /// 注意两点（都有实测教训）：
+        ///   1. 必须持续驱动——此前"相等即跳过"以 native 读回为准，初始态两者同为
+        ///      false 时永不写入，窗口从启动起就一直可交互（全屏透明窗口挡住整个
+        ///      桌面的点击）；
+        ///   2. 必须去抖——穿透态下每帧无条件重写 WS_EX_TRANSPARENT 会让 layered
+        ///      窗口每帧强制重合成（肉眼闪烁），故按"上次写入的目标值"缓存，
+        ///      仅变化时落笔。
         /// </summary>
         void UpdateClickThrough()
         {
@@ -119,9 +123,17 @@ namespace TransparentPet.Core
 #else
             if (!window)
                 return;
-            window.isClickThrough = !PointerHover.IsHovering(Time.frameCount);
+
+            var desired = !PointerHover.IsHovering(Time.frameCount);
+            if (lastClickThroughRequested == desired)
+                return;
+            window.isClickThrough = desired;
+            lastClickThroughRequested = desired;
 #endif
         }
+
+        /// <summary>上次写入的穿透目标值（自维护缓存；native 读回受 attach 状态影响不可靠）。</summary>
+        bool? lastClickThroughRequested;
 
         void OnDestroy()
         {

@@ -88,15 +88,5 @@ namespace TransparentPet.Pet.Tests
             // 160px 宽 → 缩放 200：0.506 高（SVG）对应 101px，160:101 与烘焙图一致
             Assert.AreEqual(200f, LiquidGlassSlimeSdf.ScaleFromWidthPx(160f), 1e-3f);
         }
-
-        [Test]
-        public void GlassBoxSize_FollowsAspectAndMargin()
-        {
-            // V9 窗口包围盒：全宽 160 + 边距 30×2 → 宽 220；
-            // 高 = 160×(0.506/0.8)=101.2 + 60 —— 与 SDF 轮廓比例同源
-            var size = LiquidGlassController.GlassBoxSize(160f, 30f);
-            Assert.AreEqual(220f, size.x, 0.01f);
-            Assert.AreEqual(161.2f, size.y, 0.01f);
-        }
     }
 }

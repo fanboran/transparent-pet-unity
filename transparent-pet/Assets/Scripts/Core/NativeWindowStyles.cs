@@ -13,10 +13,7 @@ namespace TransparentPet.Core
     public static class NativeWindowStyles
     {
         const int GWL_EXSTYLE = -20;
-        const int GWL_STYLE = -16;
         const long WS_EX_TOOLWINDOW = 0x00000080L;
-        const uint WS_POPUP = 0x80000000u;
-        const uint WS_VISIBLE = 0x10000000u;
         const uint GW_OWNER = 4;
         const uint SWP_NOSIZE = 0x0001;
         const uint SWP_NOMOVE = 0x0002;
@@ -215,23 +212,14 @@ namespace TransparentPet.Core
             return true;
         }
 
-        /// <summary>
-        /// 去边框（WS_POPUP）——V9 液态玻璃"窗口收缩为玻璃包围盒"形态用。
-        /// UniWinC 0.9.8 的无边框只在 shouldFitMonitor 路径里处理，收缩形态拿不到，这里补齐。幂等。
-        /// </summary>
-        public static bool SetBorderless(IntPtr hWnd)
+        /// <summary>按句柄移动窗口（不改尺寸；尺寸归 Unity 的 Screen 分辨率管理，
+        /// 外部改尺寸会被 player 按"期望矩形"还原并与客户区要求互相打架）。</summary>
+        public static bool SetWindowPosition(IntPtr hWnd, int x, int y)
         {
             if (hWnd == IntPtr.Zero)
                 return false;
-
-            long style = GetStyle(hWnd);
-            if ((style & WS_POPUP) != 0)
-                return true;
-
-            SetStyle(hWnd, (long)(WS_POPUP | WS_VISIBLE) | (style & 0xFFFFFFFFu));
-            SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-            return true;
+            return SetWindowPos(hWnd, IntPtr.Zero, x, y, 0, 0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         }
 
         // ── 全局光标：穿透态（WS_EX_TRANSPARENT）窗口收不到鼠标消息，Unity 的
@@ -252,31 +240,6 @@ namespace TransparentPet.Core
             x = point.X;
             y = point.Y;
             return ok;
-        }
-
-        /// <summary>
-        /// 按句柄直接设置窗口位置与尺寸（物理像素、左上原点）。
-        /// V9 窗口收缩不走 UniWinC：其几何接口在原生层 attach 完成前会静默失效
-        /// （实测踩坑：窗口残留全屏），按句柄的 SetWindowPos 无此依赖。
-        /// </summary>
-        public static void SetWindowBounds(IntPtr hWnd, int x, int y, int w, int h)
-        {
-            if (hWnd == IntPtr.Zero)
-                return;
-            SetWindowPos(hWnd, IntPtr.Zero, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
-        }
-
-        static long GetStyle(IntPtr hWnd) =>
-            IntPtr.Size == 8
-                ? GetWindowLongPtr64(hWnd, GWL_STYLE).ToInt64()
-                : GetWindowLong32(hWnd, GWL_STYLE);
-
-        static void SetStyle(IntPtr hWnd, long style)
-        {
-            if (IntPtr.Size == 8)
-                SetWindowLongPtr64(hWnd, GWL_STYLE, new IntPtr(style));
-            else
-                SetWindowLong32(hWnd, GWL_STYLE, (int)style);
         }
     }
 }

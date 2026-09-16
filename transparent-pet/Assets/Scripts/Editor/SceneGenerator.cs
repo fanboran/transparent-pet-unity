@@ -172,20 +172,12 @@ namespace TransparentPet.EditorTools
             // 宠物本体：按版本类型组装
             var petGo = new GameObject("Pet");
 
-            // 窗口互操作先于宠物装配创建：液态玻璃桌面版需要把 UniWinC 引用注入控制器
+            // 窗口互操作：UniWinC 透明/置顶/穿透 + 本项目的任务栏隐藏/托盘
             var windowGo = new GameObject("WindowController");
             var windowController = windowGo.AddComponent<UniWindowController>();
-            var windowSetup = windowGo.AddComponent<PetWindowSetup>();
+            windowGo.AddComponent<PetWindowSetup>();
 
             AddPetComponents(petGo, kind, hoverMode, windowController);
-
-            // V9：窗口收缩为玻璃包围盒（不再全屏覆盖层）
-            if (kind == PetKind.LiquidGlassDesktop)
-            {
-                var so = new SerializedObject(windowSetup);
-                so.FindProperty("FitToMonitor").boolValue = false;
-                so.ApplyModifiedProperties();
-            }
 
             // UI：设置面板 + HUD（IMGUI，透明窗口上自带 alpha → 面板区域自动可交互）
             var uiGo = new GameObject("PetUI");
