@@ -441,7 +441,7 @@ Shader "TransparentPet/LiquidGlass"
                         {
                             // 无偏移 → 直接模糊底 + 种类着色
                             outColor = tex2D(_BlurredBg, i.uv);
-                            outColor.rgb = lerp(outColor.rgb, kindTint, 0.25);
+                            outColor.rgb = lerp(outColor.rgb, kindTint.rgb, kindTint.a);
                         }
                         else
                         {
@@ -456,13 +456,13 @@ Shader "TransparentPet/LiquidGlass"
                                 _RefDispersion,
                                 i.uv);
 
-                            outColor = float4(lerp(refracted.rgb, kindTint, 0.25), 1.0);
+                            outColor = float4(lerp(refracted.rgb, kindTint.rgb, kindTint.a), 1.0);
 
                             // 菲涅尔：掠射边缘增亮（LCH 空间提 L，色相不漂）
                             float fresnelFactor = clamp(
                                 pow(1.0 + merged * resolution.y / 1500.0 * pow(500.0 / _RefFresnelRange, 2.0) + _RefFresnelHardness, 5.0),
                                 0.0, 1.0);
-                            float3 fresnelTintLCH = SRGB_TO_LAB(lerp(float3(1.0, 1.0, 1.0), kindTint, 0.5));
+                            float3 fresnelTintLCH = SRGB_TO_LAB(lerp(float3(1.0, 1.0, 1.0), kindTint.rgb, kindTint.a * 0.5));
                             fresnelTintLCH.x = clamp(fresnelTintLCH.x + 20.0 * fresnelFactor * _RefFresnelFactor, 0.0, 100.0);
                             outColor = lerp(outColor, float4(LCH_TO_SRGB(fresnelTintLCH), 1.0),
                                 fresnelFactor * _RefFresnelFactor * 0.7);
@@ -480,7 +480,7 @@ Shader "TransparentPet/LiquidGlass"
                                 * (glareFarside ? 1.2 * _GlareOppositeFactor : 1.2) * _GlareFactor;
                             glareAngleFactor = clamp(pow(glareAngleFactor, 0.1 + _GlareConvergence * 2.0), 0.0, 1.0);
 
-                            float3 glareTintLCH = SRGB_TO_LAB(lerp(refracted.rgb, kindTint, 0.5));
+                            float3 glareTintLCH = SRGB_TO_LAB(lerp(refracted.rgb, kindTint.rgb, kindTint.a * 0.5));
                             glareTintLCH.x = clamp(glareTintLCH.x + 150.0 * glareAngleFactor * glareGeoFactor, 0.0, 120.0);
                             glareTintLCH.y += 30.0 * glareAngleFactor * glareGeoFactor;
 
