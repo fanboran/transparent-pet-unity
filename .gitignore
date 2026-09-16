@@ -9,3 +9,8 @@
 batch_log.txt
 external/
 Builds/
+
+# 本地验证临时产物
+/verify_*.log
+/build_*.log
+/testresults.xml
