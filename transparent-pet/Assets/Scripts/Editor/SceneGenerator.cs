@@ -302,6 +302,7 @@ namespace TransparentPet.EditorTools
                     // 软体材质复用 PBF 版的 SlimeLiquidMat（序列化进场景，构建后 Shader.Find 才有值）
                     var manager = petGo.AddComponent<PetManager>();
                     manager.SoftbodyMaterial = EnsureMaterial("TransparentPet/SlimeLiquid", SlimeLiquidMaterialPath);
+                    manager.RingSplitMaterial = EnsureMaterial("TransparentPet/SlimeRing", SlimeRingMaterialPath);
                     petGo.AddComponent<PetRefractLayer>();
                     break;
                 }

@@ -57,6 +57,9 @@ namespace TransparentPet.Pet
                 case TexturedPet textured:
                     textured.CancelGrab();
                     break;
+                case SplitPetController split:
+                    split.CancelGrab();
+                    break;
                 case LiquidGlassController glass:
                     glass.CancelGrab();
                     break;

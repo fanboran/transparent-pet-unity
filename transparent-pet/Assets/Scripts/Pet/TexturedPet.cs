@@ -37,6 +37,9 @@ namespace TransparentPet.Pet
 
         SpriteRenderer spriteRenderer;
         bool dragging;
+        bool falling;         // 空中出生入场：受重力落到任务栏底边后静止（初始四物种入场）
+        float fallVelocityY;
+        float fallGravity = 800f;
         Vector2 dragOffsetPx; // 抓取点相对宠物中心的偏移（屏像素）：拖拽中保持相对位置不跳变
         Vector2 halfSizePx;   // 命中矩形半尺寸（屏像素），按贴图纵横比从目标全宽换算
 
@@ -47,8 +50,9 @@ namespace TransparentPet.Pet
         /// 静态工厂：创建一只贴图桌宠并摆到指定屏幕位置。
         /// 显示全宽 = targetWidthPx（物种平等：与液态玻璃/果冻软体同基准），
         /// 高度按贴图纵横比自适应；层用 PetRefract（缺失时回退默认层并警告一次）。
+        /// dropFromAir = 空中出生（初始入场）：受重力落到任务栏底边，落地前不接输入。
         /// </summary>
-        public static TexturedPet Create(Transform parent, Texture2D tex, Vector2 screenPosTopOrigin, float targetWidthPx)
+        public static TexturedPet Create(Transform parent, Texture2D tex, Vector2 screenPosTopOrigin, float targetWidthPx, bool dropFromAir = false)
         {
             var go = new GameObject("TexturedPet");
             go.layer = ResolvePetRefractLayer();
@@ -64,6 +68,9 @@ namespace TransparentPet.Pet
             pet.halfSizePx = new Vector2(
                 targetWidthPx * 0.5f,
                 targetWidthPx * 0.5f * tex.height / tex.width);
+            pet.falling = dropFromAir;
+            if (dropFromAir)
+                pet.fallGravity = PetConfigStore.Load().throwParams.gravity;
 
             pet.transform.SetParent(parent, false);
             pet.transform.position = ScreenPxToWorld(screenPosTopOrigin);
@@ -87,6 +94,21 @@ namespace TransparentPet.Pet
 
         void Update()
         {
+            // 空中出生入场：重力下落，底边贴到任务栏即静止；落地前不接输入
+            if (falling)
+            {
+                fallVelocityY += fallGravity * Time.deltaTime;
+                var p = ScreenPosPx + new Vector2(0f, fallVelocityY * Time.deltaTime);
+                var groundY = NativeScreen.GetWorkAreaBottomY();
+                if (p.y + halfSizePx.y >= groundY)
+                {
+                    p.y = groundY - halfSizePx.y;
+                    falling = false;
+                }
+                transform.position = ScreenPxToWorld(p);
+                return;
+            }
+
             // 全局系统光标（左上原点）；穿透态下 Input.mousePosition 冻结，必须用这条链路
             if (!NativeWindowStyles.TryGetCursorPosition(out var cursorX, out var cursorY))
                 return;

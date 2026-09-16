@@ -491,9 +491,15 @@ namespace TransparentPet.Pet
                 return;
             }
 
-            var center = new Vector2(NativeScreen.GetWorkAreaWidth() * 0.5f,
-                                     NativeScreen.GetWorkAreaBottomY() * 0.5f);
-            slimes.Add(new Slime { pos = center, lastSaved = center });
+            // 全新安装（无任何保存位置）：玻璃在半空出生并受重力落向任务栏——
+            // 初始四物种同屏入场的一部分（贴图/果冻同样下落，分裂软体悬浮，
+            // 见 PetManager.SpawnInitialAirborne）；微初速进抛射积分后由重力接管
+            var center = new Vector2(NativeScreen.GetWorkAreaWidth() * 0.45f,
+                                     NativeScreen.GetWorkAreaBottomY() * 0.32f);
+            var freshSlime = new Slime { pos = center, lastSaved = center };
+            SyncThrowPhysics(freshSlime);
+            freshSlime.throwPhys.StartThrow(new Vector2(0f, 30f));
+            slimes.Add(freshSlime);
         }
 
         void UpdateSave()

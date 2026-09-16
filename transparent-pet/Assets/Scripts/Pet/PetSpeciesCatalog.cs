@@ -31,12 +31,14 @@ namespace TransparentPet.Pet
     public static class PetSpeciesCatalog
     {
         /// <summary>全部内置物种（新增物种在此追加）。下标 = 物种索引，勿重排。
-        /// 用户拍板的"定稿三物种"：液态玻璃 / 贴图史莱姆 / 果冻软体并列共存。</summary>
+        /// 用户拍板的"四种一起存在"：定稿三物种（贴图/果冻/分裂，即当年展厅同屏的
+        /// 三路观感）+ 后来加入的液态玻璃 = 四种并列。</summary>
         public static readonly IReadOnlyList<SpeciesDef> All = new List<SpeciesDef>
         {
-            new SpeciesDef { Id = "glass",    DisplayName = "液态玻璃",   MaxCount = 3 },
-            new SpeciesDef { Id = "textured", DisplayName = "贴图史莱姆", MaxCount = 3 },
-            new SpeciesDef { Id = "softbody", DisplayName = "果冻软体",   MaxCount = 3 },
+            new SpeciesDef { Id = "glass",     DisplayName = "液态玻璃",   MaxCount = 3 },
+            new SpeciesDef { Id = "textured",  DisplayName = "贴图史莱姆", MaxCount = 3 },
+            new SpeciesDef { Id = "softbody",  DisplayName = "果冻软体",   MaxCount = 3 },
+            new SpeciesDef { Id = "ringsplit", DisplayName = "分裂软体",   MaxCount = 3 },
         };
 
         /// <summary>按 id 查下标；未命中返回 -1。</summary>

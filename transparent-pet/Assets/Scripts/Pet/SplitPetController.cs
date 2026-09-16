@@ -31,12 +31,13 @@ namespace TransparentPet.Pet
         /// <summary>正交相机缩放基准（1 世界单位 = 100 屏幕像素），与场景相机设置一致</summary>
         public const float PixelsPerUnit = 100f;
 
-        // ── 静息尺寸（屏幕像素）：≈ Godot 版 200×132 的观感 ──
-        const float BaseRadiusX = 92f;
-        const float BaseRadiusY = 60f;
+        // ── 静息尺寸（屏幕像素）：默认 ≈ Godot 版 200×132 的观感（V4 版本场景历史值）。
+        // 多桌宠管理器生成时注入 PetMetrics 基准（160/104 ≈ 全宽 320），物种平等约定 ──
+        public float BaseRadiusX = 92f;
+        public float BaseRadiusY = 60f;
 
-        const float MinUserScale = 0.25f;
-        const float MaxUserScale = 2f;
+        const float MinUserScale = PetMetrics.MinScale;
+        const float MaxUserScale = PetMetrics.MaxScale;
 
         // ── 分裂/合并参数 ──
         // 620→400：软体的速度阻尼（0.985/子步 ≈ 每帧 -3%）会让飞行中的撞击速度迅速衰减，
@@ -159,8 +160,14 @@ namespace TransparentPet.Pet
             if (sim.ContainsPoint(mouse))
                 PointerHover.ReportHover(Time.frameCount);
 
-            if (Input.GetMouseButtonDown(0) && sim.TryGrab(mouse))
+            // 命中预检 → 仲裁归属 → 再真正抓取：多物种同屏时重叠区只有最上面那只跟手
+            var renderer = GetComponent<MeshRenderer>();
+            if (Input.GetMouseButtonDown(0) && sim.ContainsPoint(mouse)
+                && PetInputArbiter.TryClaim(this, renderer != null ? renderer.sortingOrder : 0))
+            {
+                sim.TryGrab(mouse);
                 gravityOn = false; // 抓住即悬浮（拖拽中不施重力）
+            }
 
             if (sim.IsGrabbed)
                 sim.MoveGrab(mouse, NowMs());
@@ -225,6 +232,7 @@ namespace TransparentPet.Pet
             var child = sim.SplitOff(spawnCenter, childVel, ChildAreaFraction);
 
             var go = new GameObject("SlimeChild_" + (children.Count + 1));
+            go.layer = gameObject.layer; // 分身随主体同层（PetRefract 层才能进玻璃折射链路）
             go.AddComponent<MeshFilter>();
             var renderer = go.AddComponent<MeshRenderer>();
             renderer.sharedMaterial = bodyMaterial;
@@ -267,6 +275,9 @@ namespace TransparentPet.Pet
         /// <summary>当前质心屏幕位置（展厅标签绘制用；Start 之前为原点）</summary>
         public Vector2 ScreenPosition => sim != null ? sim.Centroid() : Vector2.zero;
 
+        /// <summary>物理模拟是否已就绪（Start 建好 SlimeSimulation 后为 true；管理器持久化据此跳过未就绪个体）</summary>
+        public bool PhysicsReady => sim != null;
+
         /// <summary>
         /// 展厅自动演示：以给定屏幕速度抛出。分裂是"撞侧墙触发"的，静置摆着看不出来，
         /// 需要给它一脚才会演出"撞墙散架 → 分身飘回融合"的完整过程。
@@ -299,13 +310,14 @@ namespace TransparentPet.Pet
         }
 
         /// <summary>
-        /// Unity 的 Input.mousePosition 原点在左下、Y 向上；
-        /// 工程物理与转换层统一用 Godot 语义（左上原点、Y 向下），此处翻转 Y。
+        /// 全局光标（左上原点、Y 向下，与工程物理层同系）。穿透态下
+        /// Input.mousePosition 会冻结，必须走 GetCursorPos（实测踩坑）。
         /// </summary>
         static Vector2 MouseScreenPos()
         {
-            var m = Input.mousePosition;
-            return new Vector2(m.x, Screen.height - m.y);
+            return NativeWindowStyles.TryGetCursorPosition(out var x, out var y)
+                ? new Vector2(x, y)
+                : new Vector2(-1000f, -1000f); // 取不到光标的兜底：落在屏幕外 = 无命中
         }
 
         void SyncCameraToScreen()
