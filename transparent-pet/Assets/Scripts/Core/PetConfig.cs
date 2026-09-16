@@ -66,9 +66,13 @@ namespace TransparentPet.Core
         public int[] glassSlimeKind = System.Array.Empty<int>();
 
         /// <summary>果冻软体各只的质心屏幕位置（左上原点，成对使用；PetManager 持有）。
-        /// 空数组 = 从未添加过该物种（默认 0 只，液态玻璃是交付默认物种）。</summary>
+        /// 空数组 = 该物种当前 0 只（用户删光也会落盘空数组，重启不复活）。</summary>
         public float[] softbodyX = System.Array.Empty<float>();
         public float[] softbodyY = System.Array.Empty<float>();
+
+        /// <summary>贴图史莱姆各只的中心屏幕位置（左上原点，成对使用；PetManager 持有）。</summary>
+        public float[] texturedX = System.Array.Empty<float>();
+        public float[] texturedY = System.Array.Empty<float>();
     }
 
     /// <summary>

@@ -125,6 +125,8 @@ namespace TransparentPet.Tests
                     glassSlimeKind = new[] { 0, 2, 1 },
                     softbodyX = new[] { 300f, 700f },
                     softbodyY = new[] { 350f, 360f },
+                    texturedX = new[] { 1100f },
+                    texturedY = new[] { 500f },
                 };
 
                 PetConfigStore.Save(config, path);
@@ -136,6 +138,9 @@ namespace TransparentPet.Tests
                 Assert.AreEqual(2, loaded.softbodyX.Length);
                 Assert.AreEqual(700f, loaded.softbodyX[1]);
                 Assert.AreEqual(360f, loaded.softbodyY[1]);
+                Assert.AreEqual(1, loaded.texturedX.Length);
+                Assert.AreEqual(1100f, loaded.texturedX[0]);
+                Assert.AreEqual(500f, loaded.texturedY[0]);
             }
             finally
             {
@@ -155,6 +160,8 @@ namespace TransparentPet.Tests
             // 空数组 = 从未保存过 → 管理器按"没有该物种"处理，绝不还原出垃圾位置
             Assert.AreEqual(0, loaded.softbodyX.Length);
             Assert.AreEqual(0, loaded.softbodyY.Length);
+            Assert.AreEqual(0, loaded.texturedX.Length);
+            Assert.AreEqual(0, loaded.texturedY.Length);
             Assert.AreEqual(0, loaded.glassSlimeX.Length);
         }
 
@@ -168,6 +175,17 @@ namespace TransparentPet.Tests
             // 液态玻璃固定在 0：设置变更 "add:0" 与旧配置都依赖这一约定
             Assert.AreEqual("glass", PetSpeciesCatalog.All[0].Id);
             Assert.AreEqual(0, PetSpeciesCatalog.IndexOf("glass"));
+        }
+
+        [Test]
+        public void SpeciesCatalog_ContainsFinalizedThreeSpecies()
+        {
+            // 用户拍板的"定稿三物种"：液态玻璃 / 贴图史莱姆 / 果冻软体并列共存，
+            // 谁也不删——顺序即物种索引（设置窗口 add:/remove: 依赖）
+            Assert.AreEqual(3, PetSpeciesCatalog.All.Count);
+            Assert.AreEqual("glass", PetSpeciesCatalog.All[0].Id);
+            Assert.AreEqual("textured", PetSpeciesCatalog.All[1].Id);
+            Assert.AreEqual("softbody", PetSpeciesCatalog.All[2].Id);
         }
 
         [Test]

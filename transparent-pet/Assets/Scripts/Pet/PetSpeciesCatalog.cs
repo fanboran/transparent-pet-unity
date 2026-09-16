@@ -30,11 +30,13 @@ namespace TransparentPet.Pet
     /// <summary>内置物种注册/查询（静态只读，参照 CharacterRegistry 的做法）。</summary>
     public static class PetSpeciesCatalog
     {
-        /// <summary>全部内置物种（新增物种在此追加）。下标 = 物种索引，勿重排。</summary>
+        /// <summary>全部内置物种（新增物种在此追加）。下标 = 物种索引，勿重排。
+        /// 用户拍板的"定稿三物种"：液态玻璃 / 贴图史莱姆 / 果冻软体并列共存。</summary>
         public static readonly IReadOnlyList<SpeciesDef> All = new List<SpeciesDef>
         {
-            new SpeciesDef { Id = "glass",    DisplayName = "液态玻璃", MaxCount = 3 },
-            new SpeciesDef { Id = "softbody", DisplayName = "果冻软体", MaxCount = 3 },
+            new SpeciesDef { Id = "glass",    DisplayName = "液态玻璃",   MaxCount = 3 },
+            new SpeciesDef { Id = "textured", DisplayName = "贴图史莱姆", MaxCount = 3 },
+            new SpeciesDef { Id = "softbody", DisplayName = "果冻软体",   MaxCount = 3 },
         };
 
         /// <summary>按 id 查下标；未命中返回 -1。</summary>

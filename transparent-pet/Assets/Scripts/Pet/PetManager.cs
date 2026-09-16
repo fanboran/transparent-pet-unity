@@ -43,11 +43,24 @@ namespace TransparentPet.Pet
             public Vector2 LastSaved;  // 上次持久化的质心位置
         }
 
+        class TexturedInstance
+        {
+            public TexturedPet Pet;
+            public Vector2 LastSaved;
+        }
+
         readonly List<SoftbodyInstance> softbodies = new();
-        float nextSaveTime; // 位置落盘节流（与液态玻璃同策略：≥1s 且有位移才写）
+        readonly List<TexturedInstance> textureds = new();
+        float nextSaveTime; // 位置落盘节流（与液态玻璃同策略：≥1s 且有变化才写）
+
+        /// <summary>贴图资源（Assets/Resources/PetSlime.png）懒加载缓存；加载失败保持 null 下次重试。</summary>
+        Texture2D petTexture;
 
         /// <summary>当前果冻软体数量（装配方/测试读取）。</summary>
         public int SoftbodyCount => softbodies.Count;
+
+        /// <summary>当前贴图史莱姆数量（装配方/测试读取）。</summary>
+        public int TexturedCount => textureds.Count;
 
         void Awake() => Instance = this;
 
@@ -57,11 +70,16 @@ namespace TransparentPet.Pet
                 Instance = null;
         }
 
-        void Start() => LoadSoftbodies();
+        void Start()
+        {
+            LoadTextureds();
+            LoadSoftbodies();
+        }
 
         void Update()
         {
             DrainManagerChanges();
+            SaveTexturedsIfNeeded();
             SaveSoftbodiesIfNeeded();
         }
 
@@ -83,7 +101,7 @@ namespace TransparentPet.Pet
             }
         }
 
-        /// <summary>按物种索引加一只；液态玻璃转发后端，软体本地创建。</summary>
+        /// <summary>按物种索引加一只；液态玻璃转发后端，贴图/软体本地创建。</summary>
         void Add(int species)
         {
             if (species == GlassSpeciesIndex)
@@ -91,6 +109,8 @@ namespace TransparentPet.Pet
                 (LiquidGlassPresence.Active as LiquidGlassController)?.AddSlime();
                 return;
             }
+            if (species == TexturedSpeciesIndex)
+                AddTextured();
             if (species == SoftbodySpeciesIndex)
                 AddSoftbody();
         }
@@ -103,8 +123,64 @@ namespace TransparentPet.Pet
                 (LiquidGlassPresence.Active as LiquidGlassController)?.RemoveSlime();
                 return;
             }
+            if (species == TexturedSpeciesIndex)
+                RemoveLastTextured();
             if (species == SoftbodySpeciesIndex)
                 RemoveLastSoftbody();
+        }
+
+        // ── 贴图史莱姆物种 ──
+
+        /// <summary>加一只贴图史莱姆：上一只右侧错开，超上限忽略。</summary>
+        void AddTextured()
+        {
+            var max = PetSpeciesCatalog.All[TexturedSpeciesIndex].MaxCount;
+            if (textureds.Count >= max)
+                return;
+
+            if (petTexture == null)
+            {
+                petTexture = Resources.Load<Texture2D>(PetTextureResourceName);
+                if (petTexture == null)
+                {
+                    Debug.LogError("[PetManager] Resources.Load 找不到 " + PetTextureResourceName + " 贴图，无法添加贴图史莱姆");
+                    return;
+                }
+            }
+
+            // 摆位：上一只右侧 380px；第一只放屏幕右中部（玻璃默认居中、软体偏左，三物种错开）
+            var anchor = textureds.Count > 0
+                ? textureds[textureds.Count - 1].LastSaved + new Vector2(SpawnGapPx, 0f)
+                : new Vector2(NativeScreen.GetWorkAreaWidth() * 0.65f,
+                              NativeScreen.GetWorkAreaBottomY() * 0.5f);
+            anchor += new Vector2(
+                Random.Range(-SpawnJitterPx, SpawnJitterPx),
+                Random.Range(-SpawnJitterPx, SpawnJitterPx));
+
+            textureds.Add(new TexturedInstance
+            {
+                Pet = CreateTextured(anchor),
+                LastSaved = anchor,
+            });
+        }
+
+        void RemoveLastTextured()
+        {
+            if (textureds.Count == 0)
+                return;
+            var last = textureds[textureds.Count - 1];
+            textureds.RemoveAt(textureds.Count - 1);
+            if (last.Pet != null)
+                Destroy(last.Pet.gameObject);
+        }
+
+        /// <summary>
+        /// 创建一只贴图史莱姆。挂场景根（绝不挂全屏 quad——它被拉到数十倍，后代全部
+        /// 等比爆炸，实测踩坑）；层用 PetRefract（进玻璃折射链路）。
+        /// </summary>
+        TexturedPet CreateTextured(Vector2 spawnPx)
+        {
+            return TexturedPet.Create(null, petTexture, spawnPx, PetMetrics.BaseFullWidthPx);
         }
 
         // ── 果冻软体物种 ──
@@ -184,6 +260,74 @@ namespace TransparentPet.Pet
 
         // ── 持久化（按只，位置数组）──
 
+        /// <summary>Resources 里的贴图资源名（Assets/Resources/PetSlime.png）</summary>
+        const string PetTextureResourceName = "PetSlime";
+
+        void LoadTextureds()
+        {
+            var config = PetConfigStore.Load();
+            if (config.texturedX == null || config.texturedY == null
+                || config.texturedX.Length != config.texturedY.Length
+                || config.texturedX.Length == 0)
+                return; // 从未保存过：默认 0 只（用户在设置里加几只就记几只）
+
+            if (petTexture == null)
+            {
+                petTexture = Resources.Load<Texture2D>(PetTextureResourceName);
+                if (petTexture == null)
+                {
+                    Debug.LogError("[PetManager] Resources.Load 找不到 " + PetTextureResourceName + "，贴图史莱姆恢复失败");
+                    return;
+                }
+            }
+
+            var max = PetSpeciesCatalog.All[TexturedSpeciesIndex].MaxCount;
+            var count = Mathf.Min(config.texturedX.Length, max);
+            for (var i = 0; i < count; i++)
+            {
+                var pos = new Vector2(config.texturedX[i], config.texturedY[i]);
+                textureds.Add(new TexturedInstance
+                {
+                    Pet = CreateTextured(pos),
+                    LastSaved = pos,
+                });
+            }
+        }
+
+        void SaveTexturedsIfNeeded()
+        {
+            if (Time.time < nextSaveTime)
+                return;
+
+            var config = PetConfigStore.Load();
+            config.texturedX = new float[textureds.Count];
+            config.texturedY = new float[textureds.Count];
+
+            var moved = false;
+            for (var i = 0; i < textureds.Count; i++)
+            {
+                var inst = textureds[i];
+                if (inst.Pet == null)
+                    return; // 场景卸载中（Unity 伪 null）：本帧不写
+
+                var pos = inst.Pet.ScreenPosPx;
+                config.texturedX[i] = pos.x;
+                config.texturedY[i] = pos.y;
+                if ((pos - inst.LastSaved).sqrMagnitude >= 25f)
+                {
+                    moved = true;
+                    inst.LastSaved = pos;
+                }
+            }
+
+            // 数量变化（含删到 0 只）必须落盘——否则"全部移除"重启后被旧数组复活
+            if (moved || textureds.Count != lastSavedTexturedCount)
+            {
+                PetConfigStore.Save(config);
+                lastSavedTexturedCount = textureds.Count;
+            }
+        }
+
         void LoadSoftbodies()
         {
             var config = PetConfigStore.Load();
@@ -240,17 +384,24 @@ namespace TransparentPet.Pet
                 }
             }
 
-            if (moved)
+            // 数量变化（含删到 0 只）必须落盘——否则"全部移除"重启后被旧数组复活；
+            // 位移超阈值也落盘（节流在方法入口）
+            if (moved || softbodies.Count != lastSavedSoftbodyCount)
+            {
                 PetConfigStore.Save(config);
+                lastSavedSoftbodyCount = softbodies.Count;
+            }
         }
 
         // ── 设置窗口快照（跨物种组装；LiquidGlassController 在无管理器场景才自己兜底）──
 
-        /// <summary>PetSpeciesCatalog 的液态玻璃下标（旧配置兼容，固定 0）。</summary>
-        const int GlassSpeciesIndex = 0;
+        /// <summary>物种索引（PetSpeciesCatalog 顺序，启动时解析；新增物种在此接创建分支）。</summary>
+        static readonly int GlassSpeciesIndex = PetSpeciesCatalog.IndexOf("glass");
+        static readonly int TexturedSpeciesIndex = PetSpeciesCatalog.IndexOf("textured");
+        static readonly int SoftbodySpeciesIndex = PetSpeciesCatalog.IndexOf("softbody");
 
-        /// <summary>PetSpeciesCatalog 的果冻软体下标。</summary>
-        const int SoftbodySpeciesIndex = 1;
+        int lastSavedTexturedCount = -1;  // 强制首轮落盘一次，确立数组存在
+        int lastSavedSoftbodyCount = -1;
 
         void OnSettingsOpenRequested(bool show)
         {
@@ -263,6 +414,7 @@ namespace TransparentPet.Pet
             for (var i = 0; i < PetSpeciesCatalog.All.Count; i++)
                 names[i] = PetSpeciesCatalog.All[i].DisplayName;
             counts[GlassSpeciesIndex] = glass != null ? glass.SlimeCount : 0;
+            counts[TexturedSpeciesIndex] = textureds.Count;
             counts[SoftbodySpeciesIndex] = softbodies.Count;
 
             var config = PetConfigStore.Load();

@@ -10,7 +10,7 @@
 ## 玩法
 
 - 常驻桌面：背景全透明、始终置顶、不抢焦点，鼠标落在宠物身上才可交互（几何命中：软体粒子邻近 / 玻璃 SDF），其余区域直接穿透到桌面
-- 双物种同屏：**液态玻璃**（默认物种，≤3 只，相邻 smin 液滴融合）与**果冻软体**（PBF 粒子，受重力、拎起会垂坠），原生设置窗口随时增删，位置按只记忆
+- 三物种同屏（用户拍板的"定稿三物种"）：**液态玻璃**（默认物种，≤3 只，相邻 smin 液滴融合）、**贴图史莱姆**（静态贴图 + 拖拽）与**果冻软体**（PBF 粒子，受重力、拎起会垂坠），原生设置窗口按物种随时增删，位置按只记忆
 - 拖拽抛掷：按住拖动，快甩松手走抛物线，落在任务栏上沿回弹、左右撞墙反弹（软体与液态玻璃同一套 `ThrowPhysics`）
 - 生命感：软体出生落下、拎起自然垂坠、落地按冲击压扁回弹；**趴在任务栏上每隔一阵连蹦两下**（全物种统一行为）；呼吸/拖动倾斜/戳反应等表现层见 V7 版本场景
 - 托盘菜单：设置（独立原生窗口：物种分组增删 / 总缩放 / 玻璃材质·折射·模糊·高光 / 抛射参数 / 置顶 / 开机自启）与退出
@@ -25,7 +25,7 @@
 | Win32 窗口互操作（`Core/`） | 透明 / 置顶 / 点击穿透（UniWinC 接入）；`SPI_GETWORKAREA` 工作区地面（自动扣除任务栏，落底不吃点击）；`Shell_NotifyIcon` 托盘 + 隐藏消息窗口 + 手写消息泵；托盘图标由 `LoadImageW` 从 exe 资源提取；注册表开机自启；JSON 配置持久化 |
 | 交互物理（`Pet/ThrowPhysics`） | 从 Godot 版 `drag_controller.gd` 逐行移植：拖拽速度滑动窗口 → 抛射初速（夹上下限）、重力、地面/墙壁反弹、接地摩擦；纯 C# 无场景依赖，NUnit 可直接实例化测试；软体与液态玻璃共用同一份 |
 | 空闲小蹦（`Pet/GroundIdleHop`） | 全物种统一的"趴地小蹦"状态机（纯逻辑、8 项单测）：落定趴在任务栏上后每隔随机 4~10s 连蹦两下；只回答"何时跳、跳多快"，施加方式由各物种自接——软体走 `SlimePbf.Hop` 全粒子冲量，玻璃走抛射初速 |
-| 多物种管理（`Pet/PetManager`+`PetSpeciesCatalog`+`PetMetrics`） | 物种注册表驱动：新增物种只需注册一条 + 接一个创建分支；物种平等——同一基准全宽与缩放档、同一交互契约（悬停自报 + `PetInputArbiter` 点击仲裁）、位置按物种按只持久化；液态玻璃转发槽位后端，果冻软体动态创建 |
+| 多物种管理（`Pet/PetManager`+`PetSpeciesCatalog`+`PetMetrics`） | 物种注册表驱动：新增物种只需注册一条 + 接一个创建分支；物种平等——同一基准全宽与缩放档、同一交互契约（悬停自报 + `PetInputArbiter` 点击仲裁）、位置按物种按只持久化；液态玻璃转发槽位后端，贴图史莱姆/果冻软体动态创建 |
 | 生命感表现（`Pet/PetLifeMath`+`PetLifeVisual`） | 逻辑位置与渲染变换分层：物理只读写逻辑位置，表现层在 `LateUpdate` 叠加呼吸/倾角/挤压——视觉装饰永不污染模拟；落地挤压用半隐式欧拉弹簧（欠阻尼 ζ≈0.27，1~2 次回弹过冲即“Q 弹”来源）；同一套数学被离线快照工具复用，保证“演示图 = 真实行为” |
 | 工程化 | 场景程序化生成（`SceneGenerator`）：不手写场景 YAML，克隆工程一条命令复原全部场景与图标；八个版本场景存档（`Assets/Scenes/Versions/`，index 0 = 交付默认）；**100 项 NUnit 测试**（物理/命中/软体/小蹦/配置/事件总线/表现数学） |
 
@@ -47,7 +47,7 @@
   -executeMethod TransparentPet.EditorTools.BuildPlayer.BuildWindows64
 ```
 
-编辑器内体验：Unity Hub 打开 `transparent-pet/`，打开 `Assets/Scenes/Versions/V9LiquidGlassDesktop/PetScene.unity`（交付默认：双物种 + 真桌面折射）直接 Play（透明/穿透行为需在构建产物中验证）；纯素材回退形态见 `V8LiquidGlass/PetScene.unity`。
+编辑器内体验：Unity Hub 打开 `transparent-pet/`，打开 `Assets/Scenes/Versions/V9LiquidGlassDesktop/PetScene.unity`（交付默认：三物种 + 真桌面折射）直接 Play（透明/穿透行为需在构建产物中验证）；纯素材回退形态见 `V8LiquidGlass/PetScene.unity`。
 
 ## 已知限制与故障处理
 
@@ -75,7 +75,7 @@ tools/           # 图标生成 / GIF 合成脚本（Python + Pillow）
 
 | 版本 | 形态 |
 |---|---|
-| **V9 LiquidGlassDesktop**（交付默认） | 真液态玻璃桌面版：抓屏隐形（`WDA_EXCLUDEFROMCAPTURE`）+ 折射真实桌面；**双物种管理**（原生设置窗口增删：液态玻璃 ≤3 / 果冻软体 ≤3，玻璃色调四档可选）；玻璃折射其他物种（PetRefract 层并入折射源，玻璃外直接可见）；液态玻璃投掷 + 全物种空闲小蹦 |
+| **V9 LiquidGlassDesktop**（交付默认） | 真液态玻璃桌面版：抓屏隐形（`WDA_EXCLUDEFROMCAPTURE`）+ 折射真实桌面；**三物种管理**（原生设置窗口按物种增删：液态玻璃 ≤3 / 贴图史莱姆 ≤3 / 果冻软体 ≤3，玻璃色调四档可选）；玻璃折射其他物种（PetRefract 层并入折射源，玻璃外直接可见）；液态玻璃投掷 + 全物种空闲小蹦 |
 | V8 LiquidGlass | 液态玻璃史莱姆：SDF 轮廓 + 折射/色散/菲涅尔/眩光（移植自 Godot 版液态玻璃演示），棋盘格素材只在玻璃内可见（V9 的素材回退形态） |
 | V7 LifeVisual | 烘焙贴图原样 + 生命感表现层（呼吸/倾斜/落地挤压/戳反应） |
 | V6 BakedTexture | 纯烘焙贴图版：PetSlime.png 原样显示，零着色器零表现层 |
