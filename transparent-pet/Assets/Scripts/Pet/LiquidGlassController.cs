@@ -17,6 +17,7 @@
 // 三个 shader 引用走序列化字段而非运行时 Shader.Find：运行时创建的材质
 // 不构成打包引用，不预置资产引用的话构建后 Find 会返回 null。
 // ============================================================================
+using Kirurobo;
 using TransparentPet.Core;
 using UnityEngine;
 
@@ -26,6 +27,20 @@ namespace TransparentPet.Pet
     public class LiquidGlassController : MonoBehaviour
     {
         public const float PixelsPerUnit = 100f;
+
+        /// <summary>玻璃包围盒四周边距（阴影带 + AA 余量，物理像素）。</summary>
+        public const float BoxMarginPx = 30f;
+
+        /// <summary>
+        /// V9 玻璃包围盒尺寸：史莱姆全宽 + 四周边距；高按 SDF 轮廓比例
+        ///（101:160，与 LiquidGlassSlimeSdf 常量同源）。
+        /// </summary>
+        public static Vector2 GlassBoxSize(float slimeWidthPx, float marginPx)
+        {
+            var aspect = (LiquidGlassSlimeSdf.SvgFloor - LiquidGlassSlimeSdf.SvgCeiling)
+                         / (LiquidGlassSlimeSdf.SvgHalfWidth * 2f);
+            return new Vector2(slimeWidthPx + marginPx * 2f, slimeWidthPx * aspect + marginPx * 2f);
+        }
 
         [Header("着色器（SceneGenerator 装配时赋值；空则运行时 Shader.Find 兜底）")]
         public Shader MainShader;
@@ -77,11 +92,25 @@ namespace TransparentPet.Pet
         [Header("调试视图（0=SDF 1=等高线 2=法线 9=主渲染）")]
         public int Step = 9;
 
+        [Header("抓屏隐形（V9 折射真实桌面的前置）")]
+        [Tooltip("对本窗口设 WDA_EXCLUDEFROMCAPTURE：录屏/截图中桌宠消失，换来抓屏画面不含自己")]
+        public bool CaptureInvisible = false;
+
+        [Header("V9 桌面折射（窗口收缩为玻璃包围盒 + 抓屏喂纹理）")]
+        [Tooltip("关闭 = V8 行为（全屏覆盖层 + 程序化棋盘格素材）；开启 = 折射窗口背后的真实桌面")]
+        public bool DesktopReflection = false;
+
+        [Tooltip("窗口互操作（SceneGenerator 从 WindowController 注入；拖拽移动窗口与抓屏定位必需）")]
+        public UniWindowController WindowController;
+
         // ── 运行时状态 ──
 
         Camera mainCamera;
         Material mainMat, bgMat, blurMat;
         RenderTexture bgRT, vBlurRT, hBlurRT;
+        Texture2D desktopTex;
+        byte[] desktopPixels;
+        System.IntPtr hwnd = System.IntPtr.Zero;
         Mesh quadMesh;
         readonly float[] blurWeights = new float[64];
         float lastBlurRadius = -1f;
@@ -89,11 +118,15 @@ namespace TransparentPet.Pet
 
         const float MinUserScale = 0.5f, MaxUserScale = 2.5f;
 
+        /// <summary>生效中的史莱姆全宽（px）——含用户缩放。</summary>
+        float ScaleValue => SlimeWidthPx * Mathf.Clamp(userScale, MinUserScale, MaxUserScale);
+
         /// <summary>逻辑屏幕位置（左上原点、Y 向下）——与其他宠物控制器同一坐标语义。</summary>
         Vector2 logicScreenPos;
 
         bool dragging;
         Vector2 dragGrabOffset;
+        bool captureInvisibleActive; // affinity 当前生效中（F11 可切换）
 
         // 位置自动保存（节流同 SvgPetController：移动超阈值且距上次 ≥1s）
         Vector2 lastSavedScreenPos;
@@ -141,6 +174,27 @@ namespace TransparentPet.Pet
             SyncCamera();
 
             var config = PetConfigStore.Load();
+
+            hwnd = NativeWindowStyles.FindCurrentProcessTopLevelWindow(requireVisible: false);
+
+            if (CaptureInvisible || config.captureInvisible)
+            {
+                // 只能由窗口所属进程自己调用（外部进程 ACCESS_DENIED），故在 Start 里设
+                var ok = hwnd != System.IntPtr.Zero && NativeDisplayAffinity.TryExcludeFromCapture(hwnd);
+                captureInvisibleActive = ok;
+                Debug.Log($"[LiquidGlass] 抓屏隐形: hwnd={hwnd} ok={ok}" +
+                          (ok ? "" : "（回退方案：抓屏画面将包含本窗口，折射退回程序化素材）"));
+            }
+
+            if (DesktopReflection)
+            {
+                // 窗口收缩形态：无边框（UniWinC 0.9.8 的无边框只在 fit-monitor 路径里处理）
+                if (hwnd != System.IntPtr.Zero)
+                    NativeWindowStyles.SetBorderless(hwnd);
+                else
+                    Debug.LogWarning("[LiquidGlass] 桌面折射未找到主窗口句柄，窗口收缩将不可用");
+            }
+
             userScale = Mathf.Clamp(config.petScale, MinUserScale, MaxUserScale);
 
             logicScreenPos = config.petScreenX >= 0f
@@ -149,6 +203,8 @@ namespace TransparentPet.Pet
                               NativeScreen.GetWorkAreaBottomY() * 0.5f);
             lastSavedScreenPos = logicScreenPos;
             nextSaveTime = Time.time + 1f;
+
+            ApplyWindowPlacement();
         }
 
         void Update() => Tick();
@@ -167,13 +223,30 @@ namespace TransparentPet.Pet
             SyncQuadToCamera();
             HandleInput();
             UpdateSave();
+            ApplyWindowPlacement();
 
             RenderPipeline();
+        }
+
+        /// <summary>
+        /// V9：窗口跟随玻璃（窗口中心 = 玻璃中心）。拖拽与缩放都会走到这里；
+        /// 非 V9（全屏覆盖层）无窗口几何可言，直接返回。
+        /// </summary>
+        void ApplyWindowPlacement()
+        {
+            if (!DesktopReflection || WindowController == null)
+                return;
+            var box = GlassBoxSize(ScaleValue, BoxMarginPx);
+            WindowController.windowSize = box;
+            WindowController.windowPosition = new Vector2(
+                logicScreenPos.x - box.x * 0.5f, logicScreenPos.y - box.y * 0.5f);
         }
 
         void OnDestroy()
         {
             ReleaseTargets();
+            if (desktopTex != null)
+                Destroy(desktopTex);
             if (quadMesh != null)
                 Destroy(quadMesh);
         }
@@ -215,10 +288,21 @@ namespace TransparentPet.Pet
 
         void HandleInput()
         {
-            var mouseUnity = Input.mousePosition; // 左下原点、Y 向上
-            var mouseTop = new Vector2(mouseUnity.x, mainCamera.pixelHeight - mouseUnity.y); // 左上原点
+            var mouseUnity = Input.mousePosition; // 客户区相对、左下原点、Y 向上
+            // 换算为屏幕坐标（左上原点）：V9 收缩窗口需叠加窗口位置；
+            // 数学上"窗口移动 δ → 局部坐标反向变化 δ"相互抵消，拖拽无自激
+            Vector2 mouseTop;
+            if (DesktopReflection && WindowController != null)
+            {
+                var wp = WindowController.windowPosition;
+                mouseTop = new Vector2(wp.x + mouseUnity.x, wp.y + mainCamera.pixelHeight - mouseUnity.y);
+            }
+            else
+            {
+                mouseTop = new Vector2(mouseUnity.x, mainCamera.pixelHeight - mouseUnity.y);
+            }
 
-            var widthPx = SlimeWidthPx * Mathf.Clamp(userScale, MinUserScale, MaxUserScale);
+            var widthPx = ScaleValue;
             var onSlime = LiquidGlassSlimeSdf.Hits(
                 mouseTop.x, mouseTop.y, logicScreenPos.x, logicScreenPos.y, widthPx);
 
@@ -242,9 +326,24 @@ namespace TransparentPet.Pet
             // 安全网退出：与托盘"退出"同一条 HardExit 链路
             if (Input.GetKeyDown(KeyCode.Escape))
                 HardExit.Now();
+
+            // 抓屏隐形开关（验收/演示用，正式入口后续进设置面板）：
+            // 关 = 桌宠出现在录屏/截图里，但玻璃会采样到自己（镜厅式自反馈）
+            if (Input.GetKeyDown(KeyCode.F11) && hwnd != System.IntPtr.Zero)
+            {
+                captureInvisibleActive = !captureInvisibleActive;
+                var ok = captureInvisibleActive
+                    ? NativeDisplayAffinity.TryExcludeFromCapture(hwnd)
+                    : NativeDisplayAffinity.Restore(hwnd);
+                Debug.Log($"[LiquidGlass] F11 切换抓屏隐形 → {captureInvisibleActive} ok={ok}");
+            }
         }
 
-        void OnScaleChanged(float scale) => userScale = Mathf.Clamp(scale, MinUserScale, MaxUserScale);
+        void OnScaleChanged(float scale)
+        {
+            userScale = Mathf.Clamp(scale, MinUserScale, MaxUserScale);
+            ApplyWindowPlacement(); // V9：缩放联动窗口包围盒尺寸
+        }
 
         void UpdateSave()
         {
@@ -270,28 +369,37 @@ namespace TransparentPet.Pet
 
             UpdateBlurWeights();
 
-            // 1) 程序化素材 → bgRT
-            bgMat.SetFloat("_BgType", BgType);
-            bgMat.SetFloat("_BgTextureReady", BgTexture != null ? 1f : 0f);
-            if (BgTexture != null)
-            {
-                bgMat.SetTexture("_BgTexture", BgTexture);
-                bgMat.SetFloat("_BgTextureRatio", (float)BgTexture.width / BgTexture.height);
-            }
-            bgMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
-            Graphics.Blit(Texture2D.whiteTexture, bgRT, bgMat);
+            // 1) 折射源：V9 优先抓窗口背后的真实桌面（依赖抓屏隐形，见 NativeScreenCapture）；
+            //    未开启 / 抓屏失败时回退 V8 程序化素材
+            Texture reflectionSource = null;
+            if (DesktopReflection && TryUpdateDesktopTexture(w, h))
+                reflectionSource = desktopTex;
 
-            // 2) 分离式高斯模糊：bgRT →(竖)→ vRT →(横)→ hRT
+            if (reflectionSource == null)
+            {
+                bgMat.SetFloat("_BgType", BgType);
+                bgMat.SetFloat("_BgTextureReady", BgTexture != null ? 1f : 0f);
+                if (BgTexture != null)
+                {
+                    bgMat.SetTexture("_BgTexture", BgTexture);
+                    bgMat.SetFloat("_BgTextureRatio", (float)BgTexture.width / BgTexture.height);
+                }
+                bgMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
+                Graphics.Blit(Texture2D.whiteTexture, bgRT, bgMat);
+                reflectionSource = bgRT;
+            }
+
+            // 2) 分离式高斯模糊：source →(竖)→ vRT →(横)→ hRT
             blurMat.SetFloat("_Vertical", 1f);
             blurMat.SetFloat("_BlurRadius", BlurRadius);
             blurMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
-            Graphics.Blit(bgRT, vBlurRT, blurMat);
+            Graphics.Blit(reflectionSource, vBlurRT, blurMat);
             blurMat.SetFloat("_Vertical", 0f);
             Graphics.Blit(vBlurRT, hBlurRT, blurMat);
 
             // 3) 主合成参数（每帧全量推送，与 Godot update_all_uniforms 同策略）
             mainMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
-            mainMat.SetTexture("_Bg", bgRT);
+            mainMat.SetTexture("_Bg", reflectionSource);
             mainMat.SetTexture("_BlurredBg", hBlurRT);
             mainMat.SetFloat("_RefThickness", RefThickness);
             mainMat.SetFloat("_RefFactor", RefFactor);
@@ -312,11 +420,14 @@ namespace TransparentPet.Pet
             mainMat.SetFloat("_ShadowFactor", ShadowFactor);
             mainMat.SetInt("_Step", Step);
 
-            // 物品槽位：目前只有一只史莱姆。shader 端 SDF 坐标系为 y 向下（top-origin，
-            // Godot 原生语义），与逻辑坐标一致，直接传即可
+            // 物品槽位：目前只有一只史莱姆。shader 端 SDF 坐标系为 y 向下（top-origin）。
+            // V9：窗口中心 = 玻璃中心（固定在窗口正中，跟随靠移动窗口）；V8：全屏坐标直接传
+            var itemCenter = DesktopReflection
+                ? new Vector2(w * 0.5f, h * 0.5f)
+                : new Vector2(logicScreenPos.x, logicScreenPos.y);
             var itemPositions = new[]
             {
-                new Vector4(logicScreenPos.x, logicScreenPos.y, 0, 0),
+                new Vector4(itemCenter.x, itemCenter.y, 0, 0),
                 Vector4.zero, Vector4.zero
             };
             mainMat.SetVectorArray("_ItemPositions", itemPositions);
@@ -334,6 +445,40 @@ namespace TransparentPet.Pet
             bgRT = NewTarget(w, h);
             vBlurRT = NewTarget(w, h);
             hBlurRT = NewTarget(w, h);
+        }
+
+        /// <summary>
+        /// 抓窗口矩形背后的桌面 → desktopTex（BGRA 直传，见 NativeScreenCapture 行序契约）。
+        /// 返回 false = 未就绪（无句柄/尺寸与渲染目标不一致/抓屏失败），调用方回退程序化素材。
+        /// </summary>
+        bool TryUpdateDesktopTexture(int w, int h)
+        {
+            if (hwnd == System.IntPtr.Zero)
+                return false;
+
+            if (!NativeScreenCapture.TryGetWindowRect(hwnd, out var x, out var y, out var ww, out var hh))
+                return false;
+            if (ww != w || hh != h)
+                return false; // 窗口矩形与渲染目标不一致（边框残留/DPI 差异）时先不喂，避免错位折射
+
+            if (desktopTex == null || desktopTex.width != w || desktopTex.height != h)
+            {
+                if (desktopTex != null)
+                    Destroy(desktopTex);
+                desktopTex = new Texture2D(w, h, TextureFormat.BGRA32, false)
+                {
+                    filterMode = FilterMode.Bilinear,
+                    wrapMode = TextureWrapMode.Clamp
+                };
+                desktopPixels = new byte[w * h * 4];
+            }
+
+            if (!NativeScreenCapture.TryCaptureRegion(x, y, w, h, desktopPixels))
+                return false;
+
+            desktopTex.SetPixelData(desktopPixels, 0);
+            desktopTex.Apply(false, false);
+            return true;
         }
 
         static RenderTexture NewTarget(int w, int h)

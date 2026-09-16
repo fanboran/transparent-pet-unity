@@ -50,6 +50,11 @@ namespace TransparentPet.EditorTools
             /// 史莱姆形状 SDF + 折射/色散/菲涅尔/眩光，可拖拽、命中由 CPU 侧 SDF 判定
             /// （LiquidGlassController / LiquidGlassSlimeSdf / LiquidGlass.shader）</summary>
             LiquidGlass,
+
+            /// <summary>真液态玻璃桌面版（V9）：窗口收缩为玻璃包围盒 + 抓屏隐形
+            /// （WDA_EXCLUDEFROMCAPTURE），折射窗口背后的真实桌面；代价是录屏/截图中
+            /// 桌宠隐形（config.captureInvisible 可关，关后回退程序化素材）</summary>
+            LiquidGlassDesktop,
         }
 
         /// <summary>全部保留版本：路径 + 类型 + 行为语义说明（新版本在表尾追加）。</summary>
@@ -69,6 +74,8 @@ namespace TransparentPet.EditorTools
                 "V2 · 第一个流体物理版本（PBF + 等值线 mesh 渲染）：落定关重力漂浮，拉扯过猛时轮廓断裂成块（碎成渣）"),
             ("Assets/Scenes/Versions/V8LiquidGlass/PetScene.unity", PetKind.LiquidGlass, false,
                 "V8 · 液态玻璃版：史莱姆形状 SDF 液态玻璃，折射/色散/菲涅尔/眩光（移植自 Godot 液态玻璃演示；棋盘格素材只在玻璃内可见，玻璃外保持透明）"),
+            ("Assets/Scenes/Versions/V9LiquidGlassDesktop/PetScene.unity", PetKind.LiquidGlassDesktop, false,
+                "V9 · 真液态玻璃桌面版：窗口收缩为玻璃包围盒，折射窗口背后的真实桌面（依赖抓屏隐形，录屏/截图中桌宠不可见；config.captureInvisible 可关）"),
         };
 
         const string SlimeMaterialPath = "Assets/Art/Pet/SlimeMat.mat";             // Slime.shader（SVG 版）
@@ -164,17 +171,26 @@ namespace TransparentPet.EditorTools
 
             // 宠物本体：按版本类型组装
             var petGo = new GameObject("Pet");
-            AddPetComponents(petGo, kind, hoverMode);
+
+            // 窗口互操作先于宠物装配创建：液态玻璃桌面版需要把 UniWinC 引用注入控制器
+            var windowGo = new GameObject("WindowController");
+            var windowController = windowGo.AddComponent<UniWindowController>();
+            var windowSetup = windowGo.AddComponent<PetWindowSetup>();
+
+            AddPetComponents(petGo, kind, hoverMode, windowController);
+
+            // V9：窗口收缩为玻璃包围盒（不再全屏覆盖层）
+            if (kind == PetKind.LiquidGlassDesktop)
+            {
+                var so = new SerializedObject(windowSetup);
+                so.FindProperty("FitToMonitor").boolValue = false;
+                so.ApplyModifiedProperties();
+            }
 
             // UI：设置面板 + HUD（IMGUI，透明窗口上自带 alpha → 面板区域自动可交互）
             var uiGo = new GameObject("PetUI");
             uiGo.AddComponent<SettingsPanel>();
             uiGo.AddComponent<HudController>();
-
-            // 窗口互操作：UniWinC 透明/置顶/穿透 + 本项目的任务栏隐藏/托盘
-            var windowGo = new GameObject("WindowController");
-            windowGo.AddComponent<UniWindowController>();
-            windowGo.AddComponent<PetWindowSetup>();
 
             // SaveScene 对不存在的目录会"静默失败"（日志成功、磁盘无文件）——先建目录
             var fullPath = System.IO.Path.GetFullPath(scenePath);
@@ -186,7 +202,8 @@ namespace TransparentPet.EditorTools
         /// 按版本类型给宠物对象装配组件——版本场景与展厅共用，保证"展厅里看到的就是
         /// 各版本场景里的同一套实现"（避免两处装配漂移）。
         /// </summary>
-        static void AddPetComponents(GameObject petGo, PetKind kind, bool hoverMode)
+        static void AddPetComponents(GameObject petGo, PetKind kind, bool hoverMode,
+            UniWindowController windowController = null)
         {
             switch (kind)
             {
@@ -263,6 +280,20 @@ namespace TransparentPet.EditorTools
                     glass.MainShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassShaderPath);
                     glass.BgShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBgShaderPath);
                     glass.BlurShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBlurShaderPath);
+                    break;
+                }
+                case PetKind.LiquidGlassDesktop:
+                {
+                    // V9 真液态玻璃桌面版：窗口收缩 + 抓屏隐形 + 折射真实桌面
+                    petGo.AddComponent<MeshFilter>();
+                    petGo.AddComponent<MeshRenderer>();
+                    var glass = petGo.AddComponent<LiquidGlassController>();
+                    glass.MainShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassShaderPath);
+                    glass.BgShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBgShaderPath);
+                    glass.BlurShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBlurShaderPath);
+                    glass.DesktopReflection = true;
+                    glass.CaptureInvisible = true;
+                    glass.WindowController = windowController;
                     break;
                 }
             }

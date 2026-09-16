@@ -52,6 +52,10 @@ namespace TransparentPet.Core
 
         /// <summary>是否已展示过首次启动引导（HUD 提示只出现一次）</summary>
         public bool introShown = false;
+
+        /// <summary>抓屏隐形（液态玻璃折射真实桌面的前置）：本窗口设
+        /// WDA_EXCLUDEFROMCAPTURE，代价是录屏/直播/截图里桌宠消失</summary>
+        public bool captureInvisible = false;
     }
 
     /// <summary>

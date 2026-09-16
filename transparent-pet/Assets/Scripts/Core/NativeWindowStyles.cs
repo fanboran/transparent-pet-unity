@@ -13,7 +13,10 @@ namespace TransparentPet.Core
     public static class NativeWindowStyles
     {
         const int GWL_EXSTYLE = -20;
+        const int GWL_STYLE = -16;
         const long WS_EX_TOOLWINDOW = 0x00000080L;
+        const uint WS_POPUP = 0x80000000u;
+        const uint WS_VISIBLE = 0x10000000u;
         const uint GW_OWNER = 4;
         const uint SWP_NOSIZE = 0x0001;
         const uint SWP_NOMOVE = 0x0002;
@@ -210,6 +213,38 @@ namespace TransparentPet.Core
             SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             return true;
+        }
+
+        /// <summary>
+        /// 去边框（WS_POPUP）——V9 液态玻璃"窗口收缩为玻璃包围盒"形态用。
+        /// UniWinC 0.9.8 的无边框只在 shouldFitMonitor 路径里处理，收缩形态拿不到，这里补齐。幂等。
+        /// </summary>
+        public static bool SetBorderless(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero)
+                return false;
+
+            long style = GetStyle(hWnd);
+            if ((style & WS_POPUP) != 0)
+                return true;
+
+            SetStyle(hWnd, (long)(WS_POPUP | WS_VISIBLE) | (style & 0xFFFFFFFFu));
+            SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            return true;
+        }
+
+        static long GetStyle(IntPtr hWnd) =>
+            IntPtr.Size == 8
+                ? GetWindowLongPtr64(hWnd, GWL_STYLE).ToInt64()
+                : GetWindowLong32(hWnd, GWL_STYLE);
+
+        static void SetStyle(IntPtr hWnd, long style)
+        {
+            if (IntPtr.Size == 8)
+                SetWindowLongPtr64(hWnd, GWL_STYLE, new IntPtr(style));
+            else
+                SetWindowLong32(hWnd, GWL_STYLE, (int)style);
         }
     }
 }
