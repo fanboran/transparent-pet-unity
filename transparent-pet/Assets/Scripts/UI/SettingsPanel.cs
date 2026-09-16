@@ -44,11 +44,13 @@ namespace TransparentPet.UI
         /// <summary>面板显隐。静态：托盘等任意处可直接开关，也响应 SettingsPanelToggleRequested 事件。</summary>
         public static bool Visible { get; set; }
 
+        /// <summary>面板矩形（可拖动；首次显示时摆在右上角）。</summary>
+        Rect panelRect = Rect.zero;
+
         PetConfig config;         // 工作副本：UI 唯一读写对象，变更经 Commit 落盘广播
         bool autoStart;           // 开机自启的 UI 态（真值在注册表，由 NativeStartup 读写）
-        GUIStyle titleStyle, sectionStyle, hintStyle, valueStyle;
+        GUIStyle titleStyle, sectionStyle, hintStyle, valueStyle, toggleStyle;
         GUIStyle panelStyle, buttonStyle, smallButtonStyle;
-        Texture2D roundedTex;
         bool stylesBuilt;         // GUIStyle 依赖 GUI.skin，只能在 OnGUI 期间构造一次
 
         void Start()
@@ -69,6 +71,8 @@ namespace TransparentPet.UI
         /// <summary>
         /// 悬停上报：窗口层据"指针下有无可交互内容"决定整窗穿透，面板不在宠物命中
         /// 判定里，必须自己登记。全局光标取位（穿透态下 mousePosition 冻结，见文件头）。
+        /// 坐标契约：GetCursorPos 与 GUI 矩形同为左上原点——不要再做 Unity 式 Y 翻转
+        /// （翻转后判定点镜像到屏幕对角，穿透永不解除，实测踩坑）。
         /// </summary>
         void Update()
         {
@@ -77,8 +81,7 @@ namespace TransparentPet.UI
 
             if (NativeWindowStyles.TryGetCursorPosition(out var cx, out var cy))
             {
-                var guiPoint = new Vector2(cx, Screen.height - cy);
-                if (PanelRect().Contains(guiPoint))
+                if (panelRect.Contains(new Vector2(cx, cy)))
                     PointerHover.ReportHover(Time.frameCount);
             }
         }
@@ -92,10 +95,14 @@ namespace TransparentPet.UI
 
             BuildStyles();
 
-            GUI.Box(PanelRect(), GUIContent.none, panelStyle);
+            if (panelRect == Rect.zero)
+                panelRect = new Rect(Screen.width - PanelWidth - ScreenMargin, ScreenMargin, PanelWidth, PanelHeight);
 
-            GUILayout.BeginArea(PanelRect());
+            panelRect = GUI.Window(9721, panelRect, DrawPanelContent, GUIContent.none, panelStyle);
+        }
 
+        void DrawPanelContent(int windowId)
+        {
             GUILayout.Space(10);
             GUILayout.Label("液态玻璃史莱姆", titleStyle);
             GUILayout.Label("设置即时生效，位置自动记忆", hintStyle);
@@ -129,7 +136,7 @@ namespace TransparentPet.UI
             GUILayout.Space(2);
             GUILayout.Label("系统", sectionStyle);
 
-            var invisible = glass != null && GUILayout.Toggle(glass.IsCaptureInvisible, "录屏/截图中隐藏（折射真实桌面）");
+            var invisible = glass != null && GUILayout.Toggle(glass.IsCaptureInvisible, "录屏/截图中隐藏（折射真实桌面）", toggleStyle);
             if (glass != null && invisible != glass.IsCaptureInvisible)
             {
                 glass.SetCaptureInvisible(invisible);
@@ -137,14 +144,14 @@ namespace TransparentPet.UI
                 CommitSavedOnly();
             }
 
-            var onTop = GUILayout.Toggle(config.alwaysOnTop, "窗口始终置顶");
+            var onTop = GUILayout.Toggle(config.alwaysOnTop, "窗口始终置顶", toggleStyle);
             if (onTop != config.alwaysOnTop)
             {
                 config.alwaysOnTop = onTop;
                 Commit(EventTopics.AlwaysOnTopChanged, onTop);
             }
 
-            var autoStartNew = GUILayout.Toggle(autoStart, "开机自启");
+            var autoStartNew = GUILayout.Toggle(autoStart, "开机自启", toggleStyle);
             if (autoStartNew != autoStart)
             {
                 autoStart = autoStartNew;
@@ -157,7 +164,8 @@ namespace TransparentPet.UI
             if (GUILayout.Button("关 闭", buttonStyle))
                 Visible = false;
 
-            GUILayout.EndArea();
+            // 放在末尾：标题带按下即拖动整个面板（先于其他控件会吃掉它们的点击）
+            GUI.DragWindow(new Rect(0, 0, panelRect.width, 30f));
         }
 
         // ── 区块绘制 ──
@@ -221,11 +229,12 @@ namespace TransparentPet.UI
                 return;
             stylesBuilt = true;
 
-            roundedTex = MakeRoundedTexture(48, 14);
+            var panelTex = MakeRoundedTexture(48, 14, PanelBg);
+            var buttonTex = MakeRoundedTexture(48, 12, new Color(1f, 1f, 1f, 0.92f));
 
             panelStyle = new GUIStyle
             {
-                normal = { background = roundedTex },
+                normal = { background = panelTex },
                 border = new RectOffset(14, 14, 14, 14),
                 padding = new RectOffset(16, 16, 6, 12),
             };
@@ -236,10 +245,10 @@ namespace TransparentPet.UI
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
             };
-            buttonStyle.normal.background = roundedTex;
-            buttonStyle.hover.background = roundedTex;
-            buttonStyle.active.background = roundedTex;
-            buttonStyle.border = new RectOffset(14, 14, 10, 10);
+            buttonStyle.normal.background = buttonTex;
+            buttonStyle.hover.background = buttonTex;
+            buttonStyle.active.background = buttonTex;
+            buttonStyle.border = new RectOffset(12, 12, 10, 10);
             buttonStyle.padding = new RectOffset(0, 0, 6, 6);
 
             smallButtonStyle = new GUIStyle(buttonStyle) { fontSize = 12, fontStyle = FontStyle.Normal };
@@ -249,7 +258,6 @@ namespace TransparentPet.UI
                 fontSize = 20,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
-                richText = true,
             };
             titleStyle.normal.textColor = Accent;
 
@@ -262,16 +270,29 @@ namespace TransparentPet.UI
             hintStyle = new GUIStyle(GUI.skin.label) { fontSize = 11 };
             hintStyle.normal.textColor = HintColor;
             hintStyle.wordWrap = true;
+
+            // Toggle 默认黑字在深色面板上不可读，各状态统一提亮
+            toggleStyle = new GUIStyle(GUI.skin.toggle);
+            toggleStyle.normal.textColor = Color.white;
+            toggleStyle.hover.textColor = Color.white;
+            toggleStyle.active.textColor = Color.white;
+            toggleStyle.focused.textColor = Color.white;
+            toggleStyle.onNormal.textColor = Color.white;
+            toggleStyle.onHover.textColor = Color.white;
+            toggleStyle.onActive.textColor = Color.white;
+            toggleStyle.onFocused.textColor = Color.white;
+            toggleStyle.fontSize = 13;
         }
 
-        /// <summary>运行时生成圆角白纹理（供 9-slice；着色靠 GUI.backgroundColor/color 相乘）。</summary>
-        static Texture2D MakeRoundedTexture(int size, int radius)
+        /// <summary>运行时生成圆角纹理（供 9-slice 切片；带 1px 羽化边缘）。</summary>
+        static Texture2D MakeRoundedTexture(int size, int radius, Color fill)
         {
             var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
             var pixels = new Color32[size * size];
             var r = (float)radius;
             var cx = size - r - 0.5f;
             var cy = cx;
+            var f = (Color32)fill;
             for (var y = 0; y < size; y++)
             {
                 for (var x = 0; x < size; x++)
@@ -281,19 +302,13 @@ namespace TransparentPet.UI
                     var dy = Mathf.Max(cy - y, y - cy, 0);
                     var dist = Mathf.Sqrt(dx * dx + dy * dy);
                     var a = Mathf.Clamp01(r - dist + 1f);
-                    var alpha = (byte)(a * 255);
-                    pixels[y * size + x] = new Color32(255, 255, 255, alpha);
+                    var alpha = (byte)(a * f.a * 255f);
+                    pixels[y * size + x] = new Color32(f.r, f.g, f.b, alpha);
                 }
             }
             tex.SetPixels32(pixels);
             tex.Apply(false, true);
             return tex;
-        }
-
-        /// <summary>右上角面板矩形（液态玻璃版内容固定，高度为常量）。</summary>
-        Rect PanelRect()
-        {
-            return new Rect(Screen.width - PanelWidth - ScreenMargin, ScreenMargin, PanelWidth, PanelHeight);
         }
 
         // ── 变更提交 ──
