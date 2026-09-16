@@ -39,6 +39,15 @@ namespace TransparentPet.Pet
         /// <summary>史莱姆上限：与 shader 的 MAX_ITEMS 槽位数一致。</summary>
         public const int MaxSlimes = 3;
 
+        /// <summary>玻璃色调预设（原味 = 不着色，保持纯玻璃观感；其余为可选彩色玻璃）。</summary>
+        public static readonly (string Name, Color Color, float Strength)[] KindPresets =
+        {
+            ("原味", new Color(0.9f, 0.95f, 1f), 0f),
+            ("蓝",   new Color(0.16f, 0.48f, 0.92f), 0.25f),
+            ("绿",   new Color(0.22f, 0.75f, 0.40f), 0.25f),
+            ("紫",   new Color(0.62f, 0.32f, 0.88f), 0.25f),
+        };
+
         [Header("着色器（SceneGenerator 装配时赋值；空则运行时 Shader.Find 兜底）")]
         public Shader MainShader;
         public Shader BgShader;
@@ -200,15 +209,6 @@ namespace TransparentPet.Pet
 
         bool configTopmost = true; // 窗口置顶当前值（原生窗口勾选回显用）
 
-        /// <summary>设置全部史莱姆的种类（原生窗口"种类"按钮 → 应用到所有只）。</summary>
-        public void SetAllKinds(int kind)
-        {
-            kind = Mathf.Clamp(kind, 0, CharacterRegistry.All.Count - 1);
-            foreach (var s in slimes)
-                s.kind = kind;
-            UpdateSave();
-        }
-
         /// <summary>
         /// 主线程消费原生设置窗口的变更队列（Unity API 禁止跨线程，见 NativeSettingsWindow）。
         /// </summary>
@@ -339,13 +339,22 @@ namespace TransparentPet.Pet
         public int KindOf(int index) =>
             (index >= 0 && index < slimes.Count) ? slimes[index].kind : 0;
 
-        /// <summary>设置第 index 只的种类（CharacterRegistry.All 下标，越界回退 0）。</summary>
+        /// <summary>设置第 index 只的种类（KindPresets 下标，越界回退 0 = 原味）。</summary>
         public void SetKind(int index, int kind)
         {
             if (index < 0 || index >= slimes.Count)
                 return;
-            slimes[index].kind = Mathf.Clamp(kind, 0, CharacterRegistry.All.Count - 1);
+            slimes[index].kind = Mathf.Clamp(kind, 0, KindPresets.Length - 1);
             UpdateSave(); // 立即持久化
+        }
+
+        /// <summary>设置全部史莱姆的种类（设置窗口"种类"按钮目标）。</summary>
+        public void SetAllKinds(int kind)
+        {
+            kind = Mathf.Clamp(kind, 0, KindPresets.Length - 1);
+            foreach (var s in slimes)
+                s.kind = kind;
+            UpdateSave();
         }
 
         /// <summary>抓屏隐形开关（设置面板/F11 共用入口）。开启有代价：录屏/截图中桌宠消失。</summary>
@@ -383,7 +392,7 @@ namespace TransparentPet.Pet
                 {
                     var pos = ClampToWorkArea(new Vector2(config.glassSlimeX[i], config.glassSlimeY[i]));
                     var kind = (config.glassSlimeKind != null && i < config.glassSlimeKind.Length)
-                        ? Mathf.Clamp(config.glassSlimeKind[i], 0, CharacterRegistry.All.Count - 1)
+                        ? Mathf.Clamp(config.glassSlimeKind[i], 0, KindPresets.Length - 1)
                         : 0;
                     slimes.Add(new Slime { pos = pos, lastSaved = pos, kind = kind });
                 }
@@ -616,8 +625,8 @@ namespace TransparentPet.Pet
                 widths[i] = live ? SlimeWidthPx : 0f;
                 scales[i] = live ? Mathf.Clamp(userScale, MinUserScale, MaxUserScale) : 0f;
                 enabled[i] = live ? 1f : 0f;
-                var baseColor = live ? CharacterRegistry.All[slimes[i].kind].GlassColor : Color.white;
-                tints[i] = new Vector4(baseColor.r, baseColor.g, baseColor.b, 0.25f); // a = 着色强度
+                var preset = live ? KindPresets[Mathf.Clamp(slimes[i].kind, 0, KindPresets.Length - 1)] : KindPresets[0];
+                tints[i] = new Vector4(preset.Color.r, preset.Color.g, preset.Color.b, preset.Strength);
             }
             mainMat.SetVectorArray("_ItemPositions", positions);
             mainMat.SetFloatArray("_ItemWidths", widths);

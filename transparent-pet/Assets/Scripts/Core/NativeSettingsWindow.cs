@@ -166,7 +166,7 @@ namespace TransparentPet.Core
         static IntPtr[] hKindButtons = new IntPtr[3];
         static IntPtr hChkInvisible, hChkTopmost, hChkAutostart;
         static IntPtr hTrackScale, hTrackRefract, hTrackDisp, hTrackBlur;
-        static string[] kindNames = { "蓝", "绿", "紫" };
+        static string[] kindNames = { "原味", "蓝", "绿", "紫" };
         static int lastKind = -1;
         static int lastCount = -1;
         static float lastSentScale = float.NaN, lastSentRefract = float.NaN,
@@ -194,8 +194,8 @@ namespace TransparentPet.Core
             CreateControl("BUTTON", "−  移除", WS_CHILD_VIS | BS_PUSHBUTTON, 150, 32, 92, 28, IDC_REMOVE);
             CreateControl("BUTTON", "+  添加", WS_CHILD_VIS | BS_PUSHBUTTON, 250, 32, 92, 28, IDC_ADD);
             hKindText = CreateControl("STATIC", "种类:", WS_CHILD_VIS | SS_LEFT, 24, 70, 60, 22, IDC_TXT_KIND);
-            for (var i = 0; i < 3; i++)
-                hKindButtons[i] = CreateControl("BUTTON", KindName(i), WS_CHILD_VIS | BS_PUSHBUTTON, 90 + i * 84, 66, 80, 28, IDC_KIND0 + i);
+            for (var i = 0; i < 4; i++)
+                hKindButtons[i] = CreateControl("BUTTON", KindName(i), WS_CHILD_VIS | BS_PUSHBUTTON, 84 + i * 66, 66, 62, 28, IDC_KIND0 + i);
 
             CreateControl("BUTTON", "玻璃观感", WS_CHILD_VIS | BS_GROUPBOX, 10, 114, 340, 210, 0);
             hScaleText = CreateControl("STATIC", "总缩放: 1.00", WS_CHILD_VIS | SS_LEFT, 24, 140, 200, 22, IDC_TXT_SCALE);
@@ -222,14 +222,14 @@ namespace TransparentPet.Core
                 SendMessageW(child, 0x0030 /*WM_SETFONT*/, hFont, (IntPtr)1);
                 return true;
             }, IntPtr.Zero);
-            SendMessageW(hTrackScale, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x00000064L);   // 0..100
+            SendMessageW(hTrackScale, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x00640000L);   // MAKELONG(min 0, max 100)
             SendMessageW(hTrackRefract, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x000A00A0L); // 10..160
-            SendMessageW(hTrackDisp, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x0000000FL);    // 0..15
-            SendMessageW(hTrackBlur, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x00000014L);    // 0..20
+            SendMessageW(hTrackDisp, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x000F0000L);    // MAKELONG(min 0, max 15)
+            SendMessageW(hTrackBlur, TBM_SETRANGE, (IntPtr)1, (IntPtr)0x00140000L);    // MAKELONG(min 0, max 20)
         }
 
         static string KindName(int i) =>
-            (lastKind == i ? "● " : "") + (i switch { 0 => "蓝", 1 => "绿", _ => "紫" });
+            (lastKind == i ? "● " : "") + kindNames[i];
 
         static void ApplySnapshot(SettingsSnapshot s)
         {
@@ -245,8 +245,8 @@ namespace TransparentPet.Core
             lastSentScale = s.Scale; lastSentRefract = s.Refract; lastSentDisp = s.Disp; lastSentBlur = s.Blur;
 
             SetText(hCountText, $"数量: {s.Count}");
-            for (var i = 0; i < 3; i++)
-                SetText(hKindButtons[i], (i == s.Kind ? "● " : "") + (i switch { 0 => "蓝", 1 => "绿", _ => "紫" }));
+            for (var i = 0; i < 4; i++)
+                SetText(hKindButtons[i], (i == s.Kind ? "● " : "") + kindNames[i]);
             InvalidateTexts();
         }
 
@@ -260,8 +260,8 @@ namespace TransparentPet.Core
             SetText(hRefractText, $"折射强度: {TrackPos(hTrackRefract)}");
             SetText(hDispText, $"色散: {TrackPos(hTrackDisp):0.0}");
             SetText(hBlurText, $"背景模糊: {TrackPos(hTrackBlur)}");
-            for (var i = 0; i < 3; i++)
-                SetText(hKindButtons[i], (i == lastKind ? "● " : "") + (i switch { 0 => "蓝", 1 => "绿", _ => "紫" }));
+            for (var i = 0; i < 4; i++)
+                SetText(hKindButtons[i], (i == lastKind ? "● " : "") + kindNames[i]);
         }
 
         static void OnTimerPoll()
@@ -343,7 +343,7 @@ namespace TransparentPet.Core
                         Changes.Enqueue(new SettingChange { Key = "count", Value = -1 });
                     else if (id == IDC_ADD)
                         Changes.Enqueue(new SettingChange { Key = "count", Value = 1 });
-                    else if (id >= IDC_KIND0 && id < IDC_KIND0 + 3)
+                    else if (id >= IDC_KIND0 && id < IDC_KIND0 + 4)
                     {
                         lastKind = id - IDC_KIND0;
                         Changes.Enqueue(new SettingChange { Key = "kind", Value = lastKind });
