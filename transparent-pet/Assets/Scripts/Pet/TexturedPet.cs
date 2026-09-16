@@ -37,11 +37,15 @@ namespace TransparentPet.Pet
 
         SpriteRenderer spriteRenderer;
         bool dragging;
-        bool falling;         // 空中出生入场：受重力落到任务栏底边后静止（初始四物种入场）
-        float fallVelocityY;
-        float fallGravity = 800f;
         Vector2 dragOffsetPx; // 抓取点相对宠物中心的偏移（屏像素）：拖拽中保持相对位置不跳变
         Vector2 halfSizePx;   // 命中矩形半尺寸（屏像素），按贴图纵横比从目标全宽换算
+
+        // 空中出生入场复用全项目统一的抛射机制（与液态玻璃/果冻软体同一套语义：
+        // 重力下落 + 落地微弹，反弹速度衰减到落定阈值即趴稳），不另写一套
+        readonly ThrowPhysics throwPhys = new ThrowPhysics();
+
+        /// <summary>落定阈值：与 LiquidGlassController.SettleSpeed 同值（微幅反弹后趴稳）。</summary>
+        const float SettleSpeed = 60f;
 
         /// <summary>宠物中心的屏幕坐标（左上原点物理像素），PetManager 排布摆位用</summary>
         public Vector2 ScreenPosPx => WorldToScreenPx(transform.position);
@@ -68,9 +72,14 @@ namespace TransparentPet.Pet
             pet.halfSizePx = new Vector2(
                 targetWidthPx * 0.5f,
                 targetWidthPx * 0.5f * tex.height / tex.width);
-            pet.falling = dropFromAir;
             if (dropFromAir)
-                pet.fallGravity = PetConfigStore.Load().throwParams.gravity;
+            {
+                // 与玻璃同款参数灌法：半宽/底边各取全高宽的一半，微初速进抛射积分后重力接管
+                pet.throwPhys.HalfWRatio = 0.5f;
+                pet.throwPhys.BottomOffsetRatio = 0.5f;
+                pet.throwPhys.ThrowEnabled = PetConfigStore.Load().throwParams.enabled;
+                pet.throwPhys.StartThrow(new Vector2(0f, 30f));
+            }
 
             pet.transform.SetParent(parent, false);
             pet.transform.position = ScreenPxToWorld(screenPosTopOrigin);
@@ -94,18 +103,17 @@ namespace TransparentPet.Pet
 
         void Update()
         {
-            // 空中出生入场：重力下落，底边贴到任务栏即静止；落地前不接输入
-            if (falling)
+            // 空中出生入场：走 ThrowPhysics 抛射积分（重力 + 反弹），落定前不接输入
+            if (throwPhys.IsThrowing)
             {
-                fallVelocityY += fallGravity * Time.deltaTime;
-                var p = ScreenPosPx + new Vector2(0f, fallVelocityY * Time.deltaTime);
-                var groundY = NativeScreen.GetWorkAreaBottomY();
-                if (p.y + halfSizePx.y >= groundY)
-                {
-                    p.y = groundY - halfSizePx.y;
-                    falling = false;
-                }
-                transform.position = ScreenPxToWorld(p);
+                var size = halfSizePx * 2f;
+                var step = throwPhys.Step(
+                    ScreenPosPx, Time.deltaTime,
+                    new Vector2(NativeScreen.GetWorkAreaWidth(), NativeScreen.GetWorkAreaBottomY()),
+                    size, 1f);
+                transform.position = ScreenPxToWorld(step.Position);
+                if (step.HitGround && step.Velocity.magnitude < SettleSpeed)
+                    throwPhys.Reset();
                 return;
             }
 
