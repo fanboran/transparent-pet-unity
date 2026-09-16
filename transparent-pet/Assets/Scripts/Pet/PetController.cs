@@ -19,11 +19,15 @@ namespace TransparentPet.Pet
         /// <summary>正交相机缩放基准（1 世界单位 = 100 屏幕像素）</summary>
         public const float PixelsPerUnit = 100f;
 
-        /// <summary>静息轮廓半宽（px）：原版 SVG 路径宽 160px（x 20..180），半宽 80</summary>
-        const float BaseHalfWidth = 80f;
+        /// <summary>
+        /// 静息轮廓半宽（px）：默认 80 = 原版 SVG 轮廓全宽 160（版本场景的历史观感）。
+        /// 多桌宠管理器生成时注入 PetMetrics.BaseFullWidthPx/2 = 160，与液态玻璃等大
+        ///（物种平等：同一基准全宽、同一缩放档）。
+        /// </summary>
+        public float BaseHalfWidth = 80f;
 
-        const float MinUserScale = 0.25f;
-        const float MaxUserScale = 2f;
+        const float MinUserScale = PetMetrics.MinScale;
+        const float MaxUserScale = PetMetrics.MaxScale;
 
         Camera mainCamera;
         SlimeBody body;
@@ -38,6 +42,12 @@ namespace TransparentPet.Pet
         // hoverMode=true 的场景保留旧行为（落定即关重力原地悬浮），由场景生成器注入。
         [SerializeField] bool hoverMode = false;
         bool hoverSettled; // hover 模式专用：落定标记（抓住/甩出即复位）
+
+        // ── 空闲小蹦（全物种统一逻辑，见 GroundIdleHop）──
+        // 甩出落定趴在任务栏（工作区底边）上后，每隔随机时间连蹦两下；
+        // 悬浮语义版不参与——它没有"落地"概念。
+        GroundIdleHop idleHop = new GroundIdleHop();
+        const float IdleHopDriftX = 25f; // 起跳水平抖动（px/s）：每次蹦的落点略微错开
 
         /// <summary>展厅注入的出生位置（屏像素）；null = 用配置/默认位置（见 SetSpawnOverride）</summary>
         Vector2? spawnOverride;
@@ -111,6 +121,7 @@ namespace TransparentPet.Pet
                 hoverSettled = true;
 
             body.Push(sim, ScreenToWorld, bodyColor);
+            StepIdleHop(dt, env);
             SavePositionIfNeeded();
         }
 
@@ -129,7 +140,10 @@ namespace TransparentPet.Pet
             var renderer = GetComponent<MeshRenderer>();
             if (Input.GetMouseButtonDown(0) && sim.ContainsPoint(mouse)
                 && PetInputArbiter.TryClaim(this, renderer != null ? renderer.sortingOrder : 0))
+            {
                 sim.TryGrab(mouse);
+                idleHop.Disturb(); // 被抓即扰动：放弃进行中的连蹦，重新趴地计时
+            }
 
             if (sim.IsGrabbed)
                 sim.MoveGrab(mouse, NowMs());
@@ -140,8 +154,24 @@ namespace TransparentPet.Pet
                     throwParams.minSpeed, throwParams.maxSpeed,
                     throwParams.multiplier, throwParams.enabled);
                 if (throwVel != Vector2.zero)
+                {
                     hoverSettled = false; // 甩出重新进入抛射
+                    idleHop.Disturb();
+                }
             }
+        }
+
+        // ── 空闲小蹦：落定趴在任务栏上后，每隔随机时间连蹦两下 ──
+
+        void StepIdleHop(float dt, in PbfEnvironment env)
+        {
+            if (hoverMode)
+                return; // 悬浮语义（老版本场景/展厅悬停位）：无落地概念，不蹦
+
+            var resting = !sim.IsGrabbed && sim.IsSettled && sim.IsNearGround(env.GroundY);
+            var hop = idleHop.Tick(dt, resting);
+            if (hop > 0f)
+                sim.Hop(hop, UnityEngine.Random.Range(-IdleHopDriftX, IdleHopDriftX));
         }
 
         // ── EventBus 处理器 ──
@@ -169,6 +199,9 @@ namespace TransparentPet.Pet
 
         /// <summary>当前质心屏幕位置（展厅标签绘制等展示用途；Start 之前为原点）</summary>
         public Vector2 ScreenPosition => sim != null ? sim.Centroid : Vector2.zero;
+
+        /// <summary>物理模拟是否已就绪（Start 建好 SlimePbf 后为 true；管理器持久化据此跳过未就绪个体）</summary>
+        public bool PhysicsReady => sim != null;
 
         /// <summary>
         /// 撤销当前抓取（输入仲裁：被更高层宠物的点击抢占时调用）。
@@ -201,13 +234,16 @@ namespace TransparentPet.Pet
         };
 
         /// <summary>
-        /// Unity 的 Input.mousePosition 原点在左下、Y 向上；
-        /// 工程物理层统一用 Godot 语义（左上原点、Y 向下），此处翻转 Y。
+        /// 全局光标（左上原点、Y 向下，与工程物理层同系）。必须走 GetCursorPos：
+        /// 穿透态（WS_EX_TRANSPARENT）窗口收不到鼠标消息，Input.mousePosition
+        /// 会冻结——命中判定死锁在穿透态，悬停永远无法上报（实测踩坑，
+        /// 与 LiquidGlassController（全局光标方案）同一条教训）。
         /// </summary>
         static Vector2 MouseScreenPos()
         {
-            var m = Input.mousePosition;
-            return new Vector2(m.x, Screen.height - m.y);
+            return NativeWindowStyles.TryGetCursorPosition(out var x, out var y)
+                ? new Vector2(x, y)
+                : new Vector2(-1000f, -1000f); // 取不到光标的兜底：落在屏幕外 = 无命中
         }
 
         void SyncCameraToScreen()

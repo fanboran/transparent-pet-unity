@@ -622,6 +622,19 @@ namespace TransparentPet.Pet
             return throwVel;
         }
 
+        // ══════════════════════ 空闲小蹦 ══════════════════════
+
+        /// <summary>
+        /// 空闲小蹦冲量（全物种统一 GroundIdleHop 的 PBF 施加端）：全体粒子加同一
+        /// 竖直向上速度（Y 向下坐标系，向上 = 负 y），driftX 为小幅水平抖动，
+        /// 让每次蹦的落点略微错开。形变、落地挤压由密度约束自然产生。
+        /// </summary>
+        public void Hop(float upSpeed, float driftX = 0f)
+        {
+            for (var i = 0; i < ParticleCount; i++)
+                vel[i] += new Vector2(driftX, -upSpeed);
+        }
+
         // ══════════════════════ 缩放 / 工具 ══════════════════════
 
         /// <summary>用户缩放：形状锚与核半径同步缩放（核自相似 → 密度不变）。</summary>

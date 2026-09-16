@@ -83,10 +83,11 @@ namespace TransparentPet.EditorTools
         const string SlimeRingMaterialPath = "Assets/Art/Pet/SlimeRingMat.mat";     // SlimeRing.shader（轮廓环软体版）
         const string SlimeMeshMaterialPath = "Assets/Art/Pet/SlimeMeshMat.mat";     // SlimeMesh.shader（第一个流体版）
         const string BakedMaterialPath = "Assets/Art/Pet/BakedSpriteMat.mat";       // Sprites/Default（纯烘焙图版）
-        const string PetTexturePath = "Assets/Resources/PetSlime.png"; // 移入 Resources：PetManager 运行时 Resources.Load 动态加载（贴图物种）
+        const string PetTexturePath = "Assets/Resources/PetSlime.png"; // SVG 系版本场景的精灵贴图（贴图物种退役后仅版本场景使用）
         const string LiquidGlassShaderPath = "Assets/Art/Shaders/LiquidGlass.shader";       // V8 液态玻璃主合成
         const string LiquidGlassBgShaderPath = "Assets/Art/Shaders/LiquidGlassBg.shader";   // V8 折射素材生成
         const string LiquidGlassBlurShaderPath = "Assets/Art/Shaders/LiquidGlassBlur.shader"; // V8 分离式模糊
+        const string LiquidGlassComposeShaderPath = "Assets/Art/Shaders/LiquidGlassCompose.shader"; // V9 折射源合成（并入其他物种）
 
         [MenuItem("TransparentPet/生成宠物场景")]
         public static void GenerateFromMenu() => GenerateAll();
@@ -178,6 +179,16 @@ namespace TransparentPet.EditorTools
             windowGo.AddComponent<PetWindowSetup>();
 
             AddPetComponents(petGo, kind, hoverMode, windowController);
+
+            // 多物种场景（V9）：PetRefract 层只由 PetRefractLayer 的捕获相机画进折射 RT，
+            // 主相机必须剔除——否则其他物种会直接画在玻璃上面（既挡住折射观感，又与
+            // 玻璃内的折射像重影）。其他物种的可见性由玻璃 quad 的合成通道负责。
+            if (kind == PetKind.LiquidGlassDesktop)
+            {
+                var refractLayer = LayerMask.NameToLayer(PetRefractLayer.RefractLayerName);
+                if (refractLayer >= 0)
+                    camera.cullingMask &= ~(1 << refractLayer);
+            }
 
             // UI：HUD（IMGUI，透明窗口上自带 alpha → 引导提示区域自动可交互）。
             // 设置面板是独立原生窗口（NativeSettingsWindow），不经 Unity 场景装配。
@@ -283,11 +294,14 @@ namespace TransparentPet.EditorTools
                     glass.MainShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassShaderPath);
                     glass.BgShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBgShaderPath);
                     glass.BlurShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBlurShaderPath);
+                    glass.ComposeShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassComposeShaderPath);
                     glass.DesktopReflection = true;
                     glass.CaptureInvisible = true;
                     glass.WindowController = windowController;
-                    // 多桌宠：贴图物种管理 + 玻璃折射其他史莱姆的捕获相机
-                    petGo.AddComponent<PetManager>();
+                    // 多桌宠管理器：物种注册表驱动（液态玻璃增删转发 + 果冻软体动态创建）；
+                    // 软体材质复用 PBF 版的 SlimeLiquidMat（序列化进场景，构建后 Shader.Find 才有值）
+                    var manager = petGo.AddComponent<PetManager>();
+                    manager.SoftbodyMaterial = EnsureMaterial("TransparentPet/SlimeLiquid", SlimeLiquidMaterialPath);
                     petGo.AddComponent<PetRefractLayer>();
                     break;
                 }

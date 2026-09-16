@@ -54,6 +54,9 @@ namespace TransparentPet.Pet
                 case PetController pbf:
                     pbf.CancelGrab();
                     break;
+                case LiquidGlassController glass:
+                    glass.CancelGrab();
+                    break;
             }
         }
     }

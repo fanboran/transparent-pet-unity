@@ -6,13 +6,17 @@
 // RenderTexture + Graphics.Blit（每帧 CPU 驱动，MeshRenderer 负责最终上屏）：
 //
 //   抓屏桌面（WDA_EXCLUDEFROMCAPTURE 保证画面不含自己）
-//        ┬→ LiquidGlassBlur(竖直) → vRT
-//        │        └→ LiquidGlassBlur(水平) → hRT
-//        └→ LiquidGlass(主合成: 桌面纹理 + hRT) → 全屏 quad
+//        │
+//        └→ LiquidGlassCompose（并入 PetRefract 层画面 = 其他物种桌宠）→ 折射源
+//             ├→ LiquidGlassBlur(竖直) → vRT
+//             │        └→ LiquidGlassBlur(水平) → hRT
+//             └→ LiquidGlass(主合成: 折射源 + hRT) → 全屏 quad
 //   抓屏失败/未开隐形时回退 LiquidGlassBg 程序化素材（V8 形态）。
 //
 // 多只：shader 端保留 3 个物品槽位 + smin 融合（相邻史莱姆会像液滴一样
-// 合并），本控制器在 CPU 侧管理至多 3 只的位置/拖拽/持久化。
+// 合并），本控制器在 CPU 侧管理至多 3 只的位置/拖拽/持久化。交互语义与
+// 果冻软体对齐：拖拽、快甩抛射（ThrowPhysics）、趴在任务栏上空闲小蹦
+//（GroundIdleHop）；轻放仍原地悬停（玻璃板"贴在哪"的手感保留）。
 //
 // 命中与穿透：没有软体粒子，命中判定在 CPU 复算同一份史莱姆 SDF
 //（LiquidGlassSlimeSdf，与 GPU 端同源），命中时向 PointerHover 自报悬停，
@@ -52,6 +56,9 @@ namespace TransparentPet.Pet
         public Shader MainShader;
         public Shader BgShader;
         public Shader BlurShader;
+
+        [Header("折射源合成（PetRefract 层画面并入折射源；缺省跳过合成，行为回 V9 初版）")]
+        public Shader ComposeShader;
 
         [Header("形状")]
         [Tooltip("史莱姆全宽（物理像素）；轮廓比例固定 160:101（底平顶圆趴姿）")]
@@ -115,15 +122,20 @@ namespace TransparentPet.Pet
             public Vector2 pos;
             public Vector2 lastSaved;
             public bool dragging;
-            public Vector2 grab;
             public int kind; // 种类索引，对应 CharacterRegistry.All
+
+            // ── 投掷 + 空闲小蹦（与果冻软体同一套语义，见 ThrowPhysics/GroundIdleHop）──
+            // 玻璃是"板"不是粒子团：起抛/蹦跳的初速直接进 ThrowPhysics 的抛射积分，
+            // 重力/地面反弹/摩擦/安全网全部复用 Godot 移植的那份，不再另写一套。
+            public readonly ThrowPhysics throwPhys = new ThrowPhysics();
+            public readonly GroundIdleHop idleHop = new GroundIdleHop();
         }
 
         // ── 运行时状态 ──
 
         Camera mainCamera;
-        Material mainMat, bgMat, blurMat;
-        RenderTexture bgRT, vBlurRT, hBlurRT;
+        Material mainMat, bgMat, blurMat, composeMat;
+        RenderTexture bgRT, vBlurRT, hBlurRT, composeRT;
         Texture2D desktopTex;
         byte[] desktopPixels;
         System.IntPtr hwnd = System.IntPtr.Zero;
@@ -137,13 +149,28 @@ namespace TransparentPet.Pet
         readonly List<Slime> slimes = new();
         float nextSaveTime;
 
-        const float MinUserScale = 0.5f, MaxUserScale = 2.5f;
+        const float MinUserScale = PetMetrics.MinScale;
+        const float MaxUserScale = PetMetrics.MaxScale;
 
         /// <summary>生效中的史莱姆全宽（px）——含用户缩放。</summary>
         float ScaleValue => SlimeWidthPx * Mathf.Clamp(userScale, MinUserScale, MaxUserScale);
 
         /// <summary>桌宠折射的抓屏降频：每 N 帧抓一次（全屏 BitBlt 有毫秒级成本）。</summary>
         const int DesktopCaptureInterval = 2;
+
+        // ── 投掷 / 空闲小蹦（与果冻软体同语义）──
+
+        /// <summary>玻璃轮廓比例（高/宽 = 101/160，底平顶圆趴姿）。</summary>
+        const float GlassAspect = 101f / 160f;
+
+        /// <summary>起跳水平抖动（px/s）：每次蹦的落点略微错开。</summary>
+        const float IdleHopDriftX = 25f;
+
+        /// <summary>抛射落地后反弹速度低于此值 → 落定（ThrowPhysics 沿用 Godot
+        /// "微幅反弹永不主动停"语义，桌宠需要趴稳，落定由本控制器判定）。</summary>
+        const float SettleSpeed = 60f;
+
+        ThrowParams throwParams = new ThrowParams();
 
         void Awake() => EnsureInitialized();
 
@@ -170,11 +197,13 @@ namespace TransparentPet.Pet
 
             if (BgShader != null) bgMat = new Material(BgShader);
             if (BlurShader != null) blurMat = new Material(BlurShader);
+            if (ComposeShader != null) composeMat = new Material(ComposeShader);
         }
 
         void OnEnable()
         {
             EventBus.Subscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
+            EventBus.Subscribe<ThrowParams>(EventTopics.ThrowParamsChanged, OnThrowParamsChanged);
             EventBus.Subscribe<bool>(EventTopics.SettingsOpenRequested, OnSettingsOpenRequested);
             LiquidGlassPresence.Active = this; // 设置面板据此显示液态玻璃区块
         }
@@ -182,15 +211,22 @@ namespace TransparentPet.Pet
         void OnDisable()
         {
             EventBus.Unsubscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
+            EventBus.Unsubscribe<ThrowParams>(EventTopics.ThrowParamsChanged, OnThrowParamsChanged);
             EventBus.Unsubscribe<bool>(EventTopics.SettingsOpenRequested, OnSettingsOpenRequested);
             if (LiquidGlassPresence.Active == this)
                 LiquidGlassPresence.Active = null;
         }
 
-        /// <summary>托盘"设置"→ 打开独立原生设置窗口（快照含当前值）。</summary>
+        void OnThrowParamsChanged(ThrowParams p) => throwParams = p;
+
+        /// <summary>
+        /// 托盘"设置"→ 打开独立原生设置窗口。
+        /// PetManager 在场时由它组装跨物种快照（见其同名处理器），本方法只兜底
+        /// 老版本场景（无管理器）——快照不带物种数组，窗口按"仅液态玻璃"渲染。
+        /// </summary>
         void OnSettingsOpenRequested(bool show)
         {
-            if (!show)
+            if (!show || PetManager.Instance != null)
                 return;
             NativeSettingsWindow.ShowOrActivate(new SettingsSnapshot
             {
@@ -218,9 +254,12 @@ namespace TransparentPet.Pet
             {
                 switch (change.Key)
                 {
-                    case "count":
-                        if (change.Value > 0) AddSlime();
-                        else RemoveSlime();
+                    case "add:0": // 物种 0 = 液态玻璃；有管理器时归它管（见 PetManager）
+                        if (PetManager.Instance == null)
+                        {
+                            if (change.Value > 0) AddSlime();
+                            else RemoveSlime();
+                        }
                         break;
                     case "scale":
                         userScale = Mathf.Clamp(change.Value, MinUserScale, MaxUserScale);
@@ -278,7 +317,10 @@ namespace TransparentPet.Pet
 
             userScale = Mathf.Clamp(config.petScale, MinUserScale, MaxUserScale);
             configTopmost = config.alwaysOnTop;
+            throwParams = config.throwParams;
             LoadSlimes(config);
+            foreach (var s in slimes)
+                SyncThrowPhysics(s);
 
             if (CaptureInvisible || config.captureInvisible)
                 SetCaptureInvisible(true); // 只能由窗口所属进程自己调用（外部进程 ACCESS_DENIED）
@@ -299,6 +341,8 @@ namespace TransparentPet.Pet
 
             SyncQuadToCamera();
             HandleInput();
+            StepProjectiles(Time.deltaTime);
+            StepIdleHops(Time.deltaTime);
             UpdateSave();
             DrainSettingChanges();
 
@@ -319,6 +363,16 @@ namespace TransparentPet.Pet
         /// <summary>当前只数（1~MaxSlimes）。</summary>
         public int SlimeCount => slimes.Count;
 
+        /// <summary>
+        /// 撤销当前抓取（输入仲裁：软体等更高层宠物在重叠区抢占认领时调用）。
+        /// 不清不吊——只结束拖拽，位置留在原地。
+        /// </summary>
+        public void CancelGrab()
+        {
+            foreach (var s in slimes)
+                s.dragging = false;
+        }
+
         /// <summary>加一只：错开摆放在现有史莱姆旁（屏幕内），位置随节流自动持久化。</summary>
         public void AddSlime()
         {
@@ -329,7 +383,9 @@ namespace TransparentPet.Pet
                 : new Vector2(NativeScreen.GetWorkAreaWidth() * 0.5f, NativeScreen.GetWorkAreaBottomY() * 0.5f);
             var jitter = new Vector2(Random.Range(-220f, 220f), Random.Range(-140f, 160f));
             var pos = ClampToWorkArea(anchor + jitter);
-            slimes.Add(new Slime { pos = pos, lastSaved = pos });
+            var slime = new Slime { pos = pos, lastSaved = pos };
+            SyncThrowPhysics(slime);
+            slimes.Add(slime);
         }
 
         /// <summary>移除最后一只（至少保留一只）。</summary>
@@ -548,20 +604,27 @@ namespace TransparentPet.Pet
             if (Input.GetMouseButtonDown(0) && hit != null
                 && PetInputArbiter.TryClaim(this, 0))
             {
+                SyncThrowPhysics(hit); // 抓取时同步最新抛射参数（重力/门槛/倍率）
                 hit.dragging = true;
-                hit.grab = hit.pos - mouseTop; // 抓哪里握哪里（玻璃板平移）
+                hit.throwPhys.DragBegin(mouseTop, hit.pos, NowMs()); // 抓哪里握哪里（玻璃板平移）
+                hit.idleHop.Disturb(); // 被抓即扰动：放弃进行中的连蹦，重新趴地计时
             }
 
             if (Input.GetMouseButtonUp(0))
             {
                 foreach (var s in slimes)
+                {
+                    if (!s.dragging)
+                        continue;
                     s.dragging = false;
+                    s.throwPhys.DragEnd(); // 滑窗均速 × 倍率 → 达标即进入抛射（轻放=原地不动）
+                }
             }
 
             foreach (var s in slimes)
             {
                 if (s.dragging)
-                    s.pos = ClampToWorkArea(mouseTop + s.grab);
+                    s.pos = ClampToWorkArea(s.throwPhys.DragMove(mouseTop, NowMs()));
             }
 
             // 抓屏隐形开关（F11；设置面板走 SetCaptureInvisible）
@@ -572,6 +635,72 @@ namespace TransparentPet.Pet
             if (Input.GetKeyDown(KeyCode.Escape))
                 HardExit.Now();
         }
+
+        // ── 投掷抛射 + 空闲小蹦（与果冻软体同一套行为语义）──
+
+        /// <summary>把配置抛射参数灌进单只的 ThrowPhysics（玻璃轮廓 160:101、中心枢轴）。</summary>
+        void SyncThrowPhysics(Slime s)
+        {
+            var phys = s.throwPhys;
+            phys.Gravity = throwParams.gravity;
+            phys.MinSpeed = throwParams.minSpeed;
+            phys.MaxSpeed = throwParams.maxSpeed;
+            phys.Multiplier = throwParams.multiplier;
+            phys.ThrowEnabled = throwParams.enabled;
+            phys.HalfWRatio = 0.5f;          // 碰撞半宽 = 全宽/2
+            phys.BottomOffsetRatio = 0.5f;   // 中心到底边 = 高/2
+        }
+
+        /// <summary>
+        /// 抛射积分：被甩出的玻璃板按 ThrowPhysics 飞行（重力 + 地面/侧墙反弹 +
+        /// 接地摩擦）。反弹速度衰减到 SettleSpeed 以下判定落定——ThrowPhysics
+        /// 沿用 Godot"微幅反弹永不主动停"的语义，桌宠需要趴稳，落定在此收口。
+        /// </summary>
+        void StepProjectiles(float dt)
+        {
+            if (dt <= 0f || slimes.Count == 0)
+                return;
+            var screen = new Vector2(NativeScreen.GetWorkAreaWidth(), NativeScreen.GetWorkAreaBottomY());
+            var width = ScaleValue;
+            var spriteSize = new Vector2(width, width * GlassAspect);
+            foreach (var s in slimes)
+            {
+                if (s.dragging || !s.throwPhys.IsThrowing)
+                    continue;
+                var step = s.throwPhys.Step(s.pos, dt, screen, spriteSize, 1f);
+                s.pos = step.Position;
+                if (step.HitGround && step.Velocity.magnitude < SettleSpeed)
+                    s.throwPhys.Reset();
+            }
+        }
+
+        /// <summary>
+        /// 空闲小蹦：趴在任务栏上（底边贴地、未在拖拽/抛射）的玻璃板，每隔随机时间
+        /// 连蹦两下——用 StartThrow 注入一记小幅初速走同一条抛射链路（不经过
+        /// DragEnd 的最小速度门槛）。抛射总开关关闭时 StartThrow 不生效 = 安静趴着。
+        /// </summary>
+        void StepIdleHops(float dt)
+        {
+            if (dt <= 0f || slimes.Count == 0)
+                return;
+            var groundY = NativeScreen.GetWorkAreaBottomY();
+            var bottomH = ScaleValue * GlassAspect * 0.5f;
+            foreach (var s in slimes)
+            {
+                if (s.dragging || s.throwPhys.IsThrowing)
+                    continue;
+                var resting = Mathf.Abs(s.pos.y + bottomH - groundY) <= 2f;
+                var hop = s.idleHop.Tick(dt, resting);
+                if (hop > 0f)
+                {
+                    SyncThrowPhysics(s);
+                    s.throwPhys.StartThrow(new Vector2(
+                        Random.Range(-IdleHopDriftX, IdleHopDriftX), -hop));
+                }
+            }
+        }
+
+        static float NowMs() => Time.realtimeSinceStartup * 1000f;
 
         // ── 渲染管线：桌面/素材 → 竖直模糊 → 水平模糊 → 主合成上屏 ──
 
@@ -609,17 +738,27 @@ namespace TransparentPet.Pet
                 reflectionSource = bgRT;
             }
 
+            // 1.5) 折射源合成：PetRefract 层画面（其他物种桌宠）并入折射源——玻璃把
+            //      它们与桌面一起折射/模糊（物种平等：别的桌宠对玻璃而言也是"桌面内容"）。
+            //      无合成材质（老场景未配 ComposeShader）时跳过，行为回退 V9 初版。
+            Texture refractSource = reflectionSource;
+            if (composeMat != null)
+            {
+                Graphics.Blit(reflectionSource, composeRT, composeMat);
+                refractSource = composeRT;
+            }
+
             // 2) 分离式高斯模糊：source →(竖)→ vRT →(横)→ hRT
             blurMat.SetFloat("_Vertical", 1f);
             blurMat.SetFloat("_BlurRadius", BlurRadius);
             blurMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
-            Graphics.Blit(reflectionSource, vBlurRT, blurMat);
+            Graphics.Blit(refractSource, vBlurRT, blurMat);
             blurMat.SetFloat("_Vertical", 0f);
             Graphics.Blit(vBlurRT, hBlurRT, blurMat);
 
             // 3) 主合成参数（每帧全量推送，与 Godot update_all_uniforms 同策略）
             mainMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
-            mainMat.SetTexture("_Bg", reflectionSource);
+            mainMat.SetTexture("_Bg", refractSource);
             mainMat.SetTexture("_BlurredBg", hBlurRT);
             mainMat.SetFloat("_RefThickness", RefThickness);
             mainMat.SetFloat("_RefFactor", RefFactor);
@@ -673,6 +812,7 @@ namespace TransparentPet.Pet
             bgRT = NewTarget(w, h);
             vBlurRT = NewTarget(w, h);
             hBlurRT = NewTarget(w, h);
+            composeRT = NewTarget(w, h);
         }
 
         static RenderTexture NewTarget(int w, int h)
@@ -690,7 +830,8 @@ namespace TransparentPet.Pet
             bgRT?.Release(); DestroyImmediate(bgRT);
             vBlurRT?.Release(); DestroyImmediate(vBlurRT);
             hBlurRT?.Release(); DestroyImmediate(hBlurRT);
-            bgRT = vBlurRT = hBlurRT = null;
+            composeRT?.Release(); DestroyImmediate(composeRT);
+            bgRT = vBlurRT = hBlurRT = composeRT = null;
         }
 
         /// <summary>

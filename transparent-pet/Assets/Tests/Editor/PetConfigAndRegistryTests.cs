@@ -109,6 +109,87 @@ namespace TransparentPet.Tests
         }
 
         // ------------------------------------------------------------------
+        // PetConfigStore：多桌宠位置数组（玻璃 / 果冻软体）往返
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void SaveLoad_RoundTrip_PreservesPerPetArrays()
+        {
+            var path = Path.GetTempFileName();
+            try
+            {
+                var config = new PetConfig
+                {
+                    glassSlimeX = new[] { 100f, 420f, 900f },
+                    glassSlimeY = new[] { 200f, 220f, 260f },
+                    glassSlimeKind = new[] { 0, 2, 1 },
+                    softbodyX = new[] { 300f, 700f },
+                    softbodyY = new[] { 350f, 360f },
+                };
+
+                PetConfigStore.Save(config, path);
+                var loaded = PetConfigStore.Load(path);
+
+                Assert.AreEqual(3, loaded.glassSlimeX.Length);
+                Assert.AreEqual(900f, loaded.glassSlimeX[2]);
+                Assert.AreEqual(2, loaded.glassSlimeKind[1]);
+                Assert.AreEqual(2, loaded.softbodyX.Length);
+                Assert.AreEqual(700f, loaded.softbodyX[1]);
+                Assert.AreEqual(360f, loaded.softbodyY[1]);
+            }
+            finally
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void Load_MissingFile_PerPetArraysAreEmpty()
+        {
+            var missingPath = Path.Combine(
+                Path.GetTempPath(), "pet_config_missing_" + Guid.NewGuid().ToString("N") + ".json");
+
+            var loaded = PetConfigStore.Load(missingPath);
+
+            // 空数组 = 从未保存过 → 管理器按"没有该物种"处理，绝不还原出垃圾位置
+            Assert.AreEqual(0, loaded.softbodyX.Length);
+            Assert.AreEqual(0, loaded.softbodyY.Length);
+            Assert.AreEqual(0, loaded.glassSlimeX.Length);
+        }
+
+        // ------------------------------------------------------------------
+        // PetSpeciesCatalog：物种注册表（多桌宠管理的物种清单）
+        // ------------------------------------------------------------------
+
+        [Test]
+        public void SpeciesCatalog_GlassIsIndexZero_ForwardCompat()
+        {
+            // 液态玻璃固定在 0：设置变更 "add:0" 与旧配置都依赖这一约定
+            Assert.AreEqual("glass", PetSpeciesCatalog.All[0].Id);
+            Assert.AreEqual(0, PetSpeciesCatalog.IndexOf("glass"));
+        }
+
+        [Test]
+        public void SpeciesCatalog_IdsUnique_AndCapsPositive()
+        {
+            var seen = new HashSet<string>();
+            foreach (var species in PetSpeciesCatalog.All)
+            {
+                Assert.IsTrue(seen.Add(species.Id), $"物种 id 重复：{species.Id}");
+                Assert.Greater(species.MaxCount, 0);
+                Assert.IsFalse(string.IsNullOrEmpty(species.DisplayName));
+            }
+            Assert.GreaterOrEqual(PetSpeciesCatalog.All.Count, 2); // 至少：液态玻璃 + 果冻软体
+        }
+
+        [Test]
+        public void SpeciesCatalog_UnknownId_ReturnsMinusOne()
+        {
+            Assert.AreEqual(-1, PetSpeciesCatalog.IndexOf("不存在的物种"));
+        }
+
+        // ------------------------------------------------------------------
         // CharacterRegistry：命中 / 回退 / 唯一性
         // ------------------------------------------------------------------
 

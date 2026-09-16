@@ -496,15 +496,24 @@ Shader "TransparentPet/LiquidGlass"
                         outColor = float4(0, 0, 0, shadow);
                     }
 
-                    // 玻璃覆盖到的其他史莱姆(PetRefract 层)被折射显示;玻璃外区域 pet.a=0 无影响
-                    float4 pet = tex2D(_PetRTTex, i.uv);
-                    outColor.rgb = lerp(outColor.rgb, pet.rgb, pet.a);
-                    outColor.a = max(outColor.a, pet.a * 0.9);
-
                     // 抗锯齿：SDF 屏幕梯度自适应带宽，边缘平滑归零
                     float aaWidth = sqrt(ddx(merged) * ddx(merged) + ddy(merged) * ddy(merged)) * 2.0;
                     float aa = smoothstep(-aaWidth, aaWidth, merged);
                     outColor.a *= 1.0 - aa;
+
+                    // 其他物种桌宠（PetRefract 层）在玻璃外区域直接可见。必须放在
+                    // AA 之后：轮廓外的抗锯齿会把 alpha 一并乘零（实测：宠物只有
+                    // 透过玻璃才可见，离开玻璃整个消失）。玻璃覆盖的部分不走这里——
+                    // 它们已并入折射源（LiquidGlassCompose），随玻璃一起折射/模糊。
+                    // 宠物画进 RT 时 alpha 被标准混合平方衰减（0.78²≈0.61），按 1.25
+                    // 回拉，让软体在玻璃外保持果冻般透亮而非过淡。
+                    if (merged >= 0.005)
+                    {
+                        float4 pet = tex2D(_PetRTTex, i.uv);
+                        float petA = saturate(pet.a * 1.25);
+                        outColor.rgb = lerp(outColor.rgb, pet.rgb, petA);
+                        outColor.a = max(outColor.a, petA * 0.9);
+                    }
                 }
 
                 return outColor;

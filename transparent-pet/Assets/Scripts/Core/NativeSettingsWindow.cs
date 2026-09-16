@@ -12,7 +12,10 @@
 // 用户真正操作时产生变更。早期版本用 200ms 定时器反向读取控件状态，范围
 // 参数倒挂时会把乱值当"用户改动"写回配置（史莱姆被改小改平，实测踩坑）。
 //
-// 布局：实体（液态玻璃 ± / 贴图史莱姆 ±）→ 玻璃观感（材质预设/色调/五滑条）
+// 【实体分组按物种驱动】"实体"区不是写死的两行——快照带物种名/数量/上限数组
+// （PetSpeciesCatalog 注册表），每种物种一行 ±。以后新增物种只需在注册表
+// 登记 + PetManager 接一个创建分支，本窗口自动多出一行。
+// 布局：实体（每物种一行 ±）→ 玻璃观感（材质预设/色调/五滑条）
 // → 抓屏隐形 → 系统（置顶/自启）。控件初值在 ApplySnapshot 由主线程快照填入。
 // ============================================================================
 using System;
@@ -25,14 +28,22 @@ namespace TransparentPet.Core
     /// <summary>一条设置变更（主线程消费）。</summary>
     public struct SettingChange
     {
-        public string Key;   // count / addtextured / removetextured / scale / refract / disp / blur / gloss / mat / kind / invisible / topmost / autostart
+        public string Key;   // "add:物种索引" / "remove:物种索引" / scale / refract / disp / blur / gloss / mat / kind / invisible / topmost / autostart
         public float Value;
     }
 
     /// <summary>设置窗口快照（打开/同步时渲染初始控件状态）。</summary>
     public struct SettingsSnapshot
     {
-        public int Count;
+        /// <summary>物种显示名（PetSpeciesCatalog 顺序）；null = 老场景兜底，按"仅液态玻璃"渲染</summary>
+        public string[] SpeciesNames;
+
+        /// <summary>各物种当前数量（与 SpeciesNames 成对）</summary>
+        public int[] SpeciesCounts;
+
+        /// <summary>各物种同屏上限（± 按钮据此封顶；null 时按 3 处理）</summary>
+        public int[] SpeciesCaps;
+
         public int Kind;
         public bool Invisible;
         public bool Topmost;
@@ -42,6 +53,9 @@ namespace TransparentPet.Core
         public float Disp;
         public float Blur;
         public float Gloss;
+
+        /// <summary>老快照兜底（无物种数组时）的液态玻璃数量；有物种数组时不读。</summary>
+        public int Count;
     }
 
     public static class NativeSettingsWindow
@@ -61,8 +75,7 @@ namespace TransparentPet.Core
         static readonly WndProcDelegate wndProcDelegate = WndProcThunk;
 
         // ── 控件 ID ──
-        const int IDC_REMOVE = 2001;       // 液态玻璃 −
-        const int IDC_ADD = 2002;          // 液态玻璃 +
+        const int IDC_SPECIES0 = 2080;     // 物种行按钮：remove = 2080+i*2，add = 2081+i*2
         const int IDC_KIND0 = 2010;        // KIND0..3 连续（色调档）
         const int IDC_CHK_INVISIBLE = 2020;
         const int IDC_TRACK_SCALE = 2030;
@@ -72,15 +85,12 @@ namespace TransparentPet.Core
         const int IDC_TRACK_GLOSS = 2034;
         const int IDC_CHK_TOPMOST = 2040;
         const int IDC_CHK_AUTOSTART = 2041;
-        const int IDC_TXT_COUNT = 2050;
         const int IDC_TXT_SCALE = 2051;
         const int IDC_TXT_REFRACT = 2052;
         const int IDC_TXT_DISP = 2053;
         const int IDC_TXT_BLUR = 2054;
         const int IDC_TXT_GLOSS = 2055;
         const int IDC_BTN_CLOSE = 2060;
-        const int IDC_BTN_ADDTEXTURED = 2061;
-        const int IDC_BTN_REMOVETEXTURED = 2062;
         const int IDC_MAT0 = 2070;         // MAT0..2 连续（材质预设）
 
         const uint WM_APP_SHOW = 0x8000;   // 主线程请求显示/前置
@@ -170,8 +180,8 @@ namespace TransparentPet.Core
             };
             RegisterClassW(ref wc);
 
-            hwnd = CreateWindowExW(0, className, "液态玻璃史莱姆 · 设置",
-                0x00C80000u /*WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX*/, 0, 0, 376, 772,
+            hwnd = CreateWindowExW(0, className, "桌宠 · 设置",
+                0x00C80000u /*WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX*/, 0, 0, 376, WindowHeight(),
                 IntPtr.Zero, IntPtr.Zero, GetModuleHandleW(null), IntPtr.Zero);
             CreateChildren();
             ApplySnapshot(pendingSnapshot);
@@ -185,7 +195,29 @@ namespace TransparentPet.Core
             }
         }
 
-        static IntPtr hCountText, hScaleText, hRefractText, hDispText, hBlurText, hGlossText;
+        // ── 物种行布局 ──
+
+        /// <summary>物种行数：快照带数组用它的长度；老快照兜底 1 行（仅液态玻璃）。</summary>
+        static int SpeciesRowCount()
+        {
+            var names = pendingSnapshot.SpeciesNames;
+            return names != null && names.Length > 0 ? names.Length : 1;
+        }
+
+        /// <summary>物种行 y 起点。</summary>
+        const int SpeciesRowTop = 38;
+
+        /// <summary>行高（行距）。</summary>
+        const int SpeciesRowPitch = 38;
+
+        /// <summary>实体分组高度：标题带 + 行数×行距 + 提示行。</summary>
+        static int EntityGroupHeight() => SpeciesRowTop + SpeciesRowCount() * SpeciesRowPitch + 40;
+
+        /// <summary>窗口总高：实体区高度 + 其余分区（观感/隐形/系统/关闭钮）固定占 606。</summary>
+        static int WindowHeight() => EntityGroupHeight() + 624;
+
+        static IntPtr[] hSpeciesTexts = Array.Empty<IntPtr>();
+        static IntPtr hScaleText, hRefractText, hDispText, hBlurText, hGlossText;
         static IntPtr[] hKindButtons = new IntPtr[4]; // 与 KindNames.Length 一致；扩档时同步（曾因 3/4 不一致越界炸进程）
         static IntPtr[] hMatButtons = new IntPtr[3];
         static IntPtr hChkInvisible, hChkTopmost, hChkAutostart;
@@ -194,7 +226,9 @@ namespace TransparentPet.Core
         static readonly string[] MatNames = { "原味玻璃", "亚克力", "磨砂" };
         static int lastKind = -1;
         static int lastMat = -1;
-        static int lastCount = -1;
+        static string[] lastSpeciesNames = Array.Empty<string>();
+        static int[] lastSpeciesCounts = Array.Empty<int>();
+        static int[] lastSpeciesCaps = Array.Empty<int>();
 
         static IntPtr CreateControl(string cls, string text, uint style, int x, int y, int w, int h, int id)
         {
@@ -211,46 +245,62 @@ namespace TransparentPet.Core
             const uint BS_PUSHBUTTON = 0x0u;
             const uint SS_LEFT = 0x0u;
 
-            // ── 实体 ──
-            CreateControl("BUTTON", "实体", BS_GROUPBOX, 10, 10, 340, 140, 0);
-            hCountText = CreateControl("STATIC", "液态玻璃 × 1", SS_LEFT, 24, 38, 140, 22, IDC_TXT_COUNT);
-            CreateControl("BUTTON", "−  移除", BS_PUSHBUTTON, 170, 34, 82, 28, IDC_REMOVE);
-            CreateControl("BUTTON", "+  添加", BS_PUSHBUTTON, 258, 34, 84, 28, IDC_ADD);
-            CreateControl("STATIC", "贴图史莱姆", SS_LEFT, 24, 76, 120, 22, 0);
-            CreateControl("BUTTON", "−  移除", BS_PUSHBUTTON, 170, 72, 82, 28, IDC_BTN_REMOVETEXTURED);
-            CreateControl("BUTTON", "+  添加", BS_PUSHBUTTON, 258, 72, 84, 28, IDC_BTN_ADDTEXTURED);
-            CreateControl("STATIC", "提示: 拖动即可移动; 相邻的玻璃会融合", SS_LEFT, 24, 112, 320, 22, 0);
+            // ── 实体（每物种一行：名称 × N [− 移除] [+ 添加]）──
+            var rowTop = 10 + SpeciesRowTop;
+            var n = SpeciesRowCount();
+            hSpeciesTexts = new IntPtr[n];
+            lastSpeciesNames = new string[n];
+            lastSpeciesCounts = new int[n];
+            lastSpeciesCaps = new int[n];
+
+            var names = pendingSnapshot.SpeciesNames;
+            var caps = pendingSnapshot.SpeciesCaps;
+            CreateControl("BUTTON", "实体", BS_GROUPBOX, 10, 10, 340, EntityGroupHeight(), 0);
+            for (var i = 0; i < n; i++)
+            {
+                lastSpeciesNames[i] = names != null && i < names.Length ? names[i] : (i == 0 ? "液态玻璃" : $"物种{i}");
+                lastSpeciesCaps[i] = caps != null && i < caps.Length ? caps[i] : 3;
+                var y = rowTop + i * SpeciesRowPitch;
+                hSpeciesTexts[i] = CreateControl("STATIC", lastSpeciesNames[i], SS_LEFT, 24, y + 4, 140, 22, 0);
+                CreateControl("BUTTON", "−  移除", BS_PUSHBUTTON, 170, y, 82, 28, IDC_SPECIES0 + i * 2);
+                CreateControl("BUTTON", "+  添加", BS_PUSHBUTTON, 258, y, 84, 28, IDC_SPECIES0 + i * 2 + 1);
+            }
+            CreateControl("STATIC", "提示: 拖动即可移动; 相邻的玻璃会融合", SS_LEFT, 24, rowTop + n * SpeciesRowPitch + 4, 320, 22, 0);
+
+            var glassTop = 10 + EntityGroupHeight() + 8;
+            var dy = glassTop - 166; // 相对旧布局(实体区 140 + 8 + 观感区起点 158 → 166)的整体下移量
 
             // ── 玻璃观感 ──
-            CreateControl("BUTTON", "玻璃观感", BS_GROUPBOX, 10, 158, 340, 366, 0);
-            CreateControl("STATIC", "材质", SS_LEFT, 24, 184, 60, 22, 0);
+            CreateControl("BUTTON", "玻璃观感", BS_GROUPBOX, 10, glassTop, 340, 366, 0);
+            CreateControl("STATIC", "材质", SS_LEFT, 24, glassTop + 26, 60, 22, 0);
             for (var i = 0; i < hMatButtons.Length; i++)
-                hMatButtons[i] = CreateControl("BUTTON", MatNames[i], BS_PUSHBUTTON, 90 + i * 84, 180, 80, 26, IDC_MAT0 + i);
-            CreateControl("STATIC", "色调", SS_LEFT, 24, 216, 60, 22, 0);
+                hMatButtons[i] = CreateControl("BUTTON", MatNames[i], BS_PUSHBUTTON, 90 + i * 84, glassTop + 22, 80, 26, IDC_MAT0 + i);
+            CreateControl("STATIC", "色调", SS_LEFT, 24, glassTop + 58, 60, 22, 0);
             for (var i = 0; i < hKindButtons.Length; i++)
-                hKindButtons[i] = CreateControl("BUTTON", KindName(i), BS_PUSHBUTTON, 84 + i * 64, 212, 60, 28, IDC_KIND0 + i);
+                hKindButtons[i] = CreateControl("BUTTON", KindName(i), BS_PUSHBUTTON, 84 + i * 64, glassTop + 54, 60, 28, IDC_KIND0 + i);
 
-            hScaleText = CreateControl("STATIC", "总缩放: 1.00", SS_LEFT, 24, 250, 200, 22, IDC_TXT_SCALE);
-            hTrackScale = CreateControl("msctls_trackbar32", "", 0, 20, 272, 320, 26, IDC_TRACK_SCALE);
-            hRefractText = CreateControl("STATIC", "折射强度: 80", SS_LEFT, 24, 304, 200, 22, IDC_TXT_REFRACT);
-            hTrackRefract = CreateControl("msctls_trackbar32", "", 0, 20, 326, 320, 26, IDC_TRACK_REFRACT);
-            hDispText = CreateControl("STATIC", "色散: 7.0", SS_LEFT, 24, 358, 200, 22, IDC_TXT_DISP);
-            hTrackDisp = CreateControl("msctls_trackbar32", "", 0, 20, 380, 320, 26, IDC_TRACK_DISP);
-            hBlurText = CreateControl("STATIC", "背景模糊: 6", SS_LEFT, 24, 412, 200, 22, IDC_TXT_BLUR);
-            hTrackBlur = CreateControl("msctls_trackbar32", "", 0, 20, 434, 320, 26, IDC_TRACK_BLUR);
-            hGlossText = CreateControl("STATIC", "边缘高光: 50", SS_LEFT, 24, 466, 200, 22, IDC_TXT_GLOSS);
-            hTrackGloss = CreateControl("msctls_trackbar32", "", 0, 20, 488, 320, 26, IDC_TRACK_GLOSS);
+            hScaleText = CreateControl("STATIC", "总缩放: 1.00", SS_LEFT, 24, glassTop + 92, 200, 22, IDC_TXT_SCALE);
+            hTrackScale = CreateControl("msctls_trackbar32", "", 0, 20, glassTop + 114, 320, 26, IDC_TRACK_SCALE);
+            hRefractText = CreateControl("STATIC", "折射强度: 80", SS_LEFT, 24, glassTop + 146, 200, 22, IDC_TXT_REFRACT);
+            hTrackRefract = CreateControl("msctls_trackbar32", "", 0, 20, glassTop + 168, 320, 26, IDC_TRACK_REFRACT);
+            hDispText = CreateControl("STATIC", "色散: 7.0", SS_LEFT, 24, glassTop + 200, 200, 22, IDC_TXT_DISP);
+            hTrackDisp = CreateControl("msctls_trackbar32", "", 0, 20, glassTop + 222, 320, 26, IDC_TRACK_DISP);
+            hBlurText = CreateControl("STATIC", "背景模糊: 6", SS_LEFT, 24, glassTop + 254, 200, 22, IDC_TXT_BLUR);
+            hTrackBlur = CreateControl("msctls_trackbar32", "", 0, 20, glassTop + 276, 320, 26, IDC_TRACK_BLUR);
+            hGlossText = CreateControl("STATIC", "边缘高光: 50", SS_LEFT, 24, glassTop + 308, 200, 22, IDC_TXT_GLOSS);
+            hTrackGloss = CreateControl("msctls_trackbar32", "", 0, 20, glassTop + 330, 320, 26, IDC_TRACK_GLOSS);
 
             // ── 抓屏隐形 ──
-            hChkInvisible = CreateControl("BUTTON", "录屏/截图中隐藏（折射真实桌面）", BS_AUTOCHECKBOX, 12, 532, 336, 24, IDC_CHK_INVISIBLE);
+            hChkInvisible = CreateControl("BUTTON", "录屏/截图中隐藏（折射真实桌面）", BS_AUTOCHECKBOX, 12, glassTop + 374, 336, 24, IDC_CHK_INVISIBLE);
 
             // ── 系统 ──
-            CreateControl("BUTTON", "系统", BS_GROUPBOX, 10, 564, 340, 116, 0);
-            hChkTopmost = CreateControl("BUTTON", "窗口始终置顶", BS_AUTOCHECKBOX, 24, 590, 300, 24, IDC_CHK_TOPMOST);
-            hChkAutostart = CreateControl("BUTTON", "开机自启", BS_AUTOCHECKBOX, 24, 620, 300, 24, IDC_CHK_AUTOSTART);
-            CreateControl("STATIC", "材质预设会覆盖模糊与边缘高光滑条", SS_LEFT, 24, 650, 320, 22, 0);
+            var sysTop = glassTop + 406;
+            CreateControl("BUTTON", "系统", BS_GROUPBOX, 10, sysTop, 340, 116, 0);
+            hChkTopmost = CreateControl("BUTTON", "窗口始终置顶", BS_AUTOCHECKBOX, 24, sysTop + 26, 300, 24, IDC_CHK_TOPMOST);
+            hChkAutostart = CreateControl("BUTTON", "开机自启", BS_AUTOCHECKBOX, 24, sysTop + 56, 300, 24, IDC_CHK_AUTOSTART);
+            CreateControl("STATIC", "材质预设会覆盖模糊与边缘高光滑条", SS_LEFT, 24, sysTop + 86, 320, 22, 0);
 
-            CreateControl("BUTTON", "关闭", BS_PUSHBUTTON, 256, 690, 94, 32, IDC_BTN_CLOSE);
+            CreateControl("BUTTON", "关闭", BS_PUSHBUTTON, 256, sysTop + 126, 94, 32, IDC_BTN_CLOSE);
 
             // 统一字体 + trackbar 范围（TBM_SETRANGE lParam = MAKELONG(min,max)：低字 min、
             // 高字 max——此前写反导致滑条倒挂拉不动，且轮询把乱值写回配置）
@@ -273,7 +323,15 @@ namespace TransparentPet.Core
         static void ApplySnapshot(SettingsSnapshot s)
         {
             lastKind = s.Kind;
-            lastCount = s.Count;
+            if (s.SpeciesCounts != null)
+            {
+                for (var i = 0; i < lastSpeciesCounts.Length && i < s.SpeciesCounts.Length; i++)
+                    lastSpeciesCounts[i] = s.SpeciesCounts[i];
+            }
+            else if (lastSpeciesCounts.Length > 0)
+            {
+                lastSpeciesCounts[0] = s.Count;
+            }
             Check(hChkInvisible, s.Invisible);
             Check(hChkTopmost, s.Topmost);
             Check(hChkAutostart, s.Autostart);
@@ -287,7 +345,8 @@ namespace TransparentPet.Core
 
         static void InvalidateTexts()
         {
-            SetText(hCountText, $"液态玻璃 × {lastCount}");
+            for (var i = 0; i < hSpeciesTexts.Length; i++)
+                SetText(hSpeciesTexts[i], $"{lastSpeciesNames[i]} × {lastSpeciesCounts[i]}");
             SetText(hScaleText, $"总缩放: {TrackPos(hTrackScale) / 100f * 2f + 0.5f:0.00}");
             SetText(hRefractText, $"折射强度: {TrackPos(hTrackRefract)}");
             SetText(hDispText, $"色散: {TrackPos(hTrackDisp):0.0}");
@@ -322,22 +381,6 @@ namespace TransparentPet.Core
                     var id = (int)(wParam.ToInt64() & 0xFFFF);
                     switch (id)
                     {
-                        case IDC_REMOVE:
-                            lastCount = Math.Max(1, lastCount - 1);
-                            Changes.Enqueue(new SettingChange { Key = "count", Value = -1 });
-                            InvalidateTexts();
-                            break;
-                        case IDC_ADD:
-                            lastCount = Math.Min(3, lastCount + 1);
-                            Changes.Enqueue(new SettingChange { Key = "count", Value = 1 });
-                            InvalidateTexts();
-                            break;
-                        case IDC_BTN_REMOVETEXTURED:
-                            ManagerChanges.Enqueue(new SettingChange { Key = "removetextured", Value = 1 });
-                            break;
-                        case IDC_BTN_ADDTEXTURED:
-                            ManagerChanges.Enqueue(new SettingChange { Key = "addtextured", Value = 1 });
-                            break;
                         case IDC_BTN_CLOSE:
                             ShowWindow(hWnd, SW_HIDE);
                             break;
@@ -361,6 +404,22 @@ namespace TransparentPet.Core
                             {
                                 lastMat = id - IDC_MAT0;
                                 Changes.Enqueue(new SettingChange { Key = "mat", Value = lastMat });
+                                InvalidateTexts();
+                            }
+                            else if (id >= IDC_SPECIES0 && id < IDC_SPECIES0 + hSpeciesTexts.Length * 2)
+                            {
+                                var idx = (id - IDC_SPECIES0) / 2;
+                                var isAdd = (id - IDC_SPECIES0) % 2 == 1;
+                                if (isAdd)
+                                {
+                                    lastSpeciesCounts[idx] = Math.Min(lastSpeciesCaps[idx], lastSpeciesCounts[idx] + 1);
+                                    ManagerChanges.Enqueue(new SettingChange { Key = $"add:{idx}", Value = 1 });
+                                }
+                                else
+                                {
+                                    lastSpeciesCounts[idx] = Math.Max(0, lastSpeciesCounts[idx] - 1);
+                                    ManagerChanges.Enqueue(new SettingChange { Key = $"remove:{idx}", Value = -1 });
+                                }
                                 InvalidateTexts();
                             }
                             break;
@@ -413,7 +472,6 @@ namespace TransparentPet.Core
             public int cbWndExtra;
             public IntPtr hInstance;
             public IntPtr hIcon;
-            public IntPtr hCursor;
             public IntPtr hbrBackground;
             [MarshalAs(UnmanagedType.LPWStr)] public string lpszMenuName;
             [MarshalAs(UnmanagedType.LPWStr)] public string lpszClassName;

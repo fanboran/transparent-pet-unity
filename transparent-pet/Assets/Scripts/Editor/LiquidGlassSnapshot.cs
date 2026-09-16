@@ -47,6 +47,7 @@ namespace TransparentPet.EditorTools
             controller.MainShader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/Art/Shaders/LiquidGlass.shader");
             controller.BgShader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/Art/Shaders/LiquidGlassBg.shader");
             controller.BlurShader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/Art/Shaders/LiquidGlassBlur.shader");
+            controller.ComposeShader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/Art/Shaders/LiquidGlassCompose.shader");
             controller.SetSlimeWidthForCapture(320f);
             controller.SetLogicPositionForCapture(new Vector2(W * 0.5f, H * 0.5f));
 
@@ -83,6 +84,19 @@ namespace TransparentPet.EditorTools
 
             controller.Step = 2;
             Snap("liquidglass_normal.png");
+
+            // ── 折射链路验证：伪造一张全屏"宠物"RT（白色、alpha=1）喂给 _PetRTTex，
+            //    走完整合成管线。预期：玻璃外整体变白（宠物直接可见——AA 修复前会被
+            //    轮廓外抗锯齿乘零而消失），玻璃内白色随折射/模糊出现（折射源合成生效）。
+            var petRT = new RenderTexture(W, H, 0, RenderTextureFormat.ARGB32);
+            petRT.Create();
+            var prevActive = RenderTexture.active;
+            RenderTexture.active = petRT;
+            GL.Clear(false, true, new Color(1f, 1f, 1f, 1f));
+            RenderTexture.active = prevActive;
+            Shader.SetGlobalTexture(PetRefractLayer.GlobalTexName, petRT);
+            controller.Step = 9;
+            Snap("liquidglass_petcompose.png");
 
             cam.targetTexture = null;
         }

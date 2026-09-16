@@ -326,5 +326,22 @@ namespace TransparentPet.Tests
             }
         }
 
+        // ── 10. 空闲小蹦：全体粒子获得向上冲量，质心应先升（重力随后拉回）──
+        [Test]
+        public void Hop_GivesUpwardImpulse()
+        {
+            var sim = new SlimePbf(Spawn, HalfWidth);
+            var env = GroundEnv();
+            for (var i = 0; i < 120; i++)
+                sim.StepFrame(Dt, env); // 先落定趴地
+            var before = sim.Centroid.y;
+
+            sim.Hop(200f);
+            sim.StepFrame(Dt, env); // 一帧内质心应上移（Y 向下坐标系 = y 减小）
+
+            Assert.Less(sim.Centroid.y, before - 0.5f,
+                $"小蹦冲量应让质心上移（{before:F1} → {sim.Centroid.y:F1}）");
+        }
+
     }
 }
