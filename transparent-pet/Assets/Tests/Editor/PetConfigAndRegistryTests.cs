@@ -127,8 +127,8 @@ namespace TransparentPet.Tests
                     softbodyY = new[] { 350f, 360f },
                     texturedX = new[] { 1100f },
                     texturedY = new[] { 500f },
-                    ringsplitX = new[] { 1400f },
-                    ringsplitY = new[] { 300f },
+                    meshX = new[] { 1400f },
+                    meshY = new[] { 300f },
                 };
 
                 PetConfigStore.Save(config, path);
@@ -143,9 +143,9 @@ namespace TransparentPet.Tests
                 Assert.AreEqual(1, loaded.texturedX.Length);
                 Assert.AreEqual(1100f, loaded.texturedX[0]);
                 Assert.AreEqual(500f, loaded.texturedY[0]);
-                Assert.AreEqual(1, loaded.ringsplitX.Length);
-                Assert.AreEqual(1400f, loaded.ringsplitX[0]);
-                Assert.AreEqual(300f, loaded.ringsplitY[0]);
+                Assert.AreEqual(1, loaded.meshX.Length);
+                Assert.AreEqual(1400f, loaded.meshX[0]);
+                Assert.AreEqual(300f, loaded.meshY[0]);
             }
             finally
             {
@@ -167,8 +167,8 @@ namespace TransparentPet.Tests
             Assert.AreEqual(0, loaded.softbodyY.Length);
             Assert.AreEqual(0, loaded.texturedX.Length);
             Assert.AreEqual(0, loaded.texturedY.Length);
-            Assert.AreEqual(0, loaded.ringsplitX.Length);
-            Assert.AreEqual(0, loaded.ringsplitY.Length);
+            Assert.AreEqual(0, loaded.meshX.Length);
+            Assert.AreEqual(0, loaded.meshY.Length);
             Assert.AreEqual(0, loaded.glassSlimeX.Length);
         }
 
@@ -187,13 +187,13 @@ namespace TransparentPet.Tests
         [Test]
         public void SpeciesCatalog_ContainsFinalizedFourSpecies()
         {
-            // 用户拍板的"四种一起存在"：定稿三物种（贴图/果冻/分裂——当年展厅同屏的
-            // 三路观感）+ 后来加入的液态玻璃 = 四种并列；顺序即物种索引，勿重排
+            // 用户拍板的"四种一起存在"：展厅三路观感（贴图/果冻/碎裂）+ 新加入的
+            // 液态玻璃 = 四种并列；顺序即物种索引（设置窗口 add:/remove: 依赖）
             Assert.AreEqual(4, PetSpeciesCatalog.All.Count);
             Assert.AreEqual("glass", PetSpeciesCatalog.All[0].Id);
             Assert.AreEqual("textured", PetSpeciesCatalog.All[1].Id);
             Assert.AreEqual("softbody", PetSpeciesCatalog.All[2].Id);
-            Assert.AreEqual("ringsplit", PetSpeciesCatalog.All[3].Id);
+            Assert.AreEqual("mesh", PetSpeciesCatalog.All[3].Id);
         }
 
         [Test]

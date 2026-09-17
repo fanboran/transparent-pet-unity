@@ -21,11 +21,12 @@ namespace TransparentPet.Pet
         /// <summary>正交相机缩放基准（1 世界单位 = 100 屏幕像素）</summary>
         public const float PixelsPerUnit = 100f;
 
-        /// <summary>静息轮廓半宽（px）：Godot 原版 SVG 显示宽 ~176px（path 160×1.1）</summary>
-        const float BaseHalfWidth = 88f;
+        /// <summary>静息轮廓半宽（px）：默认 88 ≈ Godot 原版观感（V2 版本场景历史值）。
+        /// 多桌宠管理器生成时注入 PetMetrics.BaseFullWidthPx/2 = 160（物种平等，等大）。</summary>
+        public float BaseHalfWidth = 88f;
 
-        const float MinUserScale = 0.25f;
-        const float MaxUserScale = 2f;
+        const float MinUserScale = PetMetrics.MinScale;
+        const float MaxUserScale = PetMetrics.MaxScale;
 
         Camera mainCamera;
         SlimeMeshBody body;
@@ -164,6 +165,23 @@ namespace TransparentPet.Pet
         public bool IsHoverMode => hoverMode;
         public void SetSettledHover(bool settled) => hoverSettled = settled;
 
+        /// <summary>注入悬浮语义（V2 专属：落定关重力原地漂浮；多桌宠管理器创建时调用）。</summary>
+        public void SetHoverMode(bool hover)
+        {
+            hoverMode = hover;
+            hoverSettled = false;
+        }
+
+        /// <summary>撤销当前抓取（输入仲裁：被更高层宠物的点击抢占时调用），不给抛射速度</summary>
+        public void CancelGrab()
+        {
+            if (sim != null && sim.IsGrabbed)
+                sim.Release(0f, 0f, 1f, false);
+        }
+
+        /// <summary>物理模拟是否已就绪（Start 建好 SlimePbfMesh 后为 true；管理器持久化据此跳过未就绪个体）</summary>
+        public bool PhysicsReady => sim != null;
+
         // ── 环境/坐标工具 ──
 
         PbfMeshEnvironment BuildEnvironment() => new PbfMeshEnvironment
@@ -179,10 +197,15 @@ namespace TransparentPet.Pet
         /// Unity 的 Input.mousePosition 原点在左下、Y 向上；
         /// 工程物理层统一用 Godot 语义（左上原点、Y 向下），此处翻转 Y。
         /// </summary>
+        /// <summary>
+        /// 全局光标（左上原点、Y 向下，与工程物理层同系）。穿透态下
+        /// Input.mousePosition 会冻结——命中判定死锁、悬停永远无法上报（实测踩坑）。
+        /// </summary>
         static Vector2 MouseScreenPos()
         {
-            var m = Input.mousePosition;
-            return new Vector2(m.x, Screen.height - m.y);
+            return NativeWindowStyles.TryGetCursorPosition(out var x, out var y)
+                ? new Vector2(x, y)
+                : new Vector2(-1000f, -1000f); // 取不到光标的兜底：落在屏幕外 = 无命中
         }
 
         void SyncCameraToScreen()

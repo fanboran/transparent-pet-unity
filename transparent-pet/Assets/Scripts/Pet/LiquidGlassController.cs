@@ -62,7 +62,7 @@ namespace TransparentPet.Pet
 
         [Header("形状")]
         [Tooltip("史莱姆全宽（物理像素）；轮廓比例固定 160:101（底平顶圆趴姿）")]
-        public float SlimeWidthPx = 320f;
+        public float SlimeWidthPx = 200f;
 
         [Header("折射")]
         [Tooltip("玻璃厚度（px）：折射偏移带宽度，越大边缘弯曲越明显")]
@@ -115,6 +115,12 @@ namespace TransparentPet.Pet
 
         [Tooltip("窗口互操作（SceneGenerator 从 WindowController 注入）")]
         public UniWindowController WindowController;
+
+        [Header("测试舞台（四物种测试场景专用；交付场景不要勾）")]
+        [Tooltip("忽略已保存位置：始终单只出生在 TestSpawnPosition，且不写回配置（避免测试舞台污染玩家配置）")]
+        public bool IgnoreSavedPositions = false;
+        [Tooltip("IgnoreSavedPositions 生效时的出生点（逻辑屏幕坐标，左上原点）")]
+        public Vector2 TestSpawnPosition = new Vector2(400f, 300f);
 
         /// <summary>单只史莱姆的运行状态（位置即逻辑屏幕坐标，左上原点、Y 向下）。</summary>
         class Slime
@@ -467,6 +473,13 @@ namespace TransparentPet.Pet
 
         void LoadSlimes(PetConfig config)
         {
+            // 测试舞台：完全脱离玩家配置（不读也不写）
+            if (IgnoreSavedPositions)
+            {
+                slimes.Add(new Slime { pos = TestSpawnPosition, lastSaved = TestSpawnPosition });
+                return;
+            }
+
             // 多只数组优先；旧配置（单只 petScreenX/Y）迁移为单只；都没有则居中
             if (config.glassSlimeX != null && config.glassSlimeY != null
                 && config.glassSlimeX.Length == config.glassSlimeY.Length
@@ -504,6 +517,9 @@ namespace TransparentPet.Pet
 
         void UpdateSave()
         {
+            if (IgnoreSavedPositions)
+                return; // 测试舞台不写配置
+
             if (Time.time < nextSaveTime)
                 return;
 

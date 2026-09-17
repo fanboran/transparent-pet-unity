@@ -13,8 +13,9 @@ namespace TransparentPet.Pet
     /// <summary>跨物种共享的尺寸与缩放常量（改一处 = 全物种同步）。</summary>
     public static class PetMetrics
     {
-        /// <summary>静息姿态全宽（屏像素）：液态玻璃现状 320，其余物种向它对齐</summary>
-        public const float BaseFullWidthPx = 320f;
+        /// <summary>静息姿态全宽（屏像素）：向原版对齐（Godot/V6/V7 时代 ≈200×132），
+        /// 四物种统一，不再向液态玻璃的 320 看齐（用户拍板：之前太大了）</summary>
+        public const float BaseFullWidthPx = 200f;
 
         /// <summary>总缩放下限（设置窗口"总缩放"滑条与配置 petScale 共用）</summary>
         public const float MinScale = 0.5f;

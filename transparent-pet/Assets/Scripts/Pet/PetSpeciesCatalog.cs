@@ -31,14 +31,14 @@ namespace TransparentPet.Pet
     public static class PetSpeciesCatalog
     {
         /// <summary>全部内置物种（新增物种在此追加）。下标 = 物种索引，勿重排。
-        /// 用户拍板的"四种一起存在"：定稿三物种（贴图/果冻/分裂，即当年展厅同屏的
-        /// 三路观感）+ 后来加入的液态玻璃 = 四种并列。</summary>
+        /// 用户拍板的"四种一起存在"：展厅三路观感（贴图/果冻/碎裂）+ 新加入的液态玻璃。
+        /// 碎裂软体 = V2 PbfMesh（果冻同源 PBF 物理 + 等值线渲染，拉扯过猛碎成块）。</summary>
         public static readonly IReadOnlyList<SpeciesDef> All = new List<SpeciesDef>
         {
-            new SpeciesDef { Id = "glass",     DisplayName = "液态玻璃",   MaxCount = 3 },
-            new SpeciesDef { Id = "textured",  DisplayName = "贴图史莱姆", MaxCount = 3 },
-            new SpeciesDef { Id = "softbody",  DisplayName = "果冻软体",   MaxCount = 3 },
-            new SpeciesDef { Id = "ringsplit", DisplayName = "分裂软体",   MaxCount = 3 },
+            new SpeciesDef { Id = "glass",   DisplayName = "液态玻璃",   MaxCount = 3 },
+            new SpeciesDef { Id = "textured", DisplayName = "贴图史莱姆", MaxCount = 3 },
+            new SpeciesDef { Id = "softbody", DisplayName = "果冻软体",   MaxCount = 3 },
+            new SpeciesDef { Id = "mesh",     DisplayName = "碎裂软体",   MaxCount = 3 },
         };
 
         /// <summary>按 id 查下标；未命中返回 -1。</summary>

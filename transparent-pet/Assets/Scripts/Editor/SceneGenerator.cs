@@ -109,6 +109,9 @@ namespace TransparentPet.EditorTools
             BuildGalleryScene();
             scenes[Versions.Length] = new EditorBuildSettingsScene(GalleryScenePath, true);
 
+            // 四物种测试场景（灰白格 QA 舞台 + 宣传图合影来源）：不进构建设置，纯编辑器/演示用
+            GenerateFourSpeciesTestScene();
+
             EditorBuildSettings.scenes = scenes;
             AssetDatabase.SaveAssets();
             // 注意：不在此调用 AppIconSetup.Apply——batchmode 下 PlayerSettings 保存会让
@@ -302,7 +305,7 @@ namespace TransparentPet.EditorTools
                     // 软体材质复用 PBF 版的 SlimeLiquidMat（序列化进场景，构建后 Shader.Find 才有值）
                     var manager = petGo.AddComponent<PetManager>();
                     manager.SoftbodyMaterial = EnsureMaterial("TransparentPet/SlimeLiquid", SlimeLiquidMaterialPath);
-                    manager.RingSplitMaterial = EnsureMaterial("TransparentPet/SlimeRing", SlimeRingMaterialPath);
+                    manager.MeshMaterial = EnsureMaterial("TransparentPet/SlimeMesh", SlimeMeshMaterialPath);
                     petGo.AddComponent<PetRefractLayer>();
                     break;
                 }
@@ -378,6 +381,177 @@ namespace TransparentPet.EditorTools
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath));
             EditorSceneManager.SaveScene(scene, fullPath);
             Debug.Log($"[SceneGenerator] 展厅场景生成完成: {GalleryScenePath}（{GalleryPets.Length} 只同屏）");
+        }
+
+        // ── 四物种测试场景：灰白格 QA 舞台（四宫格宣传合影的拍摄来源）──
+
+        const string TestScenePath = "Assets/Scenes/Test/FourSpeciesCheckroom.unity";
+        const string CheckerTexturePath = "Assets/Art/Test/CheckerBoard.png";
+
+        [MenuItem("TransparentPet/生成四物种测试场景（灰白格）")]
+        public static void GenerateFourSpeciesTestSceneFromMenu() => GenerateFourSpeciesTestScene();
+
+        /// <summary>生成灰白格测试场景：四物种 2×2 摆位，可 Play 验收也可供合影截图工具取景。</summary>
+        public static void GenerateFourSpeciesTestScene()
+        {
+            var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            BuildFourSpeciesStage(scene);
+
+            var fullPath = System.IO.Path.GetFullPath(TestScenePath);
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath));
+            EditorSceneManager.SaveScene(scene, fullPath);
+            Debug.Log($"[SceneGenerator] 四物种测试场景生成完成: {TestScenePath}（灰白格 2×2）");
+        }
+
+        /// <summary>
+        /// 搭建四物种灰白格舞台（测试场景与合影截图共用同一套装配）：
+        /// 正交相机 + 灰白格背景板 + 四只史莱姆（左上玻璃/右上贴图/左下果冻/右下分裂）
+        /// + TestStageLayout 2×2 摆位。返回按物种 id 索引的宠物对象。
+        /// </summary>
+        internal static System.Collections.Generic.Dictionary<string, GameObject> BuildFourSpeciesStage(
+            UnityEngine.SceneManagement.Scene scene, string onlyId = null, bool withControllers = true)
+        {
+            var pets = new System.Collections.Generic.Dictionary<string, GameObject>();
+            System.Func<string, bool> want = id => onlyId == null || onlyId == id;
+
+            // 相机：正交、浅灰纯色底（格板四角露出时仍协调）
+            var cameraGo = new GameObject("Main Camera");
+            cameraGo.tag = "MainCamera";
+            var camera = cameraGo.AddComponent<Camera>();
+            camera.orthographic = true;
+            camera.orthographicSize = 5.4f;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = new Color(0.85f, 0.85f, 0.85f, 1f);
+            camera.allowHDR = false;
+            camera.transform.position = new Vector3(0f, 0f, -10f);
+
+            // 灰白格背景板：程序生成 8×8 棋盘格贴图，Unlit 平铺（经典透明度测试卡观感）
+            var checkerGo = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            checkerGo.name = "CheckerBoard";
+            checkerGo.transform.position = new Vector3(0f, 0f, 5f); // 宠物(z=0)身后、相机(z=-10)之前
+            checkerGo.transform.localScale = new Vector3(18f, 13.5f, 1f);
+            var checkerMat = new Material(Shader.Find("Unlit/Texture"));
+            checkerMat.mainTexture = EnsureCheckerTexture(CheckerTexturePath);
+            checkerGo.GetComponent<MeshRenderer>().sharedMaterial = checkerMat;
+
+            // 左上：液态玻璃（折射同款黑白格，不抓真实桌面；脱离玩家配置）
+            if (want("glass"))
+            {
+            var glassGo = new GameObject("Pet_glass");
+            glassGo.AddComponent<MeshFilter>();
+            glassGo.AddComponent<MeshRenderer>();
+            var glass = glassGo.AddComponent<LiquidGlassController>();
+            glass.MainShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassShaderPath);
+            glass.BgShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBgShaderPath);
+            glass.BlurShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBlurShaderPath);
+            glass.ComposeShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassComposeShaderPath);
+            glass.DesktopReflection = false;
+            glass.IgnoreSavedPositions = true;
+            pets["glass"] = glassGo;
+            }
+
+            // 右上：贴图史莱姆（V7 同款：精灵 + 抛射物理 + 生命感）
+            if (want("textured"))
+            {
+            var texturedGo = new GameObject("Pet_textured");
+            var spriteRenderer = texturedGo.AddComponent<SpriteRenderer>();
+            spriteRenderer.sprite = AssetDatabase.LoadAssetAtPath<Sprite>(PetTexturePath);
+            spriteRenderer.sharedMaterial = EnsureMaterial("Sprites/Default", BakedMaterialPath);
+            spriteRenderer.sortingOrder = 5;
+            if (withControllers)
+            {
+                var svg = texturedGo.AddComponent<SvgPetController>();
+                svg.BaseScale = 0.4f; // 物种平等：显示全宽 320px
+                texturedGo.AddComponent<PetLifeVisual>();
+            } // 截图模式：静态精灵即可（缩放由截图工具摆位）
+            pets["textured"] = texturedGo;
+            }
+
+            // 左下：果冻软体（PBF metaball）
+            if (want("softbody"))
+            {
+            var jellyGo = new GameObject("Pet_softbody");
+            jellyGo.AddComponent<MeshFilter>();
+            var jellyRenderer = jellyGo.AddComponent<MeshRenderer>();
+            jellyRenderer.sharedMaterial = EnsureMaterial("TransparentPet/SlimeLiquid", SlimeLiquidMaterialPath);
+            jellyGo.AddComponent<SlimeBody>();
+            if (withControllers)
+            {
+                var pbf = jellyGo.AddComponent<PetController>();
+                pbf.BaseHalfWidth = PetMetrics.BaseFullWidthPx * 0.5f;
+            } // 截图模式：SlimeBody 由截图工具手动 Push（控制器构造期 Random 在编辑器被禁）
+            pets["softbody"] = jellyGo;
+            }
+
+            // 右下：分裂软体（轮廓环）
+            // 右下：碎裂软体（V2 PbfMesh：果冻同源 PBF + 等值线渲染，拉猛碎成块；悬浮语义）
+            if (want("mesh"))
+            {
+            var meshGo = new GameObject("Pet_mesh");
+            meshGo.AddComponent<MeshFilter>();
+            var meshRenderer = meshGo.AddComponent<MeshRenderer>();
+            meshRenderer.sharedMaterial = EnsureMaterial("TransparentPet/SlimeMesh", SlimeMeshMaterialPath);
+            meshGo.AddComponent<SlimeMeshBody>();
+            if (withControllers)
+            {
+                var mesh = meshGo.AddComponent<MeshPetController>();
+                mesh.BaseHalfWidth = PetMetrics.BaseFullWidthPx * 0.5f;
+                var so = new SerializedObject(mesh);
+                so.FindProperty("hoverMode").boolValue = true; // V2 悬浮语义
+                so.ApplyModifiedProperties();
+            }
+            pets["mesh"] = meshGo;
+            }
+
+            var root = new GameObject("StageRoot");
+            foreach (var go in pets.Values)
+                go.transform.SetParent(root.transform);
+            if (onlyId == null)
+                root.AddComponent<TestStageLayout>(); // 完整舞台才挂运行时 2×2 摆位
+
+            // 窗口互操作：编辑器 Play 下托盘/穿透同链路（与展厅一致）
+            var windowGo = new GameObject("WindowController");
+            windowGo.AddComponent<UniWindowController>();
+            windowGo.AddComponent<PetWindowSetup>();
+
+            return pets;
+        }
+
+        /// <summary>生成（或复用）黑白格棋盘贴图：8×8 格、黑白两阶、Point 锐边（测试卡标准观感）。</summary>
+        static Texture2D EnsureCheckerTexture(string path)
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+            if (existing == null)
+            {
+
+            const int cells = 8, cell = 96;
+            const int size = cells * cell;
+            var tex = new Texture2D(size, size, TextureFormat.RGB24, false);
+            var light = new Color(0.980f, 0.980f, 0.980f); // 白格
+            var dark = new Color(0.078f, 0.078f, 0.078f);  // 黑格
+            var pixels = new Color[size * size];
+            for (var y = 0; y < size; y++)
+            {
+                for (var x = 0; x < size; x++)
+                {
+                    var isDark = ((x / cell) + (y / cell)) % 2 == 0;
+                    pixels[y * size + x] = isDark ? dark : light;
+                }
+            }
+            tex.SetPixels(pixels);
+            tex.Apply();
+
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetFullPath(System.IO.Path.GetDirectoryName(path)));
+            System.IO.File.WriteAllBytes(System.IO.Path.GetFullPath(path), tex.EncodeToPNG());
+            AssetDatabase.ImportAsset(path);
+            existing = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+            }
+
+            // 格子边缘锐利：Point 过滤写回资产（只改过滤模式，不动导入参数）
+            existing.filterMode = FilterMode.Point;
+            EditorUtility.SetDirty(existing);
+            AssetDatabase.SaveAssets();
+            return existing;
         }
     }
 }

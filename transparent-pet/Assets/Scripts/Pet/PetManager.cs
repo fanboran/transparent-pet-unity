@@ -30,8 +30,8 @@ namespace TransparentPet.Pet
         /// 必须序列化进场景——运行时创建的材质不构成打包引用，构建后 Shader.Find 为 null）。</summary>
         public Material SoftbodyMaterial;
 
-        /// <summary>分裂软体物种的渲染材质（SlimeRing 顶点环；SceneGenerator 赋值，同上理由）。</summary>
-        public Material RingSplitMaterial;
+        /// <summary>碎裂软体物种的渲染材质（SlimeMesh 等值线场；SceneGenerator 赋值，同上理由）。</summary>
+        public Material MeshMaterial;
 
         /// <summary>新增时与最后一只的横向间距（屏像素）：320 全宽 + 富余</summary>
         const float SpawnGapPx = 380f;
@@ -52,16 +52,16 @@ namespace TransparentPet.Pet
             public Vector2 LastSaved;
         }
 
-        class RingSplitInstance
+        class MeshInstance
         {
-            public SplitPetController Pet;
+            public MeshPetController Pet;
             public Vector2 SpawnPos;
             public Vector2 LastSaved;
         }
 
         readonly List<SoftbodyInstance> softbodies = new();
         readonly List<TexturedInstance> textureds = new();
-        readonly List<RingSplitInstance> ringsplits = new();
+        readonly List<MeshInstance> meshes = new();
         float nextSaveTime; // 位置落盘节流（与液态玻璃同策略：≥1s 且有变化才写）
 
         /// <summary>贴图精灵资源（Assets/Resources/PetSlime.png，导入即 Sprite）懒加载缓存。</summary>
@@ -73,8 +73,8 @@ namespace TransparentPet.Pet
         /// <summary>当前贴图史莱姆数量（装配方/测试读取）。</summary>
         public int TexturedCount => textureds.Count;
 
-        /// <summary>当前分裂软体数量（装配方/测试读取）。</summary>
-        public int RingSplitCount => ringsplits.Count;
+        /// <summary>当前碎裂软体数量（装配方/测试读取）。</summary>
+        public int MeshCount => meshes.Count;
 
         void Awake() => Instance = this;
 
@@ -89,7 +89,7 @@ namespace TransparentPet.Pet
             var fresh = !PetConfigStore.Load().speciesInitialized;
             LoadTextureds();
             LoadSoftbodies();
-            LoadRingSplits();
+            LoadMeshes();
             if (fresh)
                 SpawnInitialAirborne(); // 首启：四物种空中出生（玻璃由自家控制器负责落下）
         }
@@ -106,7 +106,7 @@ namespace TransparentPet.Pet
             var h = NativeScreen.GetWorkAreaBottomY();
             AddSoftbody(new Vector2(w * 0.28f, h * 0.15f));
             AddTextured(new Vector2(w * 0.62f, h * 0.15f));
-            AddRingSplit(new Vector2(w * 0.84f, h * 0.26f));
+            AddMesh(new Vector2(w * 0.84f, h * 0.26f));
 
             var config = PetConfigStore.Load();
             config.speciesInitialized = true;
@@ -118,7 +118,7 @@ namespace TransparentPet.Pet
             DrainManagerChanges();
             SaveTexturedsIfNeeded();
             SaveSoftbodiesIfNeeded();
-            SaveRingSplitsIfNeeded();
+            SaveMeshesIfNeeded();
         }
 
         // ── 设置变更消费（主线程）──
@@ -151,8 +151,8 @@ namespace TransparentPet.Pet
                 AddTextured();
             if (species == SoftbodySpeciesIndex)
                 AddSoftbody();
-            if (species == RingSplitSpeciesIndex)
-                AddRingSplit();
+            if (species == MeshSpeciesIndex)
+                AddMesh();
         }
 
         /// <summary>按物种索引移除最后一只（空了忽略；玻璃后端自带"至少一只"约束）。</summary>
@@ -167,8 +167,8 @@ namespace TransparentPet.Pet
                 RemoveLastTextured();
             if (species == SoftbodySpeciesIndex)
                 RemoveLastSoftbody();
-            if (species == RingSplitSpeciesIndex)
-                RemoveLastRingSplit();
+            if (species == MeshSpeciesIndex)
+                RemoveLastMesh();
         }
 
         // ── 贴图史莱姆物种 ──
@@ -465,54 +465,54 @@ namespace TransparentPet.Pet
             }
         }
 
-        void LoadRingSplits()
+        void LoadMeshes()
         {
             var config = PetConfigStore.Load();
-            if (config.ringsplitX == null || config.ringsplitY == null
-                || config.ringsplitX.Length != config.ringsplitY.Length
-                || config.ringsplitX.Length == 0)
+            if (config.meshX == null || config.meshY == null
+                || config.meshX.Length != config.meshY.Length
+                || config.meshX.Length == 0)
                 return; // 从未保存过：默认 0 只
 
-            var max = PetSpeciesCatalog.All[RingSplitSpeciesIndex].MaxCount;
-            var count = Mathf.Min(config.ringsplitX.Length, max);
+            var max = PetSpeciesCatalog.All[MeshSpeciesIndex].MaxCount;
+            var count = Mathf.Min(config.meshX.Length, max);
             for (var i = 0; i < count; i++)
             {
-                var pos = new Vector2(config.ringsplitX[i], config.ringsplitY[i]);
-                ringsplits.Add(new RingSplitInstance
+                var pos = new Vector2(config.meshX[i], config.meshY[i]);
+                meshes.Add(new MeshInstance
                 {
-                    Pet = CreateRingSplit(pos),
+                    Pet = CreateMesh(pos),
                     SpawnPos = pos,
                     LastSaved = pos,
                 });
             }
         }
 
-        void SaveRingSplitsIfNeeded()
+        void SaveMeshesIfNeeded()
         {
             if (Time.time < nextSaveTime)
                 return;
 
             var config = PetConfigStore.Load();
-            config.ringsplitX = new float[ringsplits.Count];
-            config.ringsplitY = new float[ringsplits.Count];
+            config.meshX = new float[meshes.Count];
+            config.meshY = new float[meshes.Count];
 
             var moved = false;
-            for (var i = 0; i < ringsplits.Count; i++)
+            for (var i = 0; i < meshes.Count; i++)
             {
-                var inst = ringsplits[i];
+                var inst = meshes[i];
                 if (inst.Pet == null)
                     return; // 场景卸载中（Unity 伪 null）：本帧不写
 
                 if (!inst.Pet.PhysicsReady)
                 {
-                    config.ringsplitX[i] = inst.LastSaved.x; // 物理未就绪沿用上次值
-                    config.ringsplitY[i] = inst.LastSaved.y;
+                    config.meshX[i] = inst.LastSaved.x; // 物理未就绪沿用上次值
+                    config.meshY[i] = inst.LastSaved.y;
                     continue;
                 }
 
                 var pos = inst.Pet.ScreenPosition;
-                config.ringsplitX[i] = pos.x;
-                config.ringsplitY[i] = pos.y;
+                config.meshX[i] = pos.x;
+                config.meshY[i] = pos.y;
                 if ((pos - inst.LastSaved).sqrMagnitude >= 25f)
                 {
                     moved = true;
@@ -520,74 +520,74 @@ namespace TransparentPet.Pet
                 }
             }
 
-            if (moved || ringsplits.Count != lastSavedRingSplitCount)
+            if (moved || meshes.Count != lastSavedMeshCount)
             {
                 PetConfigStore.Save(config);
-                lastSavedRingSplitCount = ringsplits.Count;
+                lastSavedMeshCount = meshes.Count;
             }
         }
 
         // ── 分裂软体物种 ──
 
         /// <summary>加一只分裂软体：上一只右侧错开（airPos 显式指定时直接用），超上限忽略。</summary>
-        void AddRingSplit(Vector2? airPos = null)
+        void AddMesh(Vector2? airPos = null)
         {
-            var max = PetSpeciesCatalog.All[RingSplitSpeciesIndex].MaxCount;
-            if (ringsplits.Count >= max)
+            var max = PetSpeciesCatalog.All[MeshSpeciesIndex].MaxCount;
+            if (meshes.Count >= max)
                 return;
-            if (RingSplitMaterial == null)
+            if (MeshMaterial == null)
             {
-                Debug.LogError("[PetManager] 未注入 RingSplitMaterial，无法创建分裂软体（SceneGenerator 装配缺失？）");
+                Debug.LogError("[PetManager] 未注入 MeshMaterial，无法创建碎裂软体（SceneGenerator 装配缺失？）");
                 return;
             }
 
             // 摆位：显式注入（初始入场）优先；否则上一只右侧 380px；
             // 第一只放屏幕上部中央（它平时悬浮，不与落地的软体/贴图挤在一排）
             var anchor = airPos
-                ?? (ringsplits.Count > 0
-                    ? ringsplits[ringsplits.Count - 1].SpawnPos + new Vector2(SpawnGapPx, 0f)
+                ?? (meshes.Count > 0
+                    ? meshes[meshes.Count - 1].SpawnPos + new Vector2(SpawnGapPx, 0f)
                     : new Vector2(NativeScreen.GetWorkAreaWidth() * 0.5f,
                                   NativeScreen.GetWorkAreaBottomY() * 0.28f));
             anchor += new Vector2(
                 Random.Range(-SpawnJitterPx, SpawnJitterPx),
                 Random.Range(-SpawnJitterPx, SpawnJitterPx));
 
-            ringsplits.Add(new RingSplitInstance
+            meshes.Add(new MeshInstance
             {
-                Pet = CreateRingSplit(anchor),
+                Pet = CreateMesh(anchor),
                 SpawnPos = anchor,
                 LastSaved = anchor,
             });
         }
 
-        void RemoveLastRingSplit()
+        void RemoveLastMesh()
         {
-            if (ringsplits.Count == 0)
+            if (meshes.Count == 0)
                 return;
-            var last = ringsplits[ringsplits.Count - 1];
-            ringsplits.RemoveAt(ringsplits.Count - 1);
+            var last = meshes[meshes.Count - 1];
+            meshes.RemoveAt(meshes.Count - 1);
             if (last.Pet != null)
                 Destroy(last.Pet.gameObject);
         }
 
         /// <summary>
-        /// 创建一只分裂软体。挂场景根（绝不挂全屏 quad）、层 PetRefract（进折射链路，
-        /// 撞墙分裂出的分身由 SplitPetController 自动继承同层）。
+        /// 创建一只碎裂软体（V2 PbfMesh：果冻同源 PBF 物理 + 等值线渲染，拉猛碎成块）。
+        /// 挂场景根（绝不挂全屏 quad）、层 PetRefract（进折射链路）。
         /// </summary>
-        SplitPetController CreateRingSplit(Vector2 spawnPx)
+        MeshPetController CreateMesh(Vector2 spawnPx)
         {
-            var go = new GameObject("RingSplitPet");
+            var go = new GameObject("MeshPet");
             go.layer = ResolveRefractLayer();
 
-            // SlimeRingBody 的 RequireComponent 会自动补 MeshFilter/MeshRenderer
-            go.AddComponent<SlimeRingBody>();
-            go.GetComponent<MeshRenderer>().sharedMaterial = RingSplitMaterial;
+            // SlimeMeshBody 的 RequireComponent 会自动补 MeshFilter/MeshRenderer
+            go.AddComponent<SlimeMeshBody>();
+            go.GetComponent<MeshRenderer>().sharedMaterial = MeshMaterial;
 
-            var pet = go.AddComponent<SplitPetController>();
-            pet.BaseRadiusX = PetMetrics.BaseFullWidthPx * 0.5f;          // 物种平等：与玻璃等宽
-            pet.BaseRadiusY = PetMetrics.BaseFullWidthPx * 0.5f * 60f / 92f; // 高度随原 200:132 观感等比
+            var pet = go.AddComponent<MeshPetController>();
+            pet.BaseHalfWidth = PetMetrics.BaseFullWidthPx * 0.5f; // 物种平等：200px 基准半宽
             pet.SetSpawnOverride(spawnPx);
             pet.SetPersistPosition(false); // 位置由本管理器按只持久化
+            pet.SetHoverMode(true);        // V2 语义：出生落地后浮住，拉猛碎成块
             var characters = CharacterRegistry.All;
             pet.ApplyCharacterDirect(characters[0].Id);
             return pet;
@@ -599,11 +599,11 @@ namespace TransparentPet.Pet
         static readonly int GlassSpeciesIndex = PetSpeciesCatalog.IndexOf("glass");
         static readonly int TexturedSpeciesIndex = PetSpeciesCatalog.IndexOf("textured");
         static readonly int SoftbodySpeciesIndex = PetSpeciesCatalog.IndexOf("softbody");
-        static readonly int RingSplitSpeciesIndex = PetSpeciesCatalog.IndexOf("ringsplit");
+        static readonly int MeshSpeciesIndex = PetSpeciesCatalog.IndexOf("mesh");
 
         int lastSavedTexturedCount = -1;  // 强制首轮落盘一次，确立数组存在
         int lastSavedSoftbodyCount = -1;
-        int lastSavedRingSplitCount = -1;
+        int lastSavedMeshCount = -1;
 
         void OnSettingsOpenRequested(bool show)
         {
@@ -618,7 +618,7 @@ namespace TransparentPet.Pet
             counts[GlassSpeciesIndex] = glass != null ? glass.SlimeCount : 0;
             counts[TexturedSpeciesIndex] = textureds.Count;
             counts[SoftbodySpeciesIndex] = softbodies.Count;
-            counts[RingSplitSpeciesIndex] = ringsplits.Count;
+            counts[MeshSpeciesIndex] = meshes.Count;
 
             var config = PetConfigStore.Load();
             NativeSettingsWindow.ShowOrActivate(new SettingsSnapshot

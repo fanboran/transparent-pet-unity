@@ -48,7 +48,7 @@ namespace TransparentPet.EditorTools
             controller.BgShader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/Art/Shaders/LiquidGlassBg.shader");
             controller.BlurShader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/Art/Shaders/LiquidGlassBlur.shader");
             controller.ComposeShader = AssetDatabase.LoadAssetAtPath<Shader>("Assets/Art/Shaders/LiquidGlassCompose.shader");
-            controller.SetSlimeWidthForCapture(320f);
+            controller.SetSlimeWidthForCapture(200f);
             controller.SetLogicPositionForCapture(new Vector2(W * 0.5f, H * 0.5f));
 
             var rt = new RenderTexture(W, H, 24);

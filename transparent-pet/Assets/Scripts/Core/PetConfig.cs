@@ -74,9 +74,9 @@ namespace TransparentPet.Core
         public float[] texturedX = System.Array.Empty<float>();
         public float[] texturedY = System.Array.Empty<float>();
 
-        /// <summary>分裂软体各只（主体）的质心屏幕位置（左上原点，成对使用；PetManager 持有）。</summary>
-        public float[] ringsplitX = System.Array.Empty<float>();
-        public float[] ringsplitY = System.Array.Empty<float>();
+        /// <summary>碎裂软体各只的质心屏幕位置（左上原点，成对使用；PetManager 持有）。</summary>
+        public float[] meshX = System.Array.Empty<float>();
+        public float[] meshY = System.Array.Empty<float>();
 
         /// <summary>多物种初始入场是否已执行过（首次启动四物种空中出生并落位；
         /// 落位后写 true——之后完全跟随用户配置，绝不"复活"被删光的物种）。</summary>
