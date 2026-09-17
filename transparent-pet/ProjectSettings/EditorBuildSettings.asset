@@ -32,4 +32,7 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/Showcase/PetGallery.unity
     guid: 6bb1dee40268e934cb37c17123a5619f
+  - enabled: 1
+    path: Assets/Scenes/Versions/V9LiquidGlassDesktop/Solo.unity
+    guid: 7f757bb951d808d459dc622911632429
   m_configObjects: {}

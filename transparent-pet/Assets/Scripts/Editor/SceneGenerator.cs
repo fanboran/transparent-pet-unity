@@ -78,6 +78,13 @@ namespace TransparentPet.EditorTools
                 "V8 · 液态玻璃版（V9 的素材回退形态）：史莱姆形状 SDF 液态玻璃，折射/色散/菲涅尔/眩光；棋盘格素材只在玻璃内可见，玻璃外保持透明"),
         };
 
+        /// <summary>
+        /// 亚克力独享场景（V9 单玻璃形态）：与 V9 主场景同目录——同一版本的"只养玻璃"
+        /// 交付形态（用户拍板双包拆分：PetAcrylic 单玻璃 / PetSpike 四物种）。
+        /// 构建设置排在最后，index 0 仍是 V9 主场景（四物种交付默认）。
+        /// </summary>
+        const string SoloScenePath = "Assets/Scenes/Versions/V9LiquidGlassDesktop/Solo.unity";
+
         const string SlimeMaterialPath = "Assets/Art/Pet/SlimeMat.mat";             // Slime.shader（SVG 版）
         const string SlimeLiquidMaterialPath = "Assets/Art/Pet/SlimeLiquidMat.mat"; // SlimeLiquid.shader（PBF 版）
         const string SlimeRingMaterialPath = "Assets/Art/Pet/SlimeRingMat.mat";     // SlimeRing.shader（轮廓环软体版）
@@ -96,7 +103,7 @@ namespace TransparentPet.EditorTools
         {
             ConfigurePetTextureImporter();
 
-            var scenes = new EditorBuildSettingsScene[Versions.Length + 1];
+            var scenes = new EditorBuildSettingsScene[Versions.Length + 2];
             for (var i = 0; i < Versions.Length; i++)
             {
                 var (path, kind, hoverMode, description) = Versions[i];
@@ -108,6 +115,11 @@ namespace TransparentPet.EditorTools
             // 展厅排在版本场景之后：index 0 仍是交付默认版本（展厅只作演示，由 BuildPlayer 单独指定）
             BuildGalleryScene();
             scenes[Versions.Length] = new EditorBuildSettingsScene(GalleryScenePath, true);
+
+            // 亚克力独享场景（V9 单玻璃形态）：构建设置垫底——不占 index 0，仅供 BuildPlayer 指定打包
+            BuildPetScene(SoloScenePath, PetKind.LiquidGlassDesktop, false, withManager: false);
+            scenes[Versions.Length + 1] = new EditorBuildSettingsScene(SoloScenePath, true);
+            Debug.Log("[SceneGenerator] 亚克力独享场景生成完成: " + SoloScenePath);
 
             // 四物种测试场景（灰白格 QA 舞台 + 宣传图合影来源）：不进构建设置，纯编辑器/演示用
             GenerateFourSpeciesTestScene();
@@ -157,7 +169,16 @@ namespace TransparentPet.EditorTools
         }
 
         /// <summary>构建一个版本场景。hoverMode 经 SerializedObject 注入（场景级语义，非运行时开关）。</summary>
-        static void BuildPetScene(string scenePath, PetKind kind, bool hoverMode)
+        static void BuildPetScene(string scenePath, PetKind kind, bool hoverMode) =>
+            BuildPetScene(scenePath, kind, hoverMode, withManager: true);
+
+        /// <summary>
+        /// 构建一个版本场景。withManager=false 为"亚克力独享"形态：V9 玻璃管线原样，
+        /// 但不挂 PetManager（其他三物种不生成）——液态玻璃成为唯一物种，设置窗口
+        /// 回退单物种形态（LiquidGlassController 兜底快照）。用户拍板拆分双包交付
+        /// （2026-09-17）：PetAcrylic 只养玻璃、PetSpike 四物种同屏。
+        /// </summary>
+        static void BuildPetScene(string scenePath, PetKind kind, bool hoverMode, bool withManager)
         {
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
@@ -181,7 +202,7 @@ namespace TransparentPet.EditorTools
             var windowController = windowGo.AddComponent<UniWindowController>();
             windowGo.AddComponent<PetWindowSetup>();
 
-            AddPetComponents(petGo, kind, hoverMode, windowController);
+            AddPetComponents(petGo, kind, hoverMode, windowController, withManager);
 
             // 多物种场景（V9）：PetRefract 层只由 PetRefractLayer 的捕获相机画进折射 RT，
             // 主相机必须剔除——否则其他物种会直接画在玻璃上面（既挡住折射观感，又与
@@ -206,10 +227,11 @@ namespace TransparentPet.EditorTools
 
         /// <summary>
         /// 按版本类型给宠物对象装配组件——版本场景与展厅共用，保证"展厅里看到的就是
-        /// 各版本场景里的同一套实现"（避免两处装配漂移）。
+        /// 各版本场景里的同一套实现"（避免两处装配漂移）。withManager=false 为亚克力
+        /// 独享形态（V9 玻璃管线 + 不挂多物种管理器）。
         /// </summary>
         static void AddPetComponents(GameObject petGo, PetKind kind, bool hoverMode,
-            UniWindowController windowController = null)
+            UniWindowController windowController = null, bool withManager = true)
         {
             switch (kind)
             {
@@ -301,6 +323,9 @@ namespace TransparentPet.EditorTools
                     glass.DesktopReflection = true;
                     glass.CaptureInvisible = true;
                     glass.WindowController = windowController;
+                    // 亚克力独享形态到此为止（无管理器 = 其他物种永不生成，玻璃自管增删）
+                    if (!withManager)
+                        break;
                     // 多桌宠管理器：物种注册表驱动（液态玻璃增删转发 + 果冻软体动态创建）；
                     // 软体材质复用 PBF 版的 SlimeLiquidMat（序列化进场景，构建后 Shader.Find 才有值）
                     var manager = petGo.AddComponent<PetManager>();
@@ -329,6 +354,14 @@ namespace TransparentPet.EditorTools
             (PetKind.SvgClassic, false, "V5 · 玻璃着色器 Slime.shader"),
             (PetKind.Pbf,        false, "V3 · PBF 流体（metaball 渲染 · 重力落地）"),
         };
+
+        [MenuItem("TransparentPet/生成亚克力独享场景（V9 单玻璃）")]
+        public static void GenerateSoloFromMenu()
+        {
+            ConfigurePetTextureImporter();
+            BuildPetScene(SoloScenePath, PetKind.LiquidGlassDesktop, false, withManager: false);
+            AssetDatabase.SaveAssets();
+        }
 
         [MenuItem("TransparentPet/生成展厅场景（各版本同屏）")]
         public static void GenerateGalleryFromMenu()

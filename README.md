@@ -34,9 +34,14 @@
 
 ## 快速开始
 
-**下载现成构建**：[Releases](https://github.com/fanboran/transparent-pet-unity/releases)（`PetSpike.zip`，解压即用）
+**下载现成构建**：[Releases](https://github.com/fanboran/transparent-pet-unity/releases)（解压即用）
 
-**直接体验（Windows）**：运行 `Builds/PetSpike.exe`（无窗口、进托盘，右键托盘图标可设置/退出）。
+**双包交付（Windows）**：同一桌宠的两种发行形态，可同时运行对比——
+
+- `PetAcrylic.exe`：**亚克力独享版**——只养一只液态玻璃（折射真实桌面），无其他物种
+- `PetSpike.exe`：**四物种版**（交付默认）——液态玻璃/贴图史莱姆/果冻软体/碎裂软体同屏，首启四只空中入场
+
+无窗口、进托盘，右键托盘图标可设置/退出。
 
 **从源码构建**：
 
@@ -46,17 +51,22 @@
   -projectPath "transparent-pet" \
   -executeMethod TransparentPet.EditorTools.SceneGenerator.GenerateAll
 
-# 构建 Windows x64（输出 transparent-pet/Builds/PetSpike.exe，构建后自动注入应用图标）
+# 构建四物种版（输出 transparent-pet/Builds/PetSpike.exe，构建后自动注入应用图标）
 "F:/Unity/2022.3.62f1c1/Editor/Unity.exe" -batchmode -quit \
   -projectPath "transparent-pet" \
   -executeMethod TransparentPet.EditorTools.BuildPlayer.BuildWindows64
+
+# 构建亚克力独享版（输出 transparent-pet/Builds/PetAcrylic.exe）
+"F:/Unity/2022.3.62f1c1/Editor/Unity.exe" -batchmode -quit \
+  -projectPath "transparent-pet" \
+  -executeMethod TransparentPet.EditorTools.BuildPlayer.BuildAcrylicWindows64
 ```
 
 编辑器内体验：Unity Hub 打开 `transparent-pet/`，打开 `Assets/Scenes/Versions/V9LiquidGlassDesktop/PetScene.unity`（交付默认：四物种 + 真桌面折射）直接 Play（透明/穿透行为需在构建产物中验证）；纯素材回退形态见 `V8LiquidGlass/PetScene.unity`。
 
 ## 已知限制与故障处理
 
-- **多开**：由 `CrashGuard` 的命名互斥体做单实例保护——已有实例在运行时再次双击，新进程会立即自退出。例外：两次启动几乎同时（间隔 < 约 20 秒、前一个实例尚未稳定）时，后启动的进程可能卡在显卡初始化（Windows/驱动层的资源竞争，此时应用代码还未开始运行，无法拦截），任务管理器结束它即可
+- **多开**：由 `CrashGuard` 的命名互斥体做单实例保护（按 exe 名区分）——同一 exe 已在运行时再次双击，新进程会立即自退出；`PetAcrylic` 与 `PetSpike` 是不同进程名，可同时运行（双包对比形态，配置互通）。例外：两次启动几乎同时（间隔 < 约 20 秒、前一个实例尚未稳定）时，后启动的进程可能卡在显卡初始化（Windows/驱动层的资源竞争，此时应用代码还未开始运行，无法拦截），任务管理器结束它即可
 - **异常自愈**：启动看门狗（30 秒未进入渲染循环即硬退出，独立线程执行以免主线程卡死时失效）、托管层未处理异常兜底、构建产物不包含崩溃处理器（`UnityCrashHandler64.exe`，它在崩溃时会挂起进程）——异常路径一律"死得干净"，进程始终可被正常终止
 - **万一失控**（窗口残留 / 进程不响应）：任务管理器结束 `PetSpike.exe` 即可；极少数情况下进程会卡在显卡驱动调用中导致无法结束（Windows 层面的现象，非本程序可拦截），此时注销或重启系统清除
 - 窗口是全屏透明覆盖层（宠物可在屏幕任意位置移动），这是透明桌宠的常规实现；对应代价是"渲染异常时遮挡整个桌面"。若需进一步降低失败影响面，可改为窗口跟随宠物包围盒（见 [docs/待办事项.md](docs/待办事项.md)）
