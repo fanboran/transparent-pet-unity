@@ -3,6 +3,8 @@
 > 一张贴在桌面上的“活”史莱姆：透明置顶窗口、像素级点击穿透、拖拽抛掷物理、呼吸与挤压的生命感。
 > Unity 2022.3 重制版，是 Godot 4 桌宠原版（Project Astra）的引擎迁移实践——玩法规则不变，实现全部重写。
 
+![实拍：液态玻璃在桌面上放大 UI](docs/images/glass_desktop.jpg)
+
 ![拖拽抛掷演示](docs/images/throw.gif)
 
 ![四物种合影（黑白格测试场景）](docs/images/four_species.png)
