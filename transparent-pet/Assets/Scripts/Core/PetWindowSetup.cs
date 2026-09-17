@@ -164,37 +164,48 @@ namespace TransparentPet.Core
             // 编辑器下绝不执行：会把 Unity 编辑器自己的窗口从任务栏藏掉
             yield break;
 #else
-            // SplashHider 在启动画面期间把窗口藏起来了。UniWinC 的透明要几帧才真正生效，
-            // 显示太早会闪现一下未透明窗口（用户报告的"很短一瞬间灰屏"）。故先等渲染稳定再显示
-            yield return new WaitForSecondsRealtime(1.2f);
-            if (!NativeWindowStyles.ReleaseMainWindow())
-                Debug.LogWarning("[PetWindowSetup] 未找到主窗口句柄，启动画面屏蔽的恢复显示未执行");
+            // 启动时序（规避 Unity 个人版开场标 + 防不透明闪现）：
+            // SplashHider 已把窗口藏起来 → 等透明管线就绪 → 一次性显示 + alpha 渐入。
+            // 【实测教训】旧实现"显示 → 压 alpha=0 → 等就绪 → 渐入"三段式：delays
+            // 循环 0.5s 时就 SetVisible 显示了窗口，而 alpha=0 要等 UniWinC attach
+            // 后才真正下发——窗口以不透明状态亮几秒、消失、再渐入，用户看到的就是
+            // "出现 → 消失 → 再出现"（每次启动必现，被当灵异 bug 报了两次）。
+            // 现在就绪前窗口保持隐藏（用户什么都看不到），就绪后直接渐入淡入。
 
-            // 防闪现：窗口级 alpha 先压到 0（Unity 记忆的全屏窗口即便显示也不可见），
-            // 待 UniWinC attach + 透明管线就绪后再渐入。alphaValue 由 UniWinC 缓存，
-            // attach 时序内设置也能在就绪后正确下发。
+            // 先把窗口级 alpha 压 0（UniWinC 缓存，attach 完成即生效）——
+            // 兜底路径提前显示窗口时也不闪不透明内容
             window.alphaValue = 0f;
 
-            // 等窗口就绪；UniWinC 在切换透明/置顶时会重设窗口样式，做多次重试兜底
-            var delays = new[] { 0.5f, 1f, 3f };
-            foreach (var delay in delays)
+            var shown = false;
+            var waited = 0f;
+            while (!window.isTransparent && waited < 8f)
             {
-                yield return new WaitForSeconds(delay);
-                // requireVisible:false：主窗口可能仍是隐藏状态（上面恢复失败时），
-                // 按可见性过滤会找不到它，显示与任务栏处理就会静默失效
+                // 2s 兜底：attach 迟迟不完成就先显示（alpha=0 压着，最坏闪一下），
+                // 绝不冒"永远隐形"的险
+                if (waited >= 2f && !shown)
+                {
+                    NativeWindowStyles.ReleaseMainWindow();
+                    var hwnd = NativeWindowStyles.FindCurrentProcessTopLevelWindow(requireVisible: false);
+                    NativeWindowStyles.HideFromTaskbar(hwnd);
+                    NativeWindowStyles.SetVisible(hwnd, true);
+                    shown = true;
+                }
+                waited += 0.1f;
+                yield return new WaitForSeconds(0.1f);
+            }
+            yield return new WaitForSeconds(0.2f); // 透明就绪后再稳一拍
+
+            if (!shown)
+            {
+                // 正常路径：透明已就绪，一次性显示（requireVisible:false：窗口还藏着）
+                NativeWindowStyles.ReleaseMainWindow();
                 var hwnd = NativeWindowStyles.FindCurrentProcessTopLevelWindow(requireVisible: false);
                 NativeWindowStyles.HideFromTaskbar(hwnd);
                 NativeWindowStyles.SetVisible(hwnd, true);
             }
 
-            // 等透明管线确认就绪后渐入（超时 5s 兜底强显，避免永远隐形）
-            var waited = 0f;
-            while (!window.isTransparent && waited < 5f)
-            {
-                waited += 0.1f;
-                yield return new WaitForSeconds(0.1f);
-            }
-            yield return new WaitForSeconds(0.3f);
+            // alpha 渐入：此刻透明管线已就绪，渐入的每一帧都是透明合成——
+            // 宠物一次性淡入，中间没有可见性往返
             for (var a = 0f; a < 1f; a += 0.1f)
             {
                 window.alphaValue = Mathf.Clamp01(a);

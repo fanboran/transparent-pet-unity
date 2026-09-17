@@ -440,8 +440,15 @@ Shader "TransparentPet/LiquidGlass"
 
                         if (edgeFactor <= 0.0)
                         {
-                            // 无偏移 → 直接模糊底 + 种类着色
-                            outColor = tex2D(_BlurredBg, i.uv);
+                            // 中心区（深度超出折射带）直接透出清晰桌面，仅在靠近
+                            // 折射带处平滑过渡到模糊底（避免清晰度圆环跳变）。
+                            // 【观感缺陷修复】旧实现整块中心采 _BlurredBg——玻璃
+                            // 内蒙 6px 高斯 + Tint 白，用户实测"不透明/发白/清晰度
+                            // 低"；液态玻璃放大镜的中心本该清透，磨砂留给边缘带。
+                            float4 clearBg = tex2D(_Bg, i.uv);
+                            float4 blurredBg = tex2D(_BlurredBg, i.uv);
+                            float blurMix = 1.0 - smoothstep(0.0, _RefThickness * 0.6, nmerged - _RefThickness);
+                            outColor.rgb = lerp(clearBg.rgb, blurredBg.rgb, blurMix);
                             outColor.rgb = lerp(outColor.rgb, kindTint.rgb, kindTint.a);
                         }
                         else

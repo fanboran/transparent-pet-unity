@@ -96,7 +96,7 @@ namespace TransparentPet.Pet
         public bool BlurEdge = false;
 
         [Header("色调（A = 着色强度）")]
-        public Color Tint = new(1f, 1f, 1f, 0.08f);
+        public Color Tint = new(1f, 1f, 1f, 0.04f); // 0.08 时代玻璃整体蒙白（用户实测"发白/不透明"），减半保玻璃感
 
         [Header("投影（轮廓外环带，alpha 恒低于穿透阈值 0.35）")]
         public float ShadowExpand = 26f;
@@ -616,7 +616,9 @@ namespace TransparentPet.Pet
                 NativeScreenCapture.TryGetWindowRect(hwnd, out var rx, out var ry, out var rw, out var rh);
                 Debug.Log($"[LiquidGlass] mouse=({mouseTop.x:0},{mouseTop.y:0}) count={slimes.Count} " +
                           $"onSlime={(hit != null)} pix={mainCamera.pixelWidth}x{mainCamera.pixelHeight} " +
-                          $"winRect=({rx},{ry},{rw}x{rh})");
+                          $"winRect=({rx},{ry},{rw}x{rh}) " +
+                          $"采样状态: bg={(bgRT != null ? "ok" : "null")} 桌面抓屏={(lastDesktopCaptureOk ? "ok" : "失败(回退素材)")} " +
+                          $"折射源={(DesktopReflection && captureInvisibleActive ? "真实桌面" : "程序化素材")}");
             }
 
             // 悬停自报：窗口层据此决定整窗穿透（与贴图/PBF 版本同契约）
@@ -771,24 +773,26 @@ namespace TransparentPet.Pet
             }
 
             // 2) 分离式高斯模糊：source →(竖)→ vRT →(横)→ hRT
+            // 像素域观感参数（折射带/模糊/眩光/阴影，px 单位）按 320px 调参基准随体型
+            // 等比缩放——体型改 200px 后不缩放会让整身落进折射带、糊成磨砂（实测踩坑）
+            var eff = ScaleValue / 320f;
             blurMat.SetFloat("_Vertical", 1f);
-            blurMat.SetFloat("_BlurRadius", BlurRadius);
+            blurMat.SetFloat("_BlurRadius", BlurRadius * eff);
             blurMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
             Graphics.Blit(refractSource, vBlurRT, blurMat);
             blurMat.SetFloat("_Vertical", 0f);
             Graphics.Blit(vBlurRT, hBlurRT, blurMat);
 
-            // 3) 主合成参数（每帧全量推送，与 Godot update_all_uniforms 同策略）
             mainMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
             mainMat.SetTexture("_Bg", refractSource);
             mainMat.SetTexture("_BlurredBg", hBlurRT);
-            mainMat.SetFloat("_RefThickness", RefThickness);
+            mainMat.SetFloat("_RefThickness", RefThickness * eff);
             mainMat.SetFloat("_RefFactor", RefFactor);
             mainMat.SetFloat("_RefDispersion", RefDispersion);
-            mainMat.SetFloat("_RefFresnelRange", FresnelRange);
+            mainMat.SetFloat("_RefFresnelRange", FresnelRange * eff);
             mainMat.SetFloat("_RefFresnelHardness", FresnelHardness);
             mainMat.SetFloat("_RefFresnelFactor", FresnelFactor);
-            mainMat.SetFloat("_GlareRange", GlareRange);
+            mainMat.SetFloat("_GlareRange", GlareRange * eff);
             mainMat.SetFloat("_GlareHardness", GlareHardness);
             mainMat.SetFloat("_GlareConvergence", GlareConvergence);
             mainMat.SetFloat("_GlareOppositeFactor", GlareOppositeFactor);
@@ -797,7 +801,7 @@ namespace TransparentPet.Pet
             mainMat.SetFloat("_MergeRate", 0.05f);
             mainMat.SetColor("_Tint", Tint);
             mainMat.SetFloat("_BlurEdge", BlurEdge ? 1f : 0f);
-            mainMat.SetFloat("_ShadowExpand", ShadowExpand);
+            mainMat.SetFloat("_ShadowExpand", ShadowExpand * eff);
             mainMat.SetFloat("_ShadowFactor", ShadowFactor);
             mainMat.SetInt("_Step", Step);
 
@@ -901,8 +905,9 @@ namespace TransparentPet.Pet
                 return;
             lastBlurRadius = BlurRadius;
 
-            var kernel = Mathf.Clamp((int)(BlurRadius * 2f) + 1, 1, blurWeights.Length);
-            var sigma = Mathf.Max(BlurRadius / 3f, 0.001f); // 3σ 覆盖 ~99.7% 能量
+            var radius = BlurRadius * ScaleValue / 320f; // 随体型等比（与主合成像素域缩放一致）
+            var kernel = Mathf.Clamp((int)(radius * 2f) + 1, 1, blurWeights.Length);
+            var sigma = Mathf.Max(radius / 3f, 0.001f); // 3σ 覆盖 ~99.7% 能量
             float sum = 0f;
             for (var i = 0; i < kernel; i++)
             {
