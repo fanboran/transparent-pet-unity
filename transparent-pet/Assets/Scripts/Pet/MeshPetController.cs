@@ -31,6 +31,7 @@ namespace TransparentPet.Pet
         Camera mainCamera;
         SlimeMeshBody body;
         SlimePbfMesh sim;
+        MeshRenderer meshRenderer; // 命中仲裁取层序用（Start 缓存）
 
         ThrowParams throwParams = new ThrowParams();
         Color bodyColor = new Color(0.1f, 0.3f, 0.6f);
@@ -40,6 +41,10 @@ namespace TransparentPet.Pet
         /// <summary>悬浮语义（V2）：落定即关重力原地漂浮——由场景生成器注入</summary>
         [SerializeField] bool hoverMode = false;
         bool hoverSettled;
+
+        /// <summary>出生即悬浮（不落下）：PetManager 初始空中入场注入——V2 物种
+        /// 语义"平时悬浮"，四只入场时其他三只落下、它留在空中（用户拍板）。</summary>
+        bool spawnFloating;
 
         /// <summary>展厅注入的出生位置（屏像素）；null = 用配置/默认位置</summary>
         Vector2? spawnOverride;
@@ -68,7 +73,8 @@ namespace TransparentPet.Pet
         void Start()
         {
             body = GetComponent<SlimeMeshBody>();
-            body.Initialize(GetComponent<MeshRenderer>().sharedMaterial);
+            meshRenderer = GetComponent<MeshRenderer>();
+            body.Initialize(meshRenderer.sharedMaterial);
             SyncCameraToScreen();
 
             var config = PetConfigStore.Load();
@@ -86,7 +92,9 @@ namespace TransparentPet.Pet
                     : new Vector2(width * 0.5f, ground * 0.5f));
 
             sim = new SlimePbfMesh(spawn, BaseHalfWidth * userScale);
-            gravityOn = true; // 出生下落：落定后自动回悬浮
+            // 出生即悬浮（spawnFloating）：空中入场停在原地；否则出生受重力落下
+            gravityOn = !spawnFloating;
+            hoverSettled = spawnFloating;
             lastSavedScreenPos = spawn;
             nextSaveTime = Time.time + 1f;
         }
@@ -128,8 +136,14 @@ namespace TransparentPet.Pet
             if (sim.ContainsPoint(mouse))
                 PointerHover.ReportHover(Time.frameCount);
 
-            if (Input.GetMouseButtonDown(0) && sim.TryGrab(mouse))
+            // 先仲裁后抓取：TryGrab 有副作用（直接置抓取态），被更高层抢占时不能再进
+            if (Input.GetMouseButtonDown(0) && sim.ContainsPoint(mouse)
+                && PetInputArbiter.TryClaim(this, meshRenderer != null ? meshRenderer.sortingOrder : 0)
+                && sim.TryGrab(mouse))
+            {
                 gravityOn = false; // 抓住即悬浮（拖拽中不施重力）
+                hoverSettled = false; // 解除悬浮锁定：甩出后重力接管，落地再重新漂浮
+            }
 
             if (sim.IsGrabbed)
                 sim.MoveGrab(mouse, NowMs());
@@ -171,6 +185,9 @@ namespace TransparentPet.Pet
             hoverMode = hover;
             hoverSettled = false;
         }
+
+        /// <summary>出生即悬浮（不落下）：PetManager 初始空中入场注入，须在 Start 前调用。</summary>
+        public void SetSpawnFloating() => spawnFloating = true;
 
         /// <summary>撤销当前抓取（输入仲裁：被更高层宠物的点击抢占时调用），不给抛射速度</summary>
         public void CancelGrab()

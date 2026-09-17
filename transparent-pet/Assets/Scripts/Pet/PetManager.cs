@@ -62,7 +62,11 @@ namespace TransparentPet.Pet
         readonly List<SoftbodyInstance> softbodies = new();
         readonly List<TexturedInstance> textureds = new();
         readonly List<MeshInstance> meshes = new();
-        float nextSaveTime; // 位置落盘节流（与液态玻璃同策略：≥1s 且有变化才写）
+
+        // 位置落盘节流：每物种独立时钟（≥1s 且有变化才写）。曾共用一个 nextSaveTime、
+        // 且只有果冻会推进它——果冻每秒先写盘把时钟推走，碎裂软体永远被节流拦下，
+        // meshX 永远落不了盘：重启后碎裂软体消失（用户实测"第一次出现后就不见了"）。
+        float nextTexturedSave, nextSoftbodySave, nextMeshSave;
 
         /// <summary>贴图精灵资源（Assets/Resources/PetSlime.png，导入即 Sprite）懒加载缓存。</summary>
         Sprite petSprite;
@@ -361,8 +365,9 @@ namespace TransparentPet.Pet
 
         void SaveTexturedsIfNeeded()
         {
-            if (Time.time < nextSaveTime)
+            if (Time.time < nextTexturedSave)
                 return;
+            nextTexturedSave = Time.time + 1f;
 
             var config = PetConfigStore.Load();
             config.texturedX = new float[textureds.Count];
@@ -424,9 +429,9 @@ namespace TransparentPet.Pet
 
         void SaveSoftbodiesIfNeeded()
         {
-            if (softbodies.Count == 0 || Time.time < nextSaveTime)
+            if (softbodies.Count == 0 || Time.time < nextSoftbodySave)
                 return;
-            nextSaveTime = Time.time + 1f;
+            nextSoftbodySave = Time.time + 1f;
 
             var config = PetConfigStore.Load();
             config.softbodyX = new float[softbodies.Count];
@@ -489,8 +494,9 @@ namespace TransparentPet.Pet
 
         void SaveMeshesIfNeeded()
         {
-            if (Time.time < nextSaveTime)
+            if (Time.time < nextMeshSave)
                 return;
+            nextMeshSave = Time.time + 1f;
 
             var config = PetConfigStore.Load();
             config.meshX = new float[meshes.Count];
@@ -573,6 +579,8 @@ namespace TransparentPet.Pet
         /// <summary>
         /// 创建一只碎裂软体（V2 PbfMesh：果冻同源 PBF 物理 + 等值线渲染，拉猛碎成块）。
         /// 挂场景根（绝不挂全屏 quad）、层 PetRefract（进折射链路）。
+        /// 它是悬浮物种：出生/重启恢复/设置面板添加都停在注入点悬浮（不落下），
+        /// 只有被甩出才受重力飞行——位置按只持久化才有意义（恢复即回原位）。
         /// </summary>
         MeshPetController CreateMesh(Vector2 spawnPx)
         {
@@ -587,7 +595,8 @@ namespace TransparentPet.Pet
             pet.BaseHalfWidth = PetMetrics.BaseFullWidthPx * 0.5f; // 物种平等：200px 基准半宽
             pet.SetSpawnOverride(spawnPx);
             pet.SetPersistPosition(false); // 位置由本管理器按只持久化
-            pet.SetHoverMode(true);        // V2 语义：出生落地后浮住，拉猛碎成块
+            pet.SetHoverMode(true);        // V2 语义：平时悬浮，甩出才受力
+            pet.SetSpawnFloating();        // 出生停在原地（不落下）
             var characters = CharacterRegistry.All;
             pet.ApplyCharacterDirect(characters[0].Id);
             return pet;
