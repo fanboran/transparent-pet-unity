@@ -323,6 +323,12 @@ namespace TransparentPet.EditorTools
                     glass.DesktopReflection = true;
                     glass.CaptureInvisible = true;
                     glass.WindowController = windowController;
+                    // PetRefract 捕获相机无条件挂：除折射其他物种外，它还负责给全局纹理
+                    // _PetRTTex 每帧赋值——无人赋值时 Unity 采样回落灰色默认纹理，
+                    // 玻璃外全屏被罩上 0.56 的灰白蒙层 + 玻璃内折射源被混灰
+                    //（实测踩坑：亚克力独享版"全屏发白、玻璃感消失"的根源）。
+                    // 独享形态层内无物体 → RT 全透明 → shader 端零影响。
+                    petGo.AddComponent<PetRefractLayer>();
                     // 亚克力独享形态到此为止（无管理器 = 其他物种永不生成，玻璃自管增删）
                     if (!withManager)
                         break;
@@ -331,7 +337,6 @@ namespace TransparentPet.EditorTools
                     var manager = petGo.AddComponent<PetManager>();
                     manager.SoftbodyMaterial = EnsureMaterial("TransparentPet/SlimeLiquid", SlimeLiquidMaterialPath);
                     manager.MeshMaterial = EnsureMaterial("TransparentPet/SlimeMesh", SlimeMeshMaterialPath);
-                    petGo.AddComponent<PetRefractLayer>();
                     break;
                 }
             }

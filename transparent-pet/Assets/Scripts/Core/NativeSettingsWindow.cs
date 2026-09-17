@@ -180,7 +180,10 @@ namespace TransparentPet.Core
             };
             RegisterClassW(ref wc);
 
-            hwnd = CreateWindowExW(0, className, "桌宠 · 设置",
+            // WS_EX_TOPMOST：桌宠主窗口是全屏置顶（HWND_TOPMOST），设置窗口不带
+            // topmost 会被永远压在它下面——设置面板"调不出来"的实测根源
+            //（SetForegroundWindow 只能把提到非 topmost 段的顶部，够不过 topmost 段）。
+            hwnd = CreateWindowExW(0x8 /*WS_EX_TOPMOST*/, className, "桌宠 · 设置",
                 0x00C80000u /*WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX*/, 0, 0, 376, WindowHeight(),
                 IntPtr.Zero, IntPtr.Zero, GetModuleHandleW(null), IntPtr.Zero);
             CreateChildren();

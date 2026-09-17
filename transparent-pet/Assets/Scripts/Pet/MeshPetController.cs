@@ -132,8 +132,11 @@ namespace TransparentPet.Pet
         {
             var mouse = MouseScreenPos();
 
-            // 悬停上报：窗口层据此决定整窗穿透（替代 UniWinC 每帧读屏的命中检测，见 PointerHover）
-            if (sim.ContainsPoint(mouse))
+            // 悬停上报：窗口层据此决定整窗穿透（替代 UniWinC 每帧读屏的命中检测，见 PointerHover）。
+            // 拖拽中恒报：PBF 拖拽是吸附跟随（粒子团追鼠标），鼠标快过粒子团时
+            // ContainsPoint 会短暂失配——此时若断报，窗口切回穿透态收不到鼠标消息，
+            // 拖拽直接冻结（实测踩坑："拖不动了"）。
+            if (sim.IsGrabbed || sim.ContainsPoint(mouse))
                 PointerHover.ReportHover(Time.frameCount);
 
             // 先仲裁后抓取：TryGrab 有副作用（直接置抓取态），被更高层抢占时不能再进

@@ -505,12 +505,13 @@ Shader "TransparentPet/LiquidGlass"
                     // AA 之后：轮廓外的抗锯齿会把 alpha 一并乘零（实测：宠物只有
                     // 透过玻璃才可见，离开玻璃整个消失）。玻璃覆盖的部分不走这里——
                     // 它们已并入折射源（LiquidGlassCompose），随玻璃一起折射/模糊。
-                    // 宠物画进 RT 时 alpha 被标准混合平方衰减（0.78²≈0.61），按 1.25
-                    // 回拉，让软体在玻璃外保持果冻般透亮而非过淡。
+                    // 宠物画进 RT 时 alpha 按标准混合平方衰减（主体 0.75²≈0.56），
+                    // 按 1.6 回拉：实心处 ≈0.9 果冻透亮，悬浮态粒子分散（覆盖度<1）
+                    // 也不至于淡到看不清（1.25 时代实测"空中这只太透明"）。
                     if (merged >= 0.005)
                     {
                         float4 pet = tex2D(_PetRTTex, i.uv);
-                        float petA = saturate(pet.a * 1.25);
+                        float petA = saturate(pet.a * 1.6);
                         outColor.rgb = lerp(outColor.rgb, pet.rgb, petA);
                         outColor.a = max(outColor.a, petA * 0.9);
                     }

@@ -102,6 +102,14 @@ namespace TransparentPet.Core
 
             tray?.Pump(); // 托盘消息 + 菜单动作（动作在 Pump 顶层执行，见 NativeTray）
             UpdateClickThrough();
+
+            // 窗口状态自检：诊断"桌宠出现后又消失"（用户实测报告）。可见性/最小化/
+            // cloak/扩展样式任何一项异常都会写进日志，与宠物渲染层日志互相印证。
+            if (Time.frameCount % 120 == 0)
+            {
+                var hwnd = NativeWindowStyles.FindCurrentProcessTopLevelWindow(requireVisible: false);
+                Debug.Log($"[WinDiag] f={Time.frameCount} {NativeWindowStyles.DescribeState(hwnd)}");
+            }
         }
 
         /// <summary>

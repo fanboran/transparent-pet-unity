@@ -241,5 +241,48 @@ namespace TransparentPet.Core
             y = point.Y;
             return ok;
         }
+
+        // ── 窗口状态自检（诊断"桌宠出现后又消失"）：把可见性/最小化/矩形/扩展样式/
+        //    DWM cloak 一次取齐拼成字符串，由 PetWindowSetup 周期性写日志 ──
+
+        [DllImport("user32.dll")]
+        static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        static extern bool IsZoomed(IntPtr hWnd);
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct RECT { public int Left, Top, Right, Bottom; }
+
+        [DllImport("user32.dll")]
+        static extern bool GetWindowRect(IntPtr hWnd, ref RECT rect);
+
+        [DllImport("dwmapi.dll")]
+        static extern int DwmGetWindowAttribute(IntPtr hWnd, uint attr, out int value, int size);
+
+        const uint DWMWA_CLOAKED = 14;
+
+        const long WS_EX_TRANSPARENT = 0x00000020L;
+        const long WS_EX_LAYERED = 0x00080000L;
+        const long WS_EX_TOPMOST = 0x00000008L;
+
+        /// <summary>
+        /// 窗口当前状态一行描述：可见/最小化/矩形/关键扩展样式位/DWM cloak。
+        /// 诊断"窗口明明在却看不见"（cloaked / 被最小化 / 丢 topmost / 丢 layered）用。
+        /// </summary>
+        public static string DescribeState(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero)
+                return "hwnd=0";
+            var rect = new RECT();
+            GetWindowRect(hWnd, ref rect);
+            DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, out var cloaked, sizeof(int));
+            var style = GetExStyle(hWnd);
+            return $"visible={IsWindowVisible(hWnd)} iconic={IsIconic(hWnd)} zoomed={IsZoomed(hWnd)} " +
+                   $"rect=({rect.Left},{rect.Top})-({rect.Right},{rect.Bottom}) " +
+                   $"ex=[layered={(style & WS_EX_LAYERED) != 0} topmost={(style & WS_EX_TOPMOST) != 0} " +
+                   $"clickthr={(style & WS_EX_TRANSPARENT) != 0} tool={(style & WS_EX_TOOLWINDOW) != 0}] " +
+                   $"cloaked={cloaked}";
+        }
     }
 }
