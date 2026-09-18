@@ -187,7 +187,9 @@ namespace TransparentPet.EditorTools
                     error = "RT_GROUP_ICON 写入失败: " + Marshal.GetLastWin32Error();
             }
 
-            if (!EndUpdateResource(h, false))
+            // UpdateResource 已失败时必须丢弃变更（discard=true）：继续提交会留下
+            // "写了部分 RT_ICON 但没有组表"的损坏图标资源
+            if (!EndUpdateResource(h, error != null))
                 return "EndUpdateResource 失败: " + Marshal.GetLastWin32Error();
 
             return error;

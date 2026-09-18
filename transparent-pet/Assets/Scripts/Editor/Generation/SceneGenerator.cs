@@ -90,8 +90,22 @@ namespace TransparentPet.EditorTools
         [MenuItem("TransparentPet/生成宠物场景")]
         public static void GenerateFromMenu() => GenerateAll();
 
+        /// <summary>
+        /// NewScene(Single) 会无提示丢弃当前打开场景的未保存修改——交互模式下先问一次
+        /// 用户（保存/丢弃/取消，取消则中止生成）；batchmode 无 UI 直接放行。
+        /// </summary>
+        static bool ConfirmUnsavedSceneBeforeNew()
+        {
+            if (Application.isBatchMode)
+                return true;
+            return EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo();
+        }
+
         public static void GenerateAll()
         {
+            if (!ConfirmUnsavedSceneBeforeNew())
+                return; // 用户在保存确认框选择了取消
+
             ConfigurePetTextureImporter();
 
             var scenes = new EditorBuildSettingsScene[Versions.Length + 1];
@@ -300,6 +314,9 @@ namespace TransparentPet.EditorTools
         [MenuItem("TransparentPet/生成展厅场景（各版本同屏）")]
         public static void GenerateGalleryFromMenu()
         {
+            if (!ConfirmUnsavedSceneBeforeNew())
+                return; // 用户在保存确认框选择了取消
+
             ConfigurePetTextureImporter();
             BuildGalleryScene();
             AssetDatabase.SaveAssets();
