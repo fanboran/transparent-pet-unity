@@ -47,6 +47,14 @@ namespace TransparentPet.Platform
         public static uint GetWindowProcessId(IntPtr hWnd) =>
             GetWindowThreadProcessId(hWnd, out var pid) != 0 ? pid : 0;
 
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern IntPtr FindWindowW(string className, string windowName);
+
+        /// <summary>按精确标题找顶层窗口（找不到 = IntPtr.Zero）。
+        /// 玻璃侧用它探测物种副进程存活：窗口在 = 进程在（物理事实，不受
+        /// Process.Exited/HasExited 在 Unity Mono 下失灵的影响）。</summary>
+        public static IntPtr FindWindowByTitle(string title) => FindWindowW(null, title);
+
         /// <summary>设置窗口标题（物种副进程改专用标题供玻璃侧配对识别）。</summary>
         public static bool SetWindowText(IntPtr hWnd, string title) => SetWindowTextW(hWnd, title);
 

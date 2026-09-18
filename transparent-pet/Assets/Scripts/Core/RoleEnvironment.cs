@@ -26,10 +26,12 @@ namespace TransparentPet.Core
         public static bool IsSpecies =>
             isSpecies ??= Environment.GetCommandLineArgs().Any(a => a == "-species");
 
-        /// <summary>物种副进程句柄（仅玻璃角色持有；随退 + 退出联动）。</summary>
+        /// <summary>物种副进程句柄（仅玻璃角色持有；退出时强杀用。存活监视不走
+        /// Process.Exited/HasExited——两者在 Unity Player (Mono) 下实测双双失灵，
+        /// 由 GlassRole 按物种窗口标题探测存活，见其注释）。</summary>
         static Process speciesChild;
 
-        /// <summary>玻璃角色：拉起物种副进程（幂等；编辑器下不拉起）。副进程退出时主进程跟随退出。</summary>
+        /// <summary>玻璃角色：拉起物种副进程（幂等；编辑器下不拉起）。</summary>
         public static void EnsureSpeciesProcess()
         {
 #if UNITY_EDITOR
@@ -42,20 +44,16 @@ namespace TransparentPet.Core
             if (string.IsNullOrEmpty(exe))
                 return;
 
-            speciesChild = Process.Start(new ProcessStartInfo(exe, "-species")
+            // -logFile 独立文件：双进程共写同一 Player.log 会在启动期互相竞争/轮转
+            // （实测两进程输出交错同一文件，副进程曾因此卡在渲染循环之前被看门狗杀）
+            var speciesLog = Path.Combine(
+                Path.GetDirectoryName(exe) ?? ".",
+                "TransparentPet_Species.log");
+            speciesChild = Process.Start(new ProcessStartInfo(exe, $"-species -logFile \"{speciesLog}\"")
             {
                 UseShellExecute = false,
                 WorkingDirectory = Path.GetDirectoryName(exe) ?? ".",
             });
-            if (speciesChild != null)
-            {
-                speciesChild.EnableRaisingEvents = true;
-                speciesChild.Exited += (_, _) =>
-                {
-                    // 副进程没了（被杀/自己退）：主进程不再有意义，跟随退出
-                    HardExit.Now();
-                };
-            }
             Debug.Log($"[Role] 物种副进程已拉起 pid={speciesChild?.Id}");
 #endif
         }

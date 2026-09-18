@@ -3,14 +3,16 @@
 // ============================================================================
 // 背景：托盘菜单的"退出"发生在 Win32 消息处理栈里，Application.Quit /
 // Environment.Exit 在嵌套原生栈帧中可能被 Mono 运行时吞掉——表现为"点了退出
-// 进程还赖着不死"。因此退出动作延迟到 Unity Update 顶层调用（见 PetWindowSetup），
-// 且按三级递进兜底。
+// 进程还赖着不死"。因此退出动作延迟到 Unity Update 顶层调用（见 PetWindowSetup）。
 //
-// 但"三级兜底"只能覆盖它之后的流程。退出路径上还有同步跨进程调用：
-// 摘托盘图标是 Shell_NotifyIcon → 任务栏（explorer）；一旦对方不响应，这一句
-// 永不返回，后面的强杀根本执行不到，进程就带着全屏置顶窗口挂死在桌面上
-// （Windows 事件日志里的"应用程序挂起 AppHangXProc"正是此类）。故新增
-// KillSoon：退出动作前先点燃延迟强杀引信，之后无论卡在哪一句都会死。
+// 退出路径上还有同步跨进程调用：摘托盘图标是 Shell_NotifyIcon → 任务栏
+// （explorer）；一旦对方不响应，这一句永不返回，进程就带着全屏置顶窗口挂死在
+// 桌面上（Windows 事件日志里的"应用程序挂起 AppHangXProc"正是此类）。故
+// KillSoon：退出动作前先点燃延迟强杀引信，之后卡在任何一句都会死。
+//
+// 注意 Environment.Exit 已从退出链移除：它触发的 Mono runtime shutdown 会挂起
+// 全部托管线程（引信线程一起冻住），与主线程的 native 调用互等成死锁——引信
+// 在它面前烧不到头（实测）。强杀只有一条真路径：引信/直接调 KillNow。
 // ============================================================================
 using System;
 using System.Diagnostics;
@@ -27,9 +29,9 @@ namespace TransparentPet.Core
 
         /// <summary>
         /// 延迟强杀引信：起一个后台线程，delayMs 后无条件 TerminateProcess。
-        /// 退出流程开头调一次即可——之后任何一句（摘托盘图标的 Shell_NotifyIcon、
-        /// Application.Quit、Environment.Exit）卡住，进程都必然在 delayMs 后消失。
-        /// 幂等：只点一次。
+        /// 退出流程开头调一次即可——之后卡在任何一句（摘托盘图标的
+        /// Shell_NotifyIcon、Application.Quit 的卸载流程），进程都必然在 delayMs
+        /// 后消失。幂等：只点一次。
         /// </summary>
         public static void KillSoon(int delayMs = 300)
         {
@@ -61,14 +63,17 @@ namespace TransparentPet.Core
                 return;
             killing = true;
 
-            KillSoon(); // 下面每一句都可能卡住（同步跨进程调用），先点引信
+            // 引信 700ms：比默认长——给下面 Application.Quit 的正常退出流程留出
+            // OnDestroy 摘托盘图标的时间；流程卡在任何一处则到点强杀
+            KillSoon(700);
 
-            Application.Quit(); // 优雅请求（异步，可能不被处理）
-
-            Environment.Exit(0); // 常规硬退：顶层栈调用时 reliably 终止
-
-            // 理论不可达；若 Exit 被运行时吞掉则强杀进程兜底
-            Process.GetCurrentProcess().Kill();
+            // 只走 Application.Quit（本方法仅在主线程 Update 顶层调用，Unity 在本帧
+            // 结束后走正常卸载）。刻意不调 Environment.Exit：它在 Unity 进程里触发
+            // Mono runtime shutdown，shutdown 第一步就是挂起全部托管线程——连
+            // KillSoon 的引信线程一起冻住（IsBackground 不豁免），而主线程又在
+            // native 图形栈里到不了安全点，双方互等成死锁，进程带着占屏窗口永挂。
+            // 实测：联动退出日志打出后引信 300ms 都烧不完、进程不死，即此形态。
+            Application.Quit();
         }
 
         /// <summary>

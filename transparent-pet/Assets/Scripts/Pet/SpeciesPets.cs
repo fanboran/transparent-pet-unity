@@ -82,9 +82,44 @@ namespace TransparentPet.Pet
                     Spawn(cmd.Substring(4));
             }
             SaveIfNeeded();
+#if !UNITY_EDITOR
+            WatchGlassAlive();
+#endif
         }
 
 #if !UNITY_EDITOR
+        // ── 玻璃进程存活监视（与 GlassRole 的物种监视互为镜像）──
+        // 玻璃被外部强杀（任务管理器/崩溃）走不到 HardExit 的 KillSpeciesChild，
+        // 本进程会孤儿化占屏；同样用窗口存活信号兜底：曾见过、消失超 3 秒即配对退出。
+        // 复用 FindGlassWindow 的宽松匹配（标题非空的 Unity 主窗口）：误认只会把
+        // 别的 Unity 程序当玻璃（延迟不退，方向安全），绝不会误杀自己。
+        float nextWatch;
+        bool glassWindowSeen;
+        float glassGoneAt = -1f;
+
+        void WatchGlassAlive()
+        {
+            if (Time.unscaledTime < nextWatch)
+                return;
+            nextWatch = Time.unscaledTime + 0.5f;
+
+            if (FindGlassWindow() != IntPtr.Zero)
+            {
+                glassWindowSeen = true;
+                glassGoneAt = -1f;
+                return;
+            }
+            if (!glassWindowSeen)
+                return;
+            if (glassGoneAt < 0f)
+                glassGoneAt = Time.unscaledTime;
+            else if (Time.unscaledTime - glassGoneAt > 3f)
+            {
+                Debug.Log("[Role] 玻璃窗口消失超时：玻璃进程死亡，物种配对退出");
+                HardExit.Now();
+            }
+        }
+
         /// <summary>双窗口 z 序：先玻璃置顶，再把自己插到玻璃之后（紧贴其下）。</summary>
         void PairZOrder()
         {
