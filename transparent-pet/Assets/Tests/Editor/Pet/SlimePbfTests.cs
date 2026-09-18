@@ -8,7 +8,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEngine;
-using TransparentPet.Pet;
 using TransparentPet.Pet.Jelly;
 
 namespace TransparentPet.Tests

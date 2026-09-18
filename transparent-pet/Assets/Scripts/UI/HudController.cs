@@ -1,5 +1,4 @@
 using TransparentPet.Core;
-using TransparentPet.Pet;
 using UnityEngine;
 using TransparentPet.Pet.Common;
 
@@ -28,10 +27,17 @@ namespace TransparentPet.UI
         float elapsed;      // 本次显示已持续秒数
         float holdSeconds = DefaultHoldSeconds; // 本条提示的停留时长
         GUIStyle hudStyle;  // 懒创建：GUIStyle 依赖 GUI.skin，只能在 OnGUI 期间构造
+        Font osFont;        // OnGUI 创建的系统中文字体，OnDestroy 销毁（场景重载不累积）
 
         void OnEnable() => EventBus.Subscribe<string>(EventTopics.CharacterChanged, OnCharacterChanged);
 
         void OnDisable() => EventBus.Unsubscribe<string>(EventTopics.CharacterChanged, OnCharacterChanged);
+
+        void OnDestroy()
+        {
+            if (osFont != null)
+                Destroy(osFont);
+        }
 
         void Start()
         {
@@ -91,7 +97,10 @@ namespace TransparentPet.UI
                 var font = Font.CreateDynamicFontFromOSFont(
                     new[] { "Microsoft YaHei UI", "Microsoft YaHei", "SimHei", "SimSun" }, FontSize);
                 if (font != null)
+                {
                     hudStyle.font = font;
+                    osFont = font;
+                }
             }
 
             // GUI.color 只影响本条 Label，画完立即恢复，避免污染后续控件

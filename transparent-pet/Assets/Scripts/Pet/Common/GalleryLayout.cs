@@ -15,7 +15,6 @@
 // 压扁—回弹—趴地；贴图版没有落地物理，直接摆在贴地高度。
 // ============================================================================
 using System.Collections.Generic;
-using TransparentPet.Core;
 using UnityEngine;
 using TransparentPet.Pet.Jelly;
 using TransparentPet.Pet.Shatter;

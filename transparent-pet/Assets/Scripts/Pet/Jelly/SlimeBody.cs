@@ -15,6 +15,7 @@ namespace TransparentPet.Pet.Jelly
     {
         SlimeFieldRenderer field;
         MeshRenderer meshRenderer;
+        Mesh quadMesh;
 
         /// <summary>当前共享材质（场景组装时已挂在 MeshRenderer 上）。</summary>
         public Material SharedMaterial => meshRenderer ? meshRenderer.sharedMaterial : null;
@@ -26,17 +27,17 @@ namespace TransparentPet.Pet.Jelly
             meshRenderer.sortingOrder = 10;
 
             // 单位四边形：真正的形状由片元着色器逐像素生成
-            var mesh = new Mesh { name = "SlimeFieldQuad" };
-            mesh.vertices = new[]
+            quadMesh = new Mesh { name = "SlimeFieldQuad" };
+            quadMesh.vertices = new[]
             {
                 new Vector3(-0.5f, -0.5f, 0f),
                 new Vector3(0.5f, -0.5f, 0f),
                 new Vector3(0.5f, 0.5f, 0f),
                 new Vector3(-0.5f, 0.5f, 0f)
             };
-            mesh.triangles = new[] { 0, 2, 1, 0, 3, 2 };
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one); // 防零尺寸包围盒被剔除
-            GetComponent<MeshFilter>().sharedMesh = mesh;
+            quadMesh.triangles = new[] { 0, 2, 1, 0, 3, 2 };
+            quadMesh.bounds = new Bounds(Vector3.zero, Vector3.one); // 防零尺寸包围盒被剔除
+            GetComponent<MeshFilter>().sharedMesh = quadMesh;
         }
 
         /// <summary>每帧：粒子 → 场渲染。toWorld = 屏幕像素（Y 向下）→ 世界。</summary>
@@ -55,6 +56,8 @@ namespace TransparentPet.Pet.Jelly
         {
             field?.Dispose();
             field = null;
+            if (quadMesh != null)
+                Destroy(quadMesh);
         }
     }
 }

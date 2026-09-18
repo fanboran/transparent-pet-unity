@@ -62,5 +62,11 @@ namespace TransparentPet.Pet.Shatter
             block.SetFloat(VelocityWId, Mathf.Min(sim.Velocity.magnitude / 800f, 1.5f));
             meshRenderer.SetPropertyBlock(block);
         }
+
+        void OnDestroy()
+        {
+            if (mesh != null)
+                Destroy(mesh);
+        }
     }
 }

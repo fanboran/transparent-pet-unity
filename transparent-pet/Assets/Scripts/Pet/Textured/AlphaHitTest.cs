@@ -1,5 +1,4 @@
 using UnityEngine;
-using TransparentPet.Pet.Jelly;
 
 namespace TransparentPet.Pet.Textured
 {
