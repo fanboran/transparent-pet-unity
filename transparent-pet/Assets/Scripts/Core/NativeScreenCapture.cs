@@ -100,8 +100,11 @@ namespace TransparentPet.Core
                 }
 
                 var old = SelectObject(memDc, bmp);
-                // CAPTUREBLT：必须带——否则分层窗口(物种副窗口)不进抓屏,玻璃采不到它们
-                ok = BitBlt(memDc, 0, 0, w, h, screenDc, x, y, SRCCOPY | CAPTUREBLT);
+                // 注意：CAPTUREBLT 虽能让分层窗口进抓屏，但其透明区域在 GDI 抓屏里会变黑
+                // （物种副窗口全屏"透明"成一张黑幕，玻璃折射黑幕=全屏发灰，实测踩坑）。
+                // 暂回退 SRCCOPY：玻璃折射纯桌面（物种在玻璃后暂不参与折射），
+                // 正解是换 DXGI Desktop Duplication（排期中，顺带解决抓屏帧率）。
+                ok = BitBlt(memDc, 0, 0, w, h, screenDc, x, y, SRCCOPY);
                 if (ok)
                 {
                     var bmi = new BITMAPINFO
