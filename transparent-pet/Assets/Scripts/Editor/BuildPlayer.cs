@@ -28,8 +28,16 @@ namespace TransparentPet.EditorTools
         /// <summary>版本展厅场景（各版本同屏，演示/面试用）。</summary>
         const string GalleryScenePath = "Assets/Scenes/Showcase/PetGallery.unity";
 
-        /// <summary>构建四物种版（液态玻璃/贴图/果冻/碎裂同屏，交付默认）。</summary>
-        public static void BuildWindows64() => Build(ScenePath, "PetSpike.exe");
+        /// <summary>构建四物种双窗口版（玻璃主窗口 + 物种副窗口 + 引导，交付默认）。
+        /// 三场景一起进包：引导场景按 -species 命令行分岔到玻璃/物种。</summary>
+        public static void BuildWindows64() => Build(
+            new[]
+            {
+                SceneGenerator.BootstrapScenePath,
+                SceneGenerator.GlassScenePath,
+                SceneGenerator.SpeciesScenePath,
+            },
+            "PetSpike.exe");
 
         /// <summary>构建亚克力独享版（单只液态玻璃，无其他物种）。</summary>
         public static void BuildAcrylicWindows64() => Build(SoloScenePath, "PetAcrylic.exe");
@@ -37,14 +45,16 @@ namespace TransparentPet.EditorTools
         /// <summary>构建版本展厅（各版本史莱姆同屏）。</summary>
         public static void BuildGalleryWindows64() => Build(GalleryScenePath, "PetGallery.exe");
 
-        static void Build(string scenePath, string exeName)
+        static void Build(string scenePath, string exeName) => Build(new[] { scenePath }, exeName);
+
+        static void Build(string[] scenePaths, string exeName)
         {
             var projectRoot = Directory.GetParent(Application.dataPath).FullName;
             var outputPath = Path.Combine(projectRoot, "Builds", exeName);
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
 
             var report = BuildPipeline.BuildPlayer(
-                new[] { scenePath },
+                scenePaths,
                 outputPath,
                 BuildTarget.StandaloneWindows64,
                 BuildOptions.None);

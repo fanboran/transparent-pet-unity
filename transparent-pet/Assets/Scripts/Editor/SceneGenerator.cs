@@ -1,5 +1,6 @@
 using Kirurobo;
 using TransparentPet.Core;
+using System.Collections.Generic;
 using TransparentPet.Pet;
 using TransparentPet.UI;
 using UnityEditor;
@@ -124,7 +125,16 @@ namespace TransparentPet.EditorTools
             // 四物种测试场景（灰白格 QA 舞台 + 宣传图合影来源）：不进构建设置，纯编辑器/演示用
             GenerateFourSpeciesTestScene();
 
-            EditorBuildSettings.scenes = scenes;
+            // 双窗口交付场景插到最前：index 0 = 引导(按 -species 命令行分岔到玻璃/物种)
+            GenerateDeliveryScenes();
+            var delivery = new List<EditorBuildSettingsScene>
+            {
+                new EditorBuildSettingsScene(BootstrapScenePath, true),
+                new EditorBuildSettingsScene(GlassScenePath, true),
+                new EditorBuildSettingsScene(SpeciesScenePath, true),
+            };
+            delivery.AddRange(scenes);
+            EditorBuildSettings.scenes = delivery.ToArray();
             AssetDatabase.SaveAssets();
             // 注意：不在此调用 AppIconSetup.Apply——batchmode 下 PlayerSettings 保存会让
             // 进程卡在退出（僵持并长期占住工程锁），且该设置本身在 batchmode 不落盘。
@@ -419,6 +429,76 @@ namespace TransparentPet.EditorTools
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath));
             EditorSceneManager.SaveScene(scene, fullPath);
             Debug.Log($"[SceneGenerator] 展厅场景生成完成: {GalleryScenePath}（{GalleryPets.Length} 只同屏）");
+        }
+
+        // ── 双窗口交付场景：玻璃主进程窗口 / 物种副进程窗口 / 引导分岔 ──
+        // 玻璃窗口采屏时排除自己(WDA)，物种窗口不排除——玻璃因此能把其他史莱姆
+        // 当"桌面内容"自然折射(单窗口互采无解，实测踩坑)。
+
+        internal const string BootstrapScenePath = "Assets/Scenes/Delivery/Bootstrap.unity";
+        internal const string GlassScenePath = "Assets/Scenes/Delivery/Glass.unity";
+        internal const string SpeciesScenePath = "Assets/Scenes/Delivery/Species.unity";
+
+        [MenuItem("TransparentPet/生成双窗口交付场景")]
+        public static void GenerateDeliveryScenes()
+        {
+            var boot = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            new GameObject("Bootstrap").AddComponent<RoleBootstrap>();
+            SaveDeliveryScene(boot, BootstrapScenePath);
+
+            var glass = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            BuildDeliveryCamera(glass);
+            var glassPet = new GameObject("Pet");
+            glassPet.AddComponent<MeshFilter>();
+            glassPet.AddComponent<MeshRenderer>();
+            var gc = glassPet.AddComponent<LiquidGlassController>();
+            gc.MainShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassShaderPath);
+            gc.BgShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBgShaderPath);
+            gc.BlurShader = AssetDatabase.LoadAssetAtPath<Shader>(LiquidGlassBlurShaderPath);
+            gc.DesktopReflection = true;
+            gc.CaptureInvisible = true;
+            BuildWindowStack(glass, out var windowController);
+            gc.WindowController = windowController;
+            new GameObject("GlassRole").AddComponent<GlassRole>();
+            SaveDeliveryScene(glass, GlassScenePath);
+
+            var species = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            BuildDeliveryCamera(species);
+            var sp = new GameObject("Species");
+            sp.AddComponent<PetManager>();
+            sp.AddComponent<SpeciesRole>();
+            BuildWindowStack(species, out _);
+            SaveDeliveryScene(species, SpeciesScenePath);
+
+            Debug.Log("[SceneGenerator] 双窗口交付场景生成完成: Bootstrap / Glass / Species");
+        }
+
+        static void BuildDeliveryCamera(UnityEngine.SceneManagement.Scene scene)
+        {
+            var cameraGo = new GameObject("Main Camera");
+            cameraGo.tag = "MainCamera";
+            var camera = cameraGo.AddComponent<Camera>();
+            camera.orthographic = true;
+            camera.orthographicSize = 5.4f;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = new Color(0f, 0f, 0f, 0f);
+            camera.allowHDR = false;
+            camera.transform.position = new Vector3(0f, 0f, -10f);
+            cameraGo.AddComponent<AudioListener>();
+        }
+
+        static void BuildWindowStack(UnityEngine.SceneManagement.Scene scene, out UniWindowController windowController)
+        {
+            var windowGo = new GameObject("WindowController");
+            windowController = windowGo.AddComponent<UniWindowController>();
+            windowGo.AddComponent<PetWindowSetup>();
+        }
+
+        static void SaveDeliveryScene(UnityEngine.SceneManagement.Scene scene, string scenePath)
+        {
+            var fullPath = System.IO.Path.GetFullPath(scenePath);
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath));
+            EditorSceneManager.SaveScene(scene, fullPath);
         }
 
         // ── 四物种测试场景：灰白格 QA 舞台（四宫格宣传合影的拍摄来源）──

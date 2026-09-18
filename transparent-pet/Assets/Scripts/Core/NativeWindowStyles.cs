@@ -24,13 +24,13 @@ namespace TransparentPet.Core
         /// <summary>Unity Player 主窗口的窗口类名（精确定位主窗口用）</summary>
         const string UnityWindowClass = "UnityWndClass";
 
-        delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
         [DllImport("user32.dll")]
-        static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+        public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
 
         [DllImport("user32.dll")]
-        static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
         [DllImport("user32.dll")]
         static extern bool IsWindowVisible(IntPtr hWnd);
@@ -127,6 +127,9 @@ namespace TransparentPet.Core
         [DllImport("user32.dll")]
         static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
 
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern int GetWindowTextWindowText(IntPtr hWnd, System.Text.StringBuilder text, int maxCount);
+
         [DllImport("kernel32.dll")]
         static extern uint GetCurrentProcessId();
 
@@ -212,8 +215,38 @@ namespace TransparentPet.Core
             return true;
         }
 
-        /// <summary>按句柄移动窗口（不改尺寸；尺寸归 Unity 的 Screen 分辨率管理，
-        /// 外部改尺寸会被 player 按"期望矩形"还原并与客户区要求互相打架）。</summary>
+        /// <summary>把窗口插到 another 窗口之后（同 TOPMOST 层内紧贴其下），位置尺寸不动。
+        /// SWP_NOMOVE|NOSIZE|NOACTIVATE = 0x1|0x2|0x10；insertAfter=above → 自己排其下。</summary>
+        public static bool SetWindowPosBelow(IntPtr hWnd, IntPtr above) =>
+            SetWindowPos(hWnd, above, 0, 0, 0, 0, 0x1u | 0x2u | 0x10u);
+
+        /// <summary>设置窗口标题。</summary>
+        public static bool SetWindowText(IntPtr hWnd, string title) => SetWindowTextW(hWnd, title);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern bool SetWindowTextW(IntPtr hWnd, string title);
+
+        /// <summary>窗口置顶（不移动不激活）。HWND_TOPMOST = -1。</summary>
+        public static bool SetWindowPosTopmost(IntPtr hWnd) =>
+            SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, 0x1u | 0x2u | 0x10u);
+
+        /// <summary>读窗口标题。</summary>
+        public static string GetWindowText(IntPtr hWnd)
+        {
+            var buffer = new System.Text.StringBuilder(256);
+            return GetWindowTextWindowText(hWnd, buffer, 256) > 0 ? buffer.ToString() : "";
+        }
+
+        /// <summary>枚举顶层窗口（回调返回 false 停止）。</summary>
+        public static void EnumTopLevelWindows(EnumWindowsProc proc) => EnumWindows(proc, IntPtr.Zero);
+
+        /// <summary>取窗口类名。</summary>
+        public static string GetClassName(IntPtr hWnd)
+        {
+            var buffer = new System.Text.StringBuilder(64);
+            return GetClassNameW(hWnd, buffer, 64) > 0 ? buffer.ToString() : "";
+        }
+
         public static bool SetWindowPosition(IntPtr hWnd, int x, int y)
         {
             if (hWnd == IntPtr.Zero)

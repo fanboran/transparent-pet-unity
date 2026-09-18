@@ -227,16 +227,34 @@ namespace TransparentPet.Pet
 
         /// <summary>
         /// 托盘"设置"→ 打开独立原生设置窗口。
-        /// PetManager 在场时由它组装跨物种快照（见其同名处理器），本方法只兜底
-        /// 老版本场景（无管理器）——快照不带物种数组，窗口按"仅液态玻璃"渲染。
+        /// 双窗口架构下本进程就是玻璃角色（PetManager 在物种副进程），快照按
+        /// 物种注册表组装：玻璃数量用本进程真实值，其余物种读副进程发布的状态文件；
+        /// 物种增删键经 GlassRole 转发为跨进程命令。物种副进程状态不可用时按 0 回显。
         /// </summary>
         void OnSettingsOpenRequested(bool show)
         {
             if (!show || PetManager.Instance != null)
                 return;
+
+            var names = new string[PetSpeciesCatalog.All.Count];
+            var caps = new int[PetSpeciesCatalog.All.Count];
+            var counts = new int[PetSpeciesCatalog.All.Count];
+            for (var i = 0; i < PetSpeciesCatalog.All.Count; i++)
+            {
+                names[i] = PetSpeciesCatalog.All[i].DisplayName;
+                caps[i] = PetSpeciesCatalog.All[i].MaxCount;
+            }
+
+            counts[0] = slimes.Count;
+            var remote = RoleEnvironment.ReadSpeciesCounts();
+            for (var i = 1; i < counts.Length; i++)
+                counts[i] = remote != null && i < remote.Length && remote[i] >= 0 ? remote[i] : 0;
+
             NativeSettingsWindow.ShowOrActivate(new SettingsSnapshot
             {
-                Count = slimes.Count,
+                SpeciesNames = names,
+                SpeciesCounts = counts,
+                SpeciesCaps = caps,
                 Kind = slimes.Count > 0 ? slimes[0].kind : 0,
                 Invisible = captureInvisibleActive,
                 Topmost = configTopmost,

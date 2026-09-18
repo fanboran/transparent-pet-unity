@@ -130,18 +130,34 @@ namespace TransparentPet.Pet
         void DrainManagerChanges()
         {
             while (NativeSettingsWindow.ManagerChanges.TryDequeue(out var change))
-            {
-                // 键格式 "add:1" / "remove:0"——冒号后是 PetSpeciesCatalog 的物种索引
-                var sep = change.Key.IndexOf(':');
-                if (sep <= 0 || !int.TryParse(change.Key.Substring(sep + 1), out var species))
-                    continue;
-
-                if (change.Value > 0)
-                    Add(species);
-                else
-                    RemoveLast(species);
-            }
+                ApplyCommand(change.Key, change.Value > 0);
         }
+
+        /// <summary>
+        /// 应用一条跨进程命令（物种角色：玻璃主进程转发设置窗口的增删）。
+        /// 键格式 "add:物种索引" / "remove:物种索引"。
+        /// </summary>
+        public void ApplyCommand(string key, bool add = true)
+        {
+            var sep = key.IndexOf(':');
+            if (sep <= 0 || !int.TryParse(key.Substring(sep + 1), out var species))
+                return;
+
+            if (add)
+                Add(species);
+            else
+                RemoveLast(species);
+        }
+
+        /// <summary>各物种数量快照（下标 = PetSpeciesCatalog 顺序；玻璃位填 -1，
+        /// 由玻璃角色用自己进程内的真实数量覆盖）。</summary>
+        public int[] SpeciesCountsSnapshot() => new[]
+        {
+            -1,
+            textureds.Count,
+            softbodies.Count,
+            meshes.Count,
+        };
 
         /// <summary>按物种索引加一只；液态玻璃转发后端，贴图/软体本地创建。</summary>
         void Add(int species)

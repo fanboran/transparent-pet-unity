@@ -150,57 +150,60 @@ MonoBehaviour:
   m_GameObject: {fileID: 1490944255}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a4396c2ee23e02c4eab8ed7b09b3bb64, type: 3}
+  m_Script: {fileID: 11500000, guid: ed0133b8a1f2f0e468395eb6d12552f9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  BreatheAmplitude: 0.022
-  BreathePeriod: 3.6
-  FloatAmplitudePx: 2.5
-  SquashStiffness: 900
-  SquashDamping: 16
-  ImpactMaxSquash: 0.28
-  ImpactDeadZone: 120
-  ImpactReferenceSpeed: 900
-  TapSquash: 0.18
-  TiltMaxDegrees: 10
-  TiltSpeedForMax: 700
-  TiltHalfLife: 0.09
-  ActiveLifeGain: 0.25
-  GroundSquashComp: 0.6
---- !u!114 &1490944257
-MonoBehaviour:
+  MainShader: {fileID: 4800000, guid: a8a5816c983606f429c9323592f43746, type: 3}
+  BgShader: {fileID: 4800000, guid: 8da91fad556f51f488d678805a8ef15b, type: 3}
+  BlurShader: {fileID: 4800000, guid: acb7e82dcc81ccd419aa4f2808eca262, type: 3}
+  ComposeShader: {fileID: 0}
+  SlimeWidthPx: 200
+  RefThickness: 80
+  RefFactor: 1.45
+  RefDispersion: 7
+  FresnelRange: 60
+  FresnelHardness: 0.2
+  FresnelFactor: 0.5
+  GlareRange: 70
+  GlareHardness: 0.2
+  GlareConvergence: 0.5
+  GlareOppositeFactor: 0.8
+  GlareFactor: 0.9
+  GlareAngleDeg: -45
+  BgType: 0
+  BgTexture: {fileID: 0}
+  BlurRadius: 6
+  BlurEdge: 0
+  Tint: {r: 1, g: 1, b: 1, a: 0.04}
+  ShadowExpand: 26
+  ShadowFactor: 0.5
+  Step: 9
+  CaptureInvisible: 1
+  DesktopReflection: 1
+  WindowController: {fileID: 1555229583}
+  IgnoreSavedPositions: 0
+  TestSpawnPosition: {x: 400, y: 300}
+--- !u!23 &1490944257
+MeshRenderer:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1490944255}
   m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 249f3cee28777914e84b481fb1645bbd, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  BaseScale: 0.25
---- !u!212 &1490944258
-SpriteRenderer:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1490944255}
-  m_Enabled: 1
-  m_CastShadows: 0
-  m_ReceiveShadows: 0
+  m_CastShadows: 1
+  m_ReceiveShadows: 1
   m_DynamicOccludee: 1
   m_StaticShadowCaster: 0
   m_MotionVectors: 1
   m_LightProbeUsage: 1
   m_ReflectionProbeUsage: 1
-  m_RayTracingMode: 0
+  m_RayTracingMode: 2
   m_RayTraceProcedural: 0
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: e8a4f14c1d3173a4fbf666083e44ece3, type: 2}
+  - {fileID: 0}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -213,25 +216,23 @@ SpriteRenderer:
   m_IgnoreNormalsForChartDetection: 0
   m_ImportantGI: 0
   m_StitchLightmapSeams: 1
-  m_SelectedEditorRenderState: 0
+  m_SelectedEditorRenderState: 3
   m_MinimumChartSize: 4
   m_AutoUVMaxDistance: 0.5
   m_AutoUVMaxAngle: 89
   m_LightmapParameters: {fileID: 0}
   m_SortingLayerID: 0
   m_SortingLayer: 0
-  m_SortingOrder: 10
-  m_Sprite: {fileID: 21300000, guid: 5e960e3c91df5264abac7b133ac46c68, type: 3}
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_FlipX: 0
-  m_FlipY: 0
-  m_DrawMode: 0
-  m_Size: {x: 8, y: 5.28}
-  m_AdaptiveModeThreshold: 0.5
-  m_SpriteTileMode: 0
-  m_WasSpriteAssigned: 1
-  m_MaskInteraction: 0
-  m_SpriteSortPoint: 0
+  m_SortingOrder: 0
+  m_AdditionalVertexStreams: {fileID: 0}
+--- !u!33 &1490944258
+MeshFilter:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1490944255}
+  m_Mesh: {fileID: 0}
 --- !u!4 &1490944259
 Transform:
   m_ObjectHideFlags: 0
@@ -337,7 +338,7 @@ GameObject:
   - component: {fileID: 1751451653}
   - component: {fileID: 1751451652}
   m_Layer: 0
-  m_Name: PetUI
+  m_Name: GlassRole
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -352,7 +353,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 1751451651}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 37d8adfb5d32a5f4b905fc4803aa72b5, type: 3}
+  m_Script: {fileID: 11500000, guid: 654ac71423d5b2342b5481f533043ee2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
 --- !u!4 &1751451653

@@ -57,6 +57,7 @@ namespace TransparentPet.Core
         [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
         [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
         [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr hdc);
+        const uint CAPTUREBLT = 0x40000000u; // 抓屏含分层窗口(物种副窗口),玻璃才能采到它们
         [DllImport("gdi32.dll")] static extern bool BitBlt(IntPtr dest, int dx, int dy, int w, int h, IntPtr src, int sx, int sy, uint rop);
         [DllImport("gdi32.dll")] static extern int GetDIBits(IntPtr hdc, IntPtr bitmap, uint startScan, uint scanLines, byte[] bits, ref BITMAPINFO bmi, uint usage);
 
@@ -99,7 +100,8 @@ namespace TransparentPet.Core
                 }
 
                 var old = SelectObject(memDc, bmp);
-                ok = BitBlt(memDc, 0, 0, w, h, screenDc, x, y, SRCCOPY);
+                // CAPTUREBLT：必须带——否则分层窗口(物种副窗口)不进抓屏,玻璃采不到它们
+                ok = BitBlt(memDc, 0, 0, w, h, screenDc, x, y, SRCCOPY | CAPTUREBLT);
                 if (ok)
                 {
                     var bmi = new BITMAPINFO

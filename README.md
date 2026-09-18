@@ -29,7 +29,7 @@
 | 空闲小蹦（`Pet/GroundIdleHop`） | 全物种统一的"趴地小蹦"状态机（纯逻辑、8 项单测）：落定趴在任务栏上后每隔随机 4~10s 连蹦两下；只回答"何时跳、跳多快"，施加方式由各物种自接——软体走 `SlimePbf.Hop` 全粒子冲量，玻璃走抛射初速 |
 | 多物种管理（`Pet/PetManager`+`PetSpeciesCatalog`+`PetMetrics`） | 物种注册表驱动：新增物种只需注册一条 + 接一个创建分支；物种平等——同一基准全宽与缩放档、同一交互契约（悬停自报 + `PetInputArbiter` 点击仲裁）、位置按物种按只持久化；液态玻璃转发槽位后端，贴图史莱姆/果冻软体动态创建 |
 | 生命感表现（`Pet/PetLifeMath`+`PetLifeVisual`） | 逻辑位置与渲染变换分层：物理只读写逻辑位置，表现层在 `LateUpdate` 叠加呼吸/倾角/挤压——视觉装饰永不污染模拟；落地挤压用半隐式欧拉弹簧（欠阻尼 ζ≈0.27，1~2 次回弹过冲即“Q 弹”来源）；同一套数学被离线快照工具复用，保证“演示图 = 真实行为” |
-| 真桌面折射（`Pet/LiquidGlassController`） | 抓屏隐形（`WDA_EXCLUDEFROMCAPTURE`，DWM 采集帧跳过本窗口，录屏/截图中桌宠消失）换来 BitBlt 抓到"不含自己"的桌面；折射源先经 `LiquidGlassCompose` 并入 PetRefract 层（其他物种随桌面一起被折射/色散/模糊），再走分离式高斯模糊与主合成；玻璃轮廓外的其他物种直接可见 |
+| 真桌面折射（`Pet/LiquidGlassController` + 双窗口架构） | 玻璃独占一个窗口并抓屏隐形（`WDA_EXCLUDEFROMCAPTURE`），其他史莱姆在另一个窗口——玻璃的 BitBlt 抓屏（带 `CAPTUREBLT`）把物种窗口当"桌面内容"自然采到，折射/色散/模糊全部真实；玻璃像素域观感参数（折射带/模糊/眩光/阴影）随体型等比缩放 |
 | 工程化 | 场景程序化生成（`SceneGenerator`）：不手写场景 YAML，克隆工程一条命令复原全部场景与图标；八个版本场景存档（`Assets/Scenes/Versions/`，index 0 = 交付默认）；**101 项 NUnit 测试**（物理/命中/软体/小蹦/配置/事件总线/表现数学） |
 
 ## 快速开始
