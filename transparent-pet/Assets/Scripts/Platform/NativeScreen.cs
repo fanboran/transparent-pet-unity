@@ -31,7 +31,7 @@ namespace TransparentPet.Platform
 
         /// <summary>
         /// 工作区底边的 y 坐标（逻辑像素，左上原点）。
-        /// 撞墙分裂、落地弹跳都以它为地面。编辑器模式下 Unity 窗口不是桌面全屏，
+        /// 撞墙反弹、落地弹跳都以它为地面。编辑器模式下 Unity 窗口不是桌面全屏，
         /// 退化为"屏幕底边上方 56px"近似（约为任务栏高度），保证 Play 模式行为接近。
         /// </summary>
         public static float GetWorkAreaBottomY()

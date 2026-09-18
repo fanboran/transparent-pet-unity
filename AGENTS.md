@@ -25,7 +25,7 @@
 - **commit 后必须立即 `git push`**：用户以 GitHub（fanboran/transparent-pet-unity）为准确认进度，本地领先远端 = 用户认为"什么都没提交"（2026-09-12 曾因此积压 35 笔）
 - **效果版本保留约定（用户拍板）**：一切观感/行为迭代都作为**独立版本场景**永久保留在 `Assets/Scenes/Versions/`（一版本一目录，SceneGenerator.Versions 表登记，GenerateAll 成套生成并全部收录构建设置，index 0 = 交付默认）；不做运行时开关、不删旧版本。构建 exe 默认只打 index 0（BuildPlayer 显式指定场景）；体验其他版本用编辑器打开对应场景
   - **新方案取代旧方案时，必须先把旧效果 resurrect 成独立版本场景，再谈下架**——绝不能"只在 git 历史/待办里留个记录"就当保留过了
-  - **历史教训（2026-09）**：分裂/融合玩法（撞墙面积转移式分裂 + 分身吸引飘回融合）在 PBF 软体重构时被整体替换下架，用户回头验收时"我的会分裂的 V2 怎么没了"——已按本约定复活为 `V4SplitFusion` 版本场景 + 展厅展项（`SplitPetController` / `SlimeSimulation` / `SlimeRingBody` / `SlimeRing.shader`）
+  - **历史教训（2026-09）**：分裂/融合玩法（撞墙面积转移式分裂 + 分身吸引飘回融合）在 PBF 软体重构时被整体替换下架，用户回头验收时"我的会分裂的 V2 怎么没了"——曾按本约定复活为 `V4SplitFusion` 版本场景；**2026-09-18 用户拍板彻底删除**（体验不达预期），相关代码（`SplitPetController` / `SlimeSimulation` / `SlimeRingBody` / `SlimeRing.shader` / `SlimeRingMat`）、V4 场景、展厅自动演示与 14 项测试已从 main 移除，git 历史（≤5f1a401）可考。**不要在未来会话中主动复活该版本**
   - 同理：**已拍板删除的效果（如史莱姆眼睛）在 resurrect 历史版本时必须一并删除**——复活旧场景不等于连带复活旧观感（V4 复活时曾把旧着色器的程序化眼睛带回来，用户再次提出删除）
 - **视觉锚定验收**：改观感前先跑 `TransparentPet.EditorTools.SlimeSnapshot.CaptureHeadless`（batchmode），与原版烘焙图（git 历史提取 PetSlime_ref.png 放输出目录）同底同比例渲染对比，亲自看图确认后再动手；关键数值：原版轮廓 160×101px、静息半宽 80
 - **验收 exe 交付**：构建出的验收 exe（Builds 整目录内容：exe、PetSpike_Data、UnityPlayer.dll、MonoBleedingEdge 缺一不可）直接复制到用户下载目录 `F:/Downloads/PetSpike/` 供其双击（用户下载目录已迁移，勿用 C 盘默认路径），别让用户去工程目录里翻；命令行构建入口 `-executeMethod TransparentPet.EditorTools.BuildPlayer.BuildWindows64`（2022.3 的 `-buildWindowsPlayer64` 参数已失效）
@@ -61,7 +61,7 @@
 2. **模块划分（功能定边界，asmdef 定依赖）**：`Assets/Scripts/` 下按功能域分模块，每模块一个 asmdef，依赖方向由 asmdef 引用白名单强制（等价 stick-world 的 audit_deps.py）：
    - `Core/`（L0 应用基建）：事件总线、配置持久化、穿透判定输入、失控保护——零外部引用
    - `Platform/`（L1 Win32 窗口层）：透明置顶窗口、托盘、抓屏、开机自启、强杀退出——全项目唯一碰 Win32 的地方
-   - `Pet/`（L2 玩法）：按物种线分目录 `Common/`（共享物理/仲裁/注册表）、`Glass/`（液态玻璃）、`Jelly/`（PBF 果冻）、`Shatter/`（碎裂）、`Split/`（分裂/融合）、`Textured/`（贴图）——目录=命名空间（`TransparentPet.Pet.Glass` 等）
+   - `Pet/`（L2 玩法）：按物种线分目录 `Common/`（共享物理/仲裁/注册表）、`Glass/`（液态玻璃）、`Jelly/`（PBF 果冻）、`Shatter/`（碎裂）、`Textured/`（贴图）——目录=命名空间（`TransparentPet.Pet.Glass` 等）
    - `UI/`（L2）：HUD
    - `Editor/`（Editor-only）：按用途分 `Build/`（构建入口）、`Capture/`（快照/宣传图）、`Generation/`（场景生成器）
 3. **耦合原则**：模块间通信走 `Core/EventBus.cs`（静态 C# 事件中心，对应 Godot 的 event_bus autoload）；**禁止** `GameObject.Find`、跨模块 `GetComponent` 裸引用。跨 asmdef 想引用对方类型必须显式加引用——依赖违规在编译期即失败。

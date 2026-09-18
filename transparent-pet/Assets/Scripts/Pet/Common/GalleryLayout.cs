@@ -19,7 +19,6 @@ using TransparentPet.Core;
 using UnityEngine;
 using TransparentPet.Pet.Jelly;
 using TransparentPet.Pet.Shatter;
-using TransparentPet.Pet.Split;
 using TransparentPet.Pet.Textured;
 using TransparentPet.Platform;
 
@@ -40,16 +39,6 @@ namespace TransparentPet.Pet.Common
         [Tooltip("标签距宠物中心的垂直偏移（像素，屏幕上方向）")]
         public float LabelOffsetY = 150f;
 
-
-        [Tooltip("展厅自动演示：启动后延迟（秒）自动把分裂版甩向侧墙（分裂是撞墙触发的，静置看不出来）")]
-        public float ShowcaseLaunchDelay = 3.5f;
-
-        [Tooltip("演示重复间隔（秒）；0 = 只演示一次。周期重复才能让「漂浮+碎成渣+飘回」持续可见")]
-        public float ShowcaseRepeatInterval = 5.5f;
-
-        [Tooltip("自动演示的抛射速度（屏幕像素/秒；水平分量会自动朝最近的侧墙）")]
-        public Vector2 ShowcaseLaunchVelocity = new Vector2(1500f, -100f);
-
         readonly List<Component> pets = new List<Component>();
 
         void Awake()
@@ -62,36 +51,6 @@ namespace TransparentPet.Pet.Common
         {
             // 3 秒后回读实际位置：确认注入是否真的生效（并暴露"宠物自己跑掉"的问题）
             Invoke(nameof(LogActualPositions), 3f);
-
-            // 分裂版的展示需要主动触发（撞墙才分裂）
-            foreach (var pet in pets)
-            {
-                if (pet is SplitPetController)
-                {
-                    Invoke(nameof(TriggerShowcaseSplit), ShowcaseLaunchDelay);
-                    break;
-                }
-            }
-        }
-
-        /// <summary>把分裂版甩向最近的侧墙，让它演出"撞墙分裂 → 分身被吸引飘回融合"。</summary>
-        void TriggerShowcaseSplit()
-        {
-            foreach (var pet in pets)
-            {
-                if (!(pet is SplitPetController ring))
-                    continue;
-
-                var v = ShowcaseLaunchVelocity;
-                // 朝最近的侧墙：屏幕右半往右甩、左半往左甩
-                v.x = Mathf.Abs(v.x) * (ring.ScreenPosition.x > Screen.width * 0.5f ? 1f : -1f);
-                ring.LaunchForShowcase(v);
-                Debug.Log($"[GalleryLayout] 展厅演示：分裂版以 {v} 抛向侧墙（撞墙触发分裂）");
-            }
-
-            // 周期重复：单次演示一闪而过（尤其分身体积小），持续上演才看得出这是它的招牌行为
-            if (ShowcaseRepeatInterval > 0f)
-                Invoke(nameof(TriggerShowcaseSplit), ShowcaseRepeatInterval);
         }
 
         void LogActualPositions()
@@ -107,8 +66,6 @@ namespace TransparentPet.Pet.Common
             foreach (var c in GetComponentsInChildren<SvgPetController>(true))
                 pets.Add(c);
             foreach (var c in GetComponentsInChildren<PetController>(true))
-                pets.Add(c);
-            foreach (var c in GetComponentsInChildren<SplitPetController>(true))
                 pets.Add(c);
             foreach (var c in GetComponentsInChildren<MeshPetController>(true))
                 pets.Add(c);
@@ -132,13 +89,8 @@ namespace TransparentPet.Pet.Common
             for (var i = 0; i < count; i++)
             {
                 var t = (i + 1f) / (count + 1f); // 均匀分布（n+1 个间隔，两端留白）
-                // 分裂版贴左墙摆放：它的演示要撞左墙，行程越短撞墙时保住的法向速度越多
-                // （软体速度阻尼 0.985/子步，飞 1000px 能衰减掉一半以上）
-                var x = pets[i] is SplitPetController
-                    ? width * 0.10f
-                    : width * Mathf.Lerp(Margin, 1f - Margin, t);
-                var isSoftBody = pets[i] is PetController || pets[i] is SplitPetController
-                                 || pets[i] is MeshPetController;
+                var x = width * Mathf.Lerp(Margin, 1f - Margin, t);
+                var isSoftBody = pets[i] is PetController || pets[i] is MeshPetController;
                 // 软体版从空中错落落下（0.32~0.52 屏高）；贴图版没有落地物理，直接贴地摆放
                 var y = isSoftBody && DropIn ? ground * (0.32f + 0.10f * (i % 3)) : ground - 70f;
                 var position = new Vector2(x, y);
@@ -160,11 +112,6 @@ namespace TransparentPet.Pet.Common
                             // 悬浮版：一出生就悬停在空中，与重力版形成直观对比
                             if (pbf.IsHoverMode)
                                 pbf.SetSettledHover(true);
-                            break;
-
-                        case SplitPetController ring:
-                            ring.SetPersistPosition(false);
-                            ring.SetSpawnOverride(position);
                             break;
 
                         case MeshPetController mesh:
@@ -194,8 +141,6 @@ namespace TransparentPet.Pet.Common
                     return svg.LogicScreenPos;
                 case PetController pbf:
                     return pbf.ScreenPosition;
-                case SplitPetController ring:
-                    return ring.ScreenPosition;
                 case MeshPetController mesh:
                     return mesh.ScreenPosition;
                 default:

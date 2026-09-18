@@ -9,7 +9,6 @@ using TransparentPet.Pet.Common;
 using TransparentPet.Pet.Glass;
 using TransparentPet.Pet.Jelly;
 using TransparentPet.Pet.Shatter;
-using TransparentPet.Pet.Split;
 using TransparentPet.Pet.Textured;
 using TransparentPet.Platform;
 
@@ -45,10 +44,6 @@ namespace TransparentPet.EditorTools
             /// <summary>PBF 软体（PetController + SlimeBody + SlimeLiquid metaball 场）</summary>
             Pbf,
 
-            /// <summary>轮廓环软体（28 粒子 → 动态 Mesh）：撞墙面积转移式分裂 + 分身吸引融合
-            /// （历史实现复活版，见 SplitPetController / SlimeSimulation 文件头）</summary>
-            RingSplit,
-
             /// <summary>第一个流体版本（PBF + Marching Squares 等值线渲染，git e7341a2/e1653e1）：
             /// 粒子被拉散时等值线会断裂成一块块——即"碎成渣"的观感来源</summary>
             PbfMesh,
@@ -75,8 +70,6 @@ namespace TransparentPet.EditorTools
                 "V6 · 纯烘焙贴图版：PetSlime.png 原样显示，零着色器零表现层（存档）"),
             ("Assets/Scenes/Versions/V5SvgClassic/PetScene.unity", PetKind.SvgClassic, false,
                 "V5 · 玻璃着色器版：贴图仅当 alpha 轮廓，颜色全由 Slime.shader 计算（存档）"),
-            ("Assets/Scenes/Versions/V4SplitFusion/PetScene.unity", PetKind.RingSplit, false,
-                "V4 · 轮廓环软体分裂版：撞墙分裂出分身、分身被吸引飘回融合（早于 PBF 流体的实验版本；历史复活）"),
             ("Assets/Scenes/Versions/V3PbfGravity/PetScene.unity", PetKind.Pbf, false,
                 "V3 · PBF 流体趴姿版：重力常开软体（存档）"),
             ("Assets/Scenes/Versions/V2PbfHover/PetScene.unity", PetKind.PbfMesh, true,
@@ -87,7 +80,6 @@ namespace TransparentPet.EditorTools
 
         const string SlimeMaterialPath = "Assets/Art/Pet/SlimeMat.mat";             // Slime.shader（SVG 版）
         const string SlimeLiquidMaterialPath = "Assets/Art/Pet/SlimeLiquidMat.mat"; // SlimeLiquid.shader（PBF 版）
-        const string SlimeRingMaterialPath = "Assets/Art/Pet/SlimeRingMat.mat";     // SlimeRing.shader（轮廓环软体版）
         const string SlimeMeshMaterialPath = "Assets/Art/Pet/SlimeMeshMat.mat";     // SlimeMesh.shader（第一个流体版）
         const string BakedMaterialPath = "Assets/Art/Pet/BakedSpriteMat.mat";       // Sprites/Default（纯烘焙图版）
         const string PetTexturePath = "Assets/Art/Pet/PetSlime.png";
@@ -243,16 +235,6 @@ namespace TransparentPet.EditorTools
                     var so = new SerializedObject(controller);
                     so.FindProperty("hoverMode").boolValue = hoverMode;
                     so.ApplyModifiedProperties();
-                    break;
-                }
-                case PetKind.RingSplit:
-                {
-                    // 轮廓环软体：动态 Mesh（顶点环）+ 顶点版玻璃着色器 + 分裂/融合总控
-                    petGo.AddComponent<MeshFilter>();
-                    var meshRenderer = petGo.AddComponent<MeshRenderer>();
-                    meshRenderer.sharedMaterial = EnsureMaterial("TransparentPet/SlimeRing", SlimeRingMaterialPath);
-                    petGo.AddComponent<SlimeRingBody>();
-                    petGo.AddComponent<SplitPetController>();
                     break;
                 }
                 case PetKind.PbfMesh:
