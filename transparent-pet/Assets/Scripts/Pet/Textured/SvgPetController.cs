@@ -15,7 +15,6 @@ using AlphaHit = TransparentPet.Pet.Textured.AlphaHitTestCore;
 using TransparentPet.Core;
 using UnityEngine;
 using TransparentPet.Pet.Common;
-using TransparentPet.Pet.Jelly;
 using TransparentPet.Platform;
 
 namespace TransparentPet.Pet.Textured
@@ -27,7 +26,7 @@ namespace TransparentPet.Pet.Textured
     /// 产品化阶段：订阅 EventBus 响应设置变更（缩放/角色/抛射参数），位置变化自动落盘。
     /// </summary>
     [RequireComponent(typeof(SpriteRenderer))]
-    public class SvgPetController : MonoBehaviour
+    public class SvgPetController : MonoBehaviour, IGrabCancelable
     {
         /// <summary>与 PetSlime.png 的导入设置（Pixels Per Unit）保持一致</summary>
         public const float PixelsPerUnit = 100f;
@@ -148,12 +147,7 @@ namespace TransparentPet.Pet.Textured
             JustLanded = false;
             Tapped = false;
 
-            // 安全网退出：与托盘"退出"同一条 HardExit 链路
-            if (Input.GetKeyDown(KeyCode.Escape))
-            {
-                HardExit.Now();
-                return;
-            }
+            // ESC 安全网退出已上提窗口层（PetWindowSetup），控制器不再各自检查
 
             SyncCameraToScreen();
             HandleInput();
@@ -279,7 +273,7 @@ namespace TransparentPet.Pet.Textured
                 PointerHover.ReportHover(Time.frameCount);
 
             if (Input.GetMouseButtonDown(0) && onPet
-                && PetInputArbiter.TryClaim(this, spriteRenderer.sortingOrder))
+                && PetInputArbiter.TryClaim(this, spriteRenderer.sortingOrder, Time.frameCount))
             {
                 physics.DragBegin(mouseScreen, logicScreenPos, NowMs());
                 dragStartMouse = mouseScreen;

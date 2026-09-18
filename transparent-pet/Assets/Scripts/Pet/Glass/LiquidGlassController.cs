@@ -34,7 +34,7 @@ using TransparentPet.Platform;
 namespace TransparentPet.Pet.Glass
 {
     [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
-    public class LiquidGlassController : MonoBehaviour
+    public class LiquidGlassController : MonoBehaviour, IGrabCancelable
     {
         public const float PixelsPerUnit = 100f;
 
@@ -245,6 +245,16 @@ namespace TransparentPet.Pet.Glass
             UpdateSave(); // 立即持久化（移除不等节流）
         }
 
+        /// <summary>
+        /// 撤销当前抓取（输入仲裁：被更高层宠物的点击抢占时调用）。
+        /// 玻璃板平移语义下等同"松手"：全部 dragging 置 false，不给抛速。
+        /// </summary>
+        public void CancelGrab()
+        {
+            foreach (var s in slimes)
+                s.dragging = false;
+        }
+
         /// <summary>抓屏隐形开关（设置面板/F11 共用入口）。开启有代价：录屏/截图中桌宠消失。</summary>
         public void SetCaptureInvisible(bool on)
         {
@@ -400,7 +410,7 @@ namespace TransparentPet.Pet.Glass
                 PointerHover.ReportHover(Time.frameCount);
 
             if (Input.GetMouseButtonDown(0) && hit != null
-                && PetInputArbiter.TryClaim(this, 0))
+                && PetInputArbiter.TryClaim(this, 0, Time.frameCount))
             {
                 hit.dragging = true;
                 hit.grab = hit.pos - mouseTop; // 抓哪里握哪里（玻璃板平移）
@@ -422,9 +432,7 @@ namespace TransparentPet.Pet.Glass
             if (Input.GetKeyDown(KeyCode.F11))
                 SetCaptureInvisible(!captureInvisibleActive);
 
-            // 安全网退出：与托盘"退出"同一条 HardExit 链路
-            if (Input.GetKeyDown(KeyCode.Escape))
-                HardExit.Now();
+            // ESC 安全网退出已上提窗口层（PetWindowSetup），控制器不再各自检查
         }
 
         // ── 渲染管线：桌面/素材 → 竖直模糊 → 水平模糊 → 主合成上屏 ──

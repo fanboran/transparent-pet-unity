@@ -16,7 +16,7 @@ namespace TransparentPet.Pet.Jelly
 {
     /// <summary>PBF 史莱姆总控。</summary>
     [RequireComponent(typeof(SlimeBody))]
-    public class PetController : MonoBehaviour
+    public class PetController : MonoBehaviour, IGrabCancelable
     {
         /// <summary>正交相机缩放基准（1 世界单位 = 100 屏幕像素）</summary>
         public const float PixelsPerUnit = 100f;
@@ -30,6 +30,7 @@ namespace TransparentPet.Pet.Jelly
         Camera mainCamera;
         SlimeBody body;
         SlimePbf sim;
+        MeshRenderer meshRenderer; // 仲裁层序用；Start 缓存，避免每帧 GetComponent
 
         ThrowParams throwParams = new ThrowParams();
         Color bodyColor = new Color(0.1f, 0.3f, 0.6f);
@@ -69,6 +70,7 @@ namespace TransparentPet.Pet.Jelly
         {
             body = GetComponent<SlimeBody>();
             body.Initialize(GetComponent<MeshRenderer>().sharedMaterial);
+            meshRenderer = GetComponent<MeshRenderer>();
             SyncCameraToScreen();
 
             var config = PetConfigStore.Load();
@@ -93,13 +95,7 @@ namespace TransparentPet.Pet.Jelly
 
         void Update()
         {
-            // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段（顶层栈硬退，同托盘退出）
-            if (Input.GetKeyDown(KeyCode.Escape))
-            {
-                HardExit.Now();
-                return;
-            }
-
+            // ESC 安全网退出已上提窗口层（PetWindowSetup），控制器不再各自检查
             SyncCameraToScreen();
             var dt = Time.deltaTime;
 
@@ -128,9 +124,8 @@ namespace TransparentPet.Pet.Jelly
 
             // 命中预检（ContainsPoint 无副作用）→ 仲裁归属 → 再真正抓取：
             // 顺序很重要，避免"先抓住再撤销"造成的状态抖动
-            var renderer = GetComponent<MeshRenderer>();
             if (Input.GetMouseButtonDown(0) && sim.ContainsPoint(mouse)
-                && PetInputArbiter.TryClaim(this, renderer != null ? renderer.sortingOrder : 0))
+                && PetInputArbiter.TryClaim(this, meshRenderer != null ? meshRenderer.sortingOrder : 0, Time.frameCount))
                 sim.TryGrab(mouse);
 
             if (sim.IsGrabbed)

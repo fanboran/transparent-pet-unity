@@ -12,14 +12,13 @@ using System;
 using TransparentPet.Core;
 using UnityEngine;
 using TransparentPet.Pet.Common;
-using TransparentPet.Pet.Jelly;
 using TransparentPet.Platform;
 
 namespace TransparentPet.Pet.Shatter
 {
     /// <summary>PBF 史莱姆总控。</summary>
     [RequireComponent(typeof(SlimeMeshBody))]
-    public class MeshPetController : MonoBehaviour
+    public class MeshPetController : MonoBehaviour, IGrabCancelable
     {
         /// <summary>正交相机缩放基准（1 世界单位 = 100 屏幕像素）</summary>
         public const float PixelsPerUnit = 100f;
@@ -33,6 +32,7 @@ namespace TransparentPet.Pet.Shatter
         Camera mainCamera;
         SlimeMeshBody body;
         SlimePbfMesh sim;
+        MeshRenderer meshRenderer; // 仲裁层序用；Start 缓存，避免每帧 GetComponent
 
         ThrowParams throwParams = new ThrowParams();
         Color bodyColor = new Color(0.1f, 0.3f, 0.6f);
@@ -71,6 +71,7 @@ namespace TransparentPet.Pet.Shatter
         {
             body = GetComponent<SlimeMeshBody>();
             body.Initialize(GetComponent<MeshRenderer>().sharedMaterial);
+            meshRenderer = GetComponent<MeshRenderer>();
             SyncCameraToScreen();
 
             var config = PetConfigStore.Load();
@@ -95,13 +96,7 @@ namespace TransparentPet.Pet.Shatter
 
         void Update()
         {
-            // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段
-            if (Input.GetKeyDown(KeyCode.Escape))
-            {
-                HardExit.Now();
-                return;
-            }
-
+            // ESC 安全网退出已上提窗口层（PetWindowSetup），控制器不再各自检查
             SyncCameraToScreen();
             var dt = Time.deltaTime;
             var env = BuildEnvironment();
@@ -130,8 +125,14 @@ namespace TransparentPet.Pet.Shatter
             if (sim.ContainsPoint(mouse))
                 PointerHover.ReportHover(Time.frameCount);
 
-            if (Input.GetMouseButtonDown(0) && sim.TryGrab(mouse))
-                gravityOn = false; // 抓住即悬浮（拖拽中不施重力）
+            // 命中预检（ContainsPoint 无副作用）→ 仲裁归属 → 再真正抓取：
+            // 此前直接 TryGrab 没接仲裁，重叠点击会同抓多只（仲裁器文件头记录的问题）
+            if (Input.GetMouseButtonDown(0) && sim.ContainsPoint(mouse)
+                && PetInputArbiter.TryClaim(this, meshRenderer != null ? meshRenderer.sortingOrder : 0, Time.frameCount))
+            {
+                if (sim.TryGrab(mouse))
+                    gravityOn = false; // 抓住即悬浮（拖拽中不施重力）
+            }
 
             if (sim.IsGrabbed)
                 sim.MoveGrab(mouse, NowMs());
@@ -166,6 +167,12 @@ namespace TransparentPet.Pet.Shatter
         public Vector2 ScreenPosition => sim != null ? sim.Centroid : Vector2.zero;
         public bool IsHoverMode => hoverMode;
         public void SetSettledHover(bool settled) => hoverSettled = settled;
+
+        /// <summary>
+        /// 撤销当前抓取（输入仲裁：被更高层宠物的点击抢占时调用）。
+        /// Release 不给抛速 = 行为等同"轻放"，重力状态保持不变。
+        /// </summary>
+        public void CancelGrab() => sim?.Release(0f, 0f, 1f, false);
 
         // ── 环境/坐标工具 ──
 
