@@ -107,6 +107,8 @@ namespace TransparentPet.Pet
                 pets.Add(c);
             foreach (var c in GetComponentsInChildren<MeshPetController>(true))
                 pets.Add(c);
+            foreach (var c in GetComponentsInChildren<LiquidGlassController>(true))
+                pets.Add(c);
             pets.Sort((a, b) => a.transform.position.x.CompareTo(b.transform.position.x));
         }
 
@@ -147,6 +149,12 @@ namespace TransparentPet.Pet
                         case SvgPetController svg:
                             svg.SetPersistPosition(false);
                             svg.SetSpawnOverride(position);
+                            break;
+
+                        case LiquidGlassController glass:
+                            // 玻璃摆位走自家开关：忽略玩家配置,停在展厅槽位（半空）
+                            glass.IgnoreSavedPositions = true;
+                            glass.TestSpawnPosition = new Vector2(position.x, ground * 0.45f);
                             break;
 
                         case PetController pbf:

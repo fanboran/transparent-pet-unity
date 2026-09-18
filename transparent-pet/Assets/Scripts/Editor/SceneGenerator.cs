@@ -362,12 +362,14 @@ namespace TransparentPet.EditorTools
         /// 展厅里的宠物（数组顺序 = 从左到右）。不放 V6 纯烘焙版：它和 V7 用同一张贴图，
         /// 静止时外观完全一样（区别只在 V7 有呼吸/倾斜/挤压动画），同屏会让人误以为"重复"。
         /// </summary>
+        /// <summary>展厅四只 = 当前交付的四个物种并列（液态玻璃/贴图/果冻/碎裂），
+        /// 不再放历史版本近似重复体（贴图系两只、果冻系两只外观难分，用户拍板撤换）。</summary>
         static readonly (PetKind kind, bool hoverMode, string label)[] GalleryPets =
         {
-            (PetKind.PbfMesh,    true,  "V2 · 第一个流体版（PBF + 等值线渲染 · 漂浮 · 会碎成块）"),
-            (PetKind.SvgLife,    false, "V7 · 生命感（呼吸 / 倾斜 / 落地挤压）"),
-            (PetKind.SvgClassic, false, "V5 · 玻璃着色器 Slime.shader"),
-            (PetKind.Pbf,        false, "V3 · PBF 流体（metaball 渲染 · 重力落地）"),
+            (PetKind.LiquidGlassDesktop, false, "液态玻璃 · 折射你的真实桌面"),
+            (PetKind.SvgLife,            false, "贴图史莱姆 · 生命感（呼吸 / 倾斜 / 落地挤压）"),
+            (PetKind.Pbf,                false, "果冻软体 · PBF 粒子（重力落地）"),
+            (PetKind.PbfMesh,            true,  "碎裂软体 · 悬浮（拉扯过猛碎成块）"),
         };
 
         [MenuItem("TransparentPet/生成亚克力独享场景（V9 单玻璃）")]
@@ -415,7 +417,8 @@ namespace TransparentPet.EditorTools
                 petGo.transform.SetParent(root.transform);
                 // x 初值递增：GalleryLayout 按 transform.x 排序决定左右顺序
                 petGo.transform.position = new Vector3(i * 0.5f, 0f, 0f);
-                AddPetComponents(petGo, kind, hoverMode);
+                // 玻璃不挂 PetManager（否则展厅里还会再生成一套物种）
+                AddPetComponents(petGo, kind, hoverMode, withManager: kind != PetKind.LiquidGlassDesktop);
             }
 
             root.AddComponent<GalleryLayout>();
@@ -459,6 +462,10 @@ namespace TransparentPet.EditorTools
             gc.CaptureInvisible = true;
             BuildWindowStack(glass, out var windowController);
             gc.WindowController = windowController;
+            // PetRefractLayer 必须挂：它每帧给全局纹理 _PetRTTex 赋值——无人赋值时
+            // 玻璃采样 Unity 灰色默认纹理，整屏罩灰白蒙层（实测踩坑：全屏发灰根源）。
+            // 本进程无其他物种 → RT 全透明 → 视觉零影响，纯粹兜底全局纹理。
+            glassPet.AddComponent<PetRefractLayer>();
             new GameObject("GlassRole").AddComponent<GlassRole>();
             SaveDeliveryScene(glass, GlassScenePath);
 
