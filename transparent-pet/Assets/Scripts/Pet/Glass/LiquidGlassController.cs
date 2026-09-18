@@ -1,5 +1,5 @@
 // ============================================================================
-// LiquidGlassController.cs — 液态玻璃史莱姆（V9）：多 Pass 渲染管线 + 多只管理
+// LiquidGlassController.cs — 液态玻璃史莱姆（桌面版）：多 Pass 渲染管线 + 多只管理
 // ============================================================================
 // 移植自姊妹 Godot 项目 modules/effects/scripts/liquid_glass_renderer.gd。
 // Godot 用 4 个 SubViewport 串联管线，Unity Built-in 下等价结构为
@@ -9,7 +9,7 @@
 //        ┬→ LiquidGlassBlur(竖直) → vRT
 //        │        └→ LiquidGlassBlur(水平) → hRT
 //        └→ LiquidGlass(主合成: 桌面纹理 + hRT) → 全屏 quad
-//   抓屏失败/未开隐形时回退 LiquidGlassBg 程序化素材（V8 形态）。
+//   抓屏失败/未开隐形时回退 LiquidGlassBg 程序化素材。
 //
 // 多只：shader 端保留 3 个物品槽位 + smin 融合（相邻史莱姆会像液滴一样
 // 合并），本控制器在 CPU 侧管理至多 3 只的位置/拖拽/持久化。
@@ -91,12 +91,12 @@ namespace TransparentPet.Pet.Glass
         [Header("调试视图（0=SDF 1=等高线 2=法线 9=主渲染）")]
         public int Step = 9;
 
-        [Header("抓屏隐形（V9 折射真实桌面的前置）")]
+        [Header("抓屏隐形（桌面折射的前置）")]
         [Tooltip("对本窗口设 WDA_EXCLUDEFROMCAPTURE：录屏/截图中桌宠消失，换来抓屏画面不含自己")]
         public bool CaptureInvisible = false;
 
-        [Header("V9 桌面折射（抓屏隐形生效时折射窗口背后的真实桌面）")]
-        [Tooltip("关闭 = 回退 V8 行为（程序化棋盘格素材）")]
+        [Header("桌面折射（抓屏隐形生效时折射窗口背后的真实桌面）")]
+        [Tooltip("关闭 = 回退程序化棋盘格素材")]
         public bool DesktopReflection = true;
 
         [Tooltip("窗口互操作（SceneGenerator 从 WindowController 注入）")]

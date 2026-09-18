@@ -39,7 +39,7 @@ namespace TransparentPet.Pet.Shatter
         float userScale = 1f;
         bool gravityOn; // 抛射进行中（出生下落也算）
 
-        /// <summary>悬浮语义（V2）：落定即关重力原地漂浮——由场景生成器注入</summary>
+        /// <summary>悬浮语义（碎裂版）：落定即关重力原地漂浮——由场景生成器注入</summary>
         [SerializeField] bool hoverMode = false;
         bool hoverSettled;
 
@@ -112,7 +112,7 @@ namespace TransparentPet.Pet.Shatter
             // 抛射落定（速度小且贴地）→ 回悬浮；拖拽中不判（抓住时本来就该跟随）
             if (hoverMode && !sim.IsGrabbed && !hoverSettled &&
                 sim.IsSettled && sim.IsNearGround(env.GroundY))
-                hoverSettled = true; // 落定即漂浮（V2）；抓住/甩出自动解除
+                hoverSettled = true; // 落定即漂浮（碎裂版）；抓住/甩出自动解除
             if (gravityOn && !sim.IsGrabbed && sim.IsSettled && sim.IsNearGround(env.GroundY))
                 gravityOn = false;
 

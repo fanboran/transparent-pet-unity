@@ -44,7 +44,7 @@
   -executeMethod TransparentPet.EditorTools.BuildPlayer.BuildWindows64
 ```
 
-编辑器内体验：Unity Hub 打开 `transparent-pet/`，打开 `Assets/Scenes/Versions/V7LifeVisual/PetScene.unity` 直接 Play（透明/穿透行为需在构建产物中验证）；液态玻璃版打开 `V8LiquidGlass/PetScene.unity`。
+编辑器内体验：Unity Hub 打开 `transparent-pet/`，打开 `Assets/Scenes/Versions/LifeVisual/PetScene.unity` 直接 Play（透明/穿透行为需在构建产物中验证）；液态玻璃版打开 `LiquidGlass/PetScene.unity`。
 
 ## 已知限制与故障处理
 
@@ -72,13 +72,13 @@ tools/           # 图标生成 / GIF 合成脚本（Python + Pillow）
 
 | 版本 | 形态 |
 |---|---|
-| **V9 LiquidGlassDesktop**（交付默认） | 真液态玻璃桌面版：抓屏隐形（`WDA_EXCLUDEFROMCAPTURE`）+ 折射真实桌面，**多只同屏**（≤3，smin 液滴融合）；F11 切换隐形（代价：隐形时录屏/截图中桌宠不可见） |
-| V8 LiquidGlass | 液态玻璃史莱姆：SDF 轮廓 + 折射/色散/菲涅尔/眩光（移植自 Godot 版液态玻璃演示），棋盘格素材只在玻璃内可见（V9 的素材回退形态） |
-| V7 LifeVisual | 烘焙贴图原样 + 生命感表现层（呼吸/拖拽倾斜/落地挤压/戳反应） |
-| V6 BakedTexture | 纯烘焙贴图：`PetSlime.png` 原样显示，零着色器零表现层 |
-| V5 SvgClassic | 贴图仅作 alpha 轮廓，颜色由 `Slime.shader` 玻璃着色器计算 |
-| V3 PbfGravity | PBF 粒子软体（重力常开趴姿版，`SlimeLiquid` metaball 场渲染） |
-| V2 PbfHover | 第一个流体物理版本（PBF + 等值线 mesh 渲染）：落定关重力悬浮，拉扯过猛时轮廓断裂碎成块 |
+| **LiquidGlassDesktop**（交付默认） | 真液态玻璃桌面版：抓屏隐形（`WDA_EXCLUDEFROMCAPTURE`）+ 折射真实桌面，**多只同屏**（≤3，smin 液滴融合）；F11 切换隐形（代价：隐形时录屏/截图中桌宠不可见） |
+| LiquidGlass | 液态玻璃史莱姆：SDF 轮廓 + 折射/色散/菲涅尔/眩光（移植自 Godot 版液态玻璃演示），棋盘格素材只在玻璃内可见（桌面版的素材回退形态） |
+| LifeVisual | 烘焙贴图原样 + 生命感表现层（呼吸/拖拽倾斜/落地挤压/戳反应） |
+| BakedTexture | 纯烘焙贴图：`PetSlime.png` 原样显示，零着色器零表现层 |
+| SvgClassic | 贴图仅作 alpha 轮廓，颜色由 `Slime.shader` 玻璃着色器计算 |
+| PbfGravity | PBF 粒子软体（重力常开趴姿版，`SlimeLiquid` metaball 场渲染） |
+| PbfHover | 第一个流体物理版本（PBF + 等值线 mesh 渲染）：落定关重力悬浮，拉扯过猛时轮廓断裂碎成块 |
 
 版本约定：观感/行为迭代一律作为独立版本场景永久保留，不做运行时开关；构建 exe 只打 index 0。**新方案取代旧方案时，旧效果必须先 resurrect 成独立版本场景再下架**。分裂/融合玩法（撞墙分裂 + 分身吸引融合）曾是其一：PBF 重构时被下架、后按约定复活，**2026-09-18 用户拍板彻底删除**（体验不达预期，git 历史可考）。
 
@@ -88,10 +88,10 @@ tools/           # 图标生成 / GIF 合成脚本（Python + Pillow）
 
 | 位置 | 展项 | 看点 |
 |---|---|---|
-| 最左 | V2 · 碎裂软体 | 唯一悬停不落地的版本；抓住拉扯过猛会碎成块 |
-| 左二 | V7 · 生命感 | 呼吸起伏、被拖时倾斜、落地压扁回弹、戳一下会弹 |
-| 右二 | V5 · 玻璃着色器 | 颜色完全由着色器计算（菲涅尔 + FBM 流动 + 伪折射色散） |
-| 最右 | V3 · PBF 软体 | 重力常开：出生落下、落地压扁回弹后趴在桌面 |
+| 最左 | 碎裂软体 | 唯一悬停不落地的版本；抓住拉扯过猛会碎成块 |
+| 左二 | 生命感 | 呼吸起伏、被拖时倾斜、落地压扁回弹、戳一下会弹 |
+| 右二 | 玻璃着色器 | 颜色完全由着色器计算（菲涅尔 + FBM 流动 + 伪折射色散） |
+| 最右 | PBF 软体 | 重力常开：出生落下、落地压扁回弹后趴在桌面 |
 
 同屏多只的技术要点：出生位置逐个注入、关闭位置持久化、**点击仲裁**（重叠区域只归最上层那只）、每只 PBF 独立材质实例与粒子 buffer。
 

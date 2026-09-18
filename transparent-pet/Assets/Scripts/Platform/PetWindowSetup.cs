@@ -17,7 +17,7 @@ namespace TransparentPet.Platform
         [Tooltip("始终置顶（对应 Godot window_always_on_top，默认 true；启动时被配置覆盖）")]
         public bool AlwaysOnTop = true;
 
-        [Tooltip("全屏透明覆盖层；V9 液态玻璃桌面版关闭——窗口收缩为玻璃包围盒跟随宠物")]
+        [Tooltip("全屏适配显示器（当前唯一形态；窗口收缩方案已废弃）")]
         public bool FitToMonitor = true;
 
         /// <summary>主循环跑到这么多帧才认为"已进入正常渲染循环"（放行启动看门狗）</summary>
@@ -51,7 +51,7 @@ namespace TransparentPet.Platform
 
             window.isTransparent = true;   // TransparentType.Alpha —— 全 alpha 方案（目标路线）
             window.isTopmost = AlwaysOnTop;
-            window.shouldFitMonitor = FitToMonitor; // 全屏透明覆盖层；V9 收缩形态关闭
+            window.shouldFitMonitor = FitToMonitor; // 全屏透明覆盖层（收缩形态已废弃）
 
             // 穿透不再交给 UniWinC 的 Opacity 判定：它每帧在 WaitForEndOfFrame 里
             // ReadPixels 读鼠标下一个像素（整帧 GPU 同步，全窗口层唯一每帧跨 GPU/DWM

@@ -223,7 +223,7 @@ namespace TransparentPet.Platform
         }
 
         // ── 全局光标：穿透态（WS_EX_TRANSPARENT）窗口收不到鼠标消息，Unity 的
-        //    Input.mousePosition 会冻结 → 命中判定死锁在穿透态（V8/V9 实测踩坑）。
+        //    Input.mousePosition 会冻结 → 命中判定死锁在穿透态（液态玻璃版实测踩坑）。
         //    GetCursorPos 直接读系统光标，不依赖窗口消息，穿透态下依然实时。──
 
         [StructLayout(LayoutKind.Sequential)]

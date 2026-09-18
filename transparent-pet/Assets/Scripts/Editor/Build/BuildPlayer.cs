@@ -12,8 +12,8 @@ namespace TransparentPet.EditorTools
     /// </summary>
     public static class BuildPlayer
     {
-        /// <summary>交付默认版本（构建设置 index 0 = V9 真液态玻璃桌面版）；体验其他保留版本改此路径（见 SceneGenerator.Versions）。</summary>
-        const string ScenePath = "Assets/Scenes/Versions/V9LiquidGlassDesktop/PetScene.unity";
+        /// <summary>交付默认版本（构建设置 index 0 = 真液态玻璃桌面版）；体验其他保留版本改此路径（见 SceneGenerator.Versions）。</summary>
+        const string ScenePath = "Assets/Scenes/Versions/LiquidGlassDesktop/PetScene.unity";
 
         /// <summary>版本展厅场景（各版本同屏，演示/面试用）。</summary>
         const string GalleryScenePath = "Assets/Scenes/Showcase/PetGallery.unity";
@@ -21,13 +21,13 @@ namespace TransparentPet.EditorTools
         /// <summary>构建交付默认版（单只宠物，透明桌宠形态）。</summary>
         public static void BuildWindows64() => Build(ScenePath, "PetSpike.exe");
 
-        /// <summary>构建 V9 真液态玻璃桌面版（当前液态玻璃验收主线）。</summary>
+        /// <summary>构建真液态玻璃桌面版（当前液态玻璃验收主线）。</summary>
         public static void BuildLiquidGlassWindows64() =>
-            Build("Assets/Scenes/Versions/V9LiquidGlassDesktop/PetScene.unity", "PetLiquidGlass.exe");
+            Build("Assets/Scenes/Versions/LiquidGlassDesktop/PetScene.unity", "PetLiquidGlass.exe");
 
-        /// <summary>构建 V2 碎裂版（PBF + 等值线渲染，拉扯过猛碎成块；存档版本体验/验收用）。</summary>
+        /// <summary>构建碎裂版（PBF + 等值线渲染，拉扯过猛碎成块；存档版本体验/验收用）。</summary>
         public static void BuildShatterWindows64() =>
-            Build("Assets/Scenes/Versions/V2PbfHover/PetScene.unity", "PetShatter.exe");
+            Build("Assets/Scenes/Versions/PbfHover/PetScene.unity", "PetShatter.exe");
 
         /// <summary>构建版本展厅（五只不同版本史莱姆同屏）。</summary>
         public static void BuildGalleryWindows64() => Build(GalleryScenePath, "PetGallery.exe");

@@ -22,9 +22,9 @@ namespace TransparentPet.EditorTools
     /// Assets/Scenes/Versions/ 下一个版本一个目录。GenerateAll 成套生成并全部
     /// 收录进构建设置（index 0 = 交付默认版本）。构建 exe 时默认只打 index 0
     /// （BuildPlayer 显式指定）；体验其他版本：编辑器打开对应场景 Play。
-    /// 当前交付默认 = V9 真液态玻璃桌面版（抓屏隐形 + 折射真实桌面 + 多只同屏）；
-    /// V7 生命感版、V6 纯烘焙贴图版等作为存档保留。
-    /// V8 液态玻璃为 V9 的素材回退形态（同 shader 管线、程序化棋盘格素材）。
+    /// 当前交付默认 = 真液态玻璃桌面版（抓屏隐形 + 折射真实桌面 + 多只同屏）；
+    /// 生命感版、纯烘焙贴图版等作为存档保留。
+    /// 液态玻璃版为桌面版的素材回退形态（同 shader 管线、程序化棋盘格素材）。
     /// </summary>
     public static class SceneGenerator
     {
@@ -53,7 +53,7 @@ namespace TransparentPet.EditorTools
             /// （LiquidGlassController / LiquidGlassSlimeSdf / LiquidGlass.shader）</summary>
             LiquidGlass,
 
-            /// <summary>真液态玻璃桌面版（V9）：全屏覆盖层 + 抓屏隐形
+            /// <summary>真液态玻璃桌面版：全屏覆盖层 + 抓屏隐形
             /// （WDA_EXCLUDEFROMCAPTURE），折射窗口背后的真实桌面；代价是录屏/截图中
             /// 桌宠隐形（F11 可切换，config.captureInvisible 可关，关后回退程序化素材）</summary>
             LiquidGlassDesktop,
@@ -62,20 +62,20 @@ namespace TransparentPet.EditorTools
         /// <summary>全部保留版本：路径 + 类型 + 行为语义说明（index 0 = 交付默认，其余存档）。</summary>
         static readonly (string scenePath, PetKind kind, bool hoverMode, string description)[] Versions =
         {
-            ("Assets/Scenes/Versions/V9LiquidGlassDesktop/PetScene.unity", PetKind.LiquidGlassDesktop, false,
-                "V9 · 真液态玻璃桌面版（交付默认）：抓屏隐形 + 折射真实桌面，多只同屏（≤3，smin 融合）；录屏/截图中桌宠隐形（F11 可切换）"),
-            ("Assets/Scenes/Versions/V7LifeVisual/PetScene.unity", PetKind.SvgLife, false,
-                "V7 · 生命感版：烘焙图原样 + 呼吸/拖拽倾斜/落地挤压/戳反应（存档）"),
-            ("Assets/Scenes/Versions/V6BakedTexture/PetScene.unity", PetKind.SvgBaked, false,
-                "V6 · 纯烘焙贴图版：PetSlime.png 原样显示，零着色器零表现层（存档）"),
-            ("Assets/Scenes/Versions/V5SvgClassic/PetScene.unity", PetKind.SvgClassic, false,
-                "V5 · 玻璃着色器版：贴图仅当 alpha 轮廓，颜色全由 Slime.shader 计算（存档）"),
-            ("Assets/Scenes/Versions/V3PbfGravity/PetScene.unity", PetKind.Pbf, false,
-                "V3 · PBF 流体趴姿版：重力常开软体（存档）"),
-            ("Assets/Scenes/Versions/V2PbfHover/PetScene.unity", PetKind.PbfMesh, true,
-                "V2 · 第一个流体物理版本（PBF + 等值线 mesh 渲染）：落定关重力漂浮，拉扯过猛时轮廓断裂成块（碎成渣）"),
-            ("Assets/Scenes/Versions/V8LiquidGlass/PetScene.unity", PetKind.LiquidGlass, false,
-                "V8 · 液态玻璃版（V9 的素材回退形态）：史莱姆形状 SDF 液态玻璃，折射/色散/菲涅尔/眩光；棋盘格素材只在玻璃内可见，玻璃外保持透明"),
+            ("Assets/Scenes/Versions/LiquidGlassDesktop/PetScene.unity", PetKind.LiquidGlassDesktop, false,
+                "真液态玻璃桌面版（交付默认）：抓屏隐形 + 折射真实桌面，多只同屏（≤3，smin 融合）；录屏/截图中桌宠隐形（F11 可切换）"),
+            ("Assets/Scenes/Versions/LifeVisual/PetScene.unity", PetKind.SvgLife, false,
+                "生命感版：烘焙图原样 + 呼吸/拖拽倾斜/落地挤压/戳反应（存档）"),
+            ("Assets/Scenes/Versions/BakedTexture/PetScene.unity", PetKind.SvgBaked, false,
+                "纯烘焙贴图版：PetSlime.png 原样显示，零着色器零表现层（存档）"),
+            ("Assets/Scenes/Versions/SvgClassic/PetScene.unity", PetKind.SvgClassic, false,
+                "玻璃着色器版：贴图仅当 alpha 轮廓，颜色全由 Slime.shader 计算（存档）"),
+            ("Assets/Scenes/Versions/PbfGravity/PetScene.unity", PetKind.Pbf, false,
+                "PBF 流体趴姿版：重力常开软体（存档）"),
+            ("Assets/Scenes/Versions/PbfHover/PetScene.unity", PetKind.PbfMesh, true,
+                "第一个流体物理版本（PBF + 等值线 mesh 渲染）：落定关重力漂浮，拉扯过猛时轮廓断裂成块（碎成渣）"),
+            ("Assets/Scenes/Versions/LiquidGlass/PetScene.unity", PetKind.LiquidGlass, false,
+                "液态玻璃版（桌面版的素材回退形态）：史莱姆形状 SDF 液态玻璃，折射/色散/菲涅尔/眩光；棋盘格素材只在玻璃内可见，玻璃外保持透明"),
         };
 
         const string SlimeMaterialPath = "Assets/Art/Pet/SlimeMat.mat";             // Slime.shader（SVG 版）
@@ -83,9 +83,9 @@ namespace TransparentPet.EditorTools
         const string SlimeMeshMaterialPath = "Assets/Art/Pet/SlimeMeshMat.mat";     // SlimeMesh.shader（第一个流体版）
         const string BakedMaterialPath = "Assets/Art/Pet/BakedSpriteMat.mat";       // Sprites/Default（纯烘焙图版）
         const string PetTexturePath = "Assets/Art/Pet/PetSlime.png";
-        const string LiquidGlassShaderPath = "Assets/Art/Shaders/LiquidGlass.shader";       // V8 液态玻璃主合成
-        const string LiquidGlassBgShaderPath = "Assets/Art/Shaders/LiquidGlassBg.shader";   // V8 折射素材生成
-        const string LiquidGlassBlurShaderPath = "Assets/Art/Shaders/LiquidGlassBlur.shader"; // V8 分离式模糊
+        const string LiquidGlassShaderPath = "Assets/Art/Shaders/LiquidGlass.shader";       // 液态玻璃主合成
+        const string LiquidGlassBgShaderPath = "Assets/Art/Shaders/LiquidGlassBg.shader";   // 折射素材生成
+        const string LiquidGlassBlurShaderPath = "Assets/Art/Shaders/LiquidGlassBlur.shader"; // 分离式模糊
 
         [MenuItem("TransparentPet/生成宠物场景")]
         public static void GenerateFromMenu() => GenerateAll();
@@ -264,7 +264,7 @@ namespace TransparentPet.EditorTools
                 }
                 case PetKind.LiquidGlassDesktop:
                 {
-                    // V9 真液态玻璃桌面版：窗口收缩 + 抓屏隐形 + 折射真实桌面
+                    // 真液态玻璃桌面版：抓屏隐形 + 折射真实桌面
                     petGo.AddComponent<MeshFilter>();
                     petGo.AddComponent<MeshRenderer>();
                     var glass = petGo.AddComponent<LiquidGlassController>();
@@ -286,15 +286,15 @@ namespace TransparentPet.EditorTools
         const string GalleryScenePath = "Assets/Scenes/Showcase/PetGallery.unity";
 
         /// <summary>
-        /// 展厅里的宠物（数组顺序 = 从左到右）。不放 V6 纯烘焙版：它和 V7 用同一张贴图，
-        /// 静止时外观完全一样（区别只在 V7 有呼吸/倾斜/挤压动画），同屏会让人误以为"重复"。
+        /// 展厅里的宠物（数组顺序 = 从左到右）。不放纯烘焙版：它和生命感版用同一张贴图，
+        /// 静止时外观完全一样（区别只在生命感版有呼吸/倾斜/挤压动画），同屏会让人误以为"重复"。
         /// </summary>
         static readonly (PetKind kind, bool hoverMode, string label)[] GalleryPets =
         {
-            (PetKind.PbfMesh,    true,  "V2 · 第一个流体版（PBF + 等值线渲染 · 漂浮 · 会碎成块）"),
-            (PetKind.SvgLife,    false, "V7 · 生命感（呼吸 / 倾斜 / 落地挤压）"),
-            (PetKind.SvgClassic, false, "V5 · 玻璃着色器 Slime.shader"),
-            (PetKind.Pbf,        false, "V3 · PBF 流体（metaball 渲染 · 重力落地）"),
+            (PetKind.PbfMesh,    true,  "碎裂软体（PBF + 等值线渲染 · 漂浮 · 会碎成块）"),
+            (PetKind.SvgLife,    false, "生命感（呼吸 / 倾斜 / 落地挤压）"),
+            (PetKind.SvgClassic, false, "玻璃着色器 Slime.shader"),
+            (PetKind.Pbf,        false, "PBF 流体（metaball 渲染 · 重力落地）"),
         };
 
         [MenuItem("TransparentPet/生成展厅场景（各版本同屏）")]

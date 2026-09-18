@@ -2,7 +2,7 @@
 // GalleryLayout.cs — 版本展厅布局：一个场景同时展示各版本史莱姆
 // ============================================================================
 // 用途：演示/面试——多只不同版本同屏横排，各自独立可拖拽，一眼看出实现差异。
-// （V3 重力 / V2 悬浮）同屏横排，各自独立可拖拽，一眼看出实现差异。
+// （重力版 / 悬浮版）同屏横排，各自独立可拖拽，一眼看出实现差异。
 //
 // 多只同屏的三个必要条件（本类 + 控制器的注入 API 共同保证）：
 //   1) 出生位置各给各的——否则全部落在配置里的同一坐标上互相重叠；
@@ -117,7 +117,7 @@ namespace TransparentPet.Pet.Common
                         case MeshPetController mesh:
                             mesh.SetPersistPosition(false);
                             mesh.SetSpawnOverride(position);
-                            // V2（第一个流体版）：一出生就飘在空中，不先落地
+                            // 碎裂版：一出生就飘在空中，不先落地
                             if (mesh.IsHoverMode)
                                 mesh.SetSettledHover(true);
                             break;
