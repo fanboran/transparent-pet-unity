@@ -94,6 +94,15 @@ namespace TransparentPet.Platform
 
         void Update()
         {
+            // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段（顶层栈硬退，同托盘退出）。
+            // 原先各宠物控制器各自检查（4 处重复），上提到窗口层一处——所有版本场景
+            // 均由 SceneGenerator 装配本组件，覆盖不变
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                HardExit.Now();
+                return;
+            }
+
             // 启动看门狗放行：主循环稳定运行后标记健康（若卡在窗口/图形初始化，
             // CrashGuard 会在超时后硬退出，不留占屏的空窗）
             if (Time.frameCount >= HealthyFrameCount)
