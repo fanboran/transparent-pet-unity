@@ -106,6 +106,8 @@ namespace TransparentPet.Platform
 
         void Update()
         {
+            CrashGuard.Heartbeat(); // 运行期看门狗判活信号：主线程卡死（驱动/跨进程调用阻塞）时它停增
+
             // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段（顶层栈硬退，同托盘退出）。
             // 原先各宠物控制器各自检查（4 处重复），上提到窗口层一处——所有版本场景
             // 均由 SceneGenerator 装配本组件，覆盖不变

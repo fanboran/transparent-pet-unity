@@ -120,13 +120,20 @@ namespace TransparentPet.Pet
             }
         }
 
-        /// <summary>双窗口 z 序：先玻璃置顶，再把自己插到玻璃之后（紧贴其下）。</summary>
+        /// <summary>
+        /// 双窗口 z 序：先玻璃置顶，再把自己插到玻璃之后（紧贴其下）。
+        /// 先用 GetWindowAbove 比对（纯查询零消息），z 序已正确就一个跨进程调用都
+        /// 不发——跨进程 SetWindowPos 是同步语义，对方主线程卡住/不泵消息时本进程
+        /// 会被这一句拖死（双窗口互锁：一个 hang 数秒内拖 hang 另一个），不能必发。
+        /// </summary>
         void PairZOrder()
         {
             var mine = NativeWindowStyles.FindCurrentProcessTopLevelWindow(requireVisible: false);
             var glassHwnd = FindGlassWindow();
             if (mine == IntPtr.Zero || glassHwnd == IntPtr.Zero)
                 return;
+            if (NativeWindowStyles.GetWindowAbove(mine) == glassHwnd)
+                return; // 玻璃已在正上方：配对成立，无需动手
             NativeWindowStyles.SetWindowPosTopmost(glassHwnd);
             NativeWindowStyles.SetWindowPosBelow(mine, glassHwnd);
         }

@@ -24,12 +24,17 @@
 // 三个 shader 引用走序列化字段而非运行时 Shader.Find：运行时创建的材质
 // 不构成打包引用，不预置资产引用的话构建后 Find 会返回 null。
 // ============================================================================
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Threading;
 using Kirurobo;
 using TransparentPet.Core;
 using UnityEngine;
 using TransparentPet.Pet.Common;
 using TransparentPet.Platform;
+using Debug = UnityEngine.Debug; // System.Diagnostics.Debug 同名消歧（Stopwatch 所在命名空间）
+using Random = UnityEngine.Random; // System.Random 同名消歧
 
 namespace TransparentPet.Pet.Glass
 {
@@ -117,8 +122,22 @@ namespace TransparentPet.Pet.Glass
         Material mainMat, bgMat, blurMat;
         RenderTexture bgRT, vBlurRT, hBlurRT;
         Texture2D desktopTex;
-        byte[] desktopPixels;
         System.IntPtr hwnd = System.IntPtr.Zero;
+
+        // ── 桌面抓屏工作线程 ──
+        // 全屏 BitBlt/GetDIBits 走 DWM/显示驱动的同步路径，Optimus 双 GPU 下偶发
+        // 数秒级阻塞（事件日志 4 次 AppHang 的头号嫌疑）。放主线程等于每秒 30 次
+        // "抽奖"，抽中即整窗挂死被 Windows 幽灵化。挪到后台线程：卡也只卡它，
+        // 主循环/心跳/托盘/退出全部照常；主线程只消费最新完成帧（SetPixelData
+        // 必须主线程，Unity 限制）。帧与尺寸成对发布，杜绝"旧尺寸帧喂新目标"。
+        Thread captureThread;
+        volatile bool captureRunning;
+        readonly object captureGate = new object();
+        byte[] captureWrite;   // 工作线程独占写
+        byte[] captureLatest;  // 最新完成帧（gate 下交换）
+        int captureLatestW, captureLatestH;
+        int captureWantW, captureWantH; // 主线程期望尺寸（gate 下写）
+        long captureHwnd;      // IntPtr 不能 volatile，按 long 传递
         Mesh quadMesh;
         readonly float[] blurWeights = new float[64];
         float lastBlurRadius = -1f;
@@ -211,6 +230,8 @@ namespace TransparentPet.Pet.Glass
 
         void OnDestroy()
         {
+            captureRunning = false;
+            captureThread?.Join(300); // 给线程一次体面退出的机会；IsBackground 兜底
             ReleaseTargets();
             if (desktopTex != null)
                 Destroy(desktopTex);
@@ -552,19 +573,25 @@ namespace TransparentPet.Pet.Glass
         }
 
         /// <summary>
-        /// 抓全屏桌面 → desktopTex（BGRA 直传，见 NativeScreenCapture 行序契约）。
-        /// 全屏窗口下窗口矩形 = 屏幕矩形，uv 与窗口 1:1 对齐。抓屏隐形生效时画面
-        /// 不含自己（WDA_EXCLUDEFROMCAPTURE）。返回 false = 尺寸不符或抓屏失败。
+        /// 桌面折射贴图更新：消费抓屏工作线程的最新完成帧 → desktopTex。
+        /// BitBlt/GetDIBits 在工作线程做（见字段区注释）；本方法只做主线程侧的
+        /// 纹理上传（SetPixelData 限主线程）。返回 false = 尚无可用帧或尺寸不符
+        /// （渲染目标尺寸与帧尺寸不一致时不喂，避免错位折射——契约同旧实现）。
         /// </summary>
         bool TryUpdateDesktopTexture(int w, int h)
         {
-            if (hwnd == System.IntPtr.Zero)
-                return false;
+            EnsureCaptureThread(w, h);
 
-            if (!NativeScreenCapture.TryGetWindowRect(hwnd, out var x, out var y, out var ww, out var hh))
+            byte[] latest;
+            int frameW, frameH;
+            lock (captureGate)
+            {
+                latest = captureLatest;
+                frameW = captureLatestW;
+                frameH = captureLatestH;
+            }
+            if (latest == null || frameW != w || frameH != h)
                 return false;
-            if (ww != w || hh != h)
-                return false; // 窗口矩形与渲染目标不一致（DPI 差异）时先不喂，避免错位折射
 
             if (desktopTex == null || desktopTex.width != w || desktopTex.height != h)
             {
@@ -575,19 +602,87 @@ namespace TransparentPet.Pet.Glass
                     filterMode = FilterMode.Bilinear,
                     wrapMode = TextureWrapMode.Clamp
                 };
-                desktopPixels = new byte[w * h * 4];
             }
 
-            if (!NativeScreenCapture.TryCaptureRegion(x, y, w, h, desktopPixels, out var failStep))
-            {
-                if (Time.frameCount % 120 == 0)
-                    Debug.Log($"[LiquidGlass] 桌面抓屏失败: step={failStep} rect=({x},{y},{ww}x{hh})");
-                return false;
-            }
-
-            desktopTex.SetPixelData(desktopPixels, 0);
+            desktopTex.SetPixelData(latest, 0);
             desktopTex.Apply(false, false);
             return true;
+        }
+
+        /// <summary>惰性启动抓屏线程并同步期望尺寸/窗口句柄（每帧调用，轻量）。</summary>
+        void EnsureCaptureThread(int w, int h)
+        {
+            if (hwnd == System.IntPtr.Zero)
+                return;
+            lock (captureGate)
+            {
+                captureWantW = w;
+                captureWantH = h;
+            }
+            Interlocked.Exchange(ref captureHwnd, hwnd.ToInt64());
+
+            if (captureThread == null)
+            {
+                captureRunning = true;
+                captureThread = new Thread(CaptureLoop)
+                {
+                    IsBackground = true,
+                    Name = "PetScreenCapture",
+                };
+                captureThread.Start();
+            }
+        }
+
+        /// <summary>
+        /// 抓屏工作线程：~30fps 循环 BitBlt 全屏。窗口矩形与期望尺寸不符时跳过
+        ///（DPI/分辨率过渡期），成功帧与尺寸成对发布。耗时超 100ms 打限流警告
+        ///——下次再有"驱动级阻塞"日志能直接指认，且不影响主循环分毫。
+        /// </summary>
+        void CaptureLoop()
+        {
+            var slowLogAt = 0;
+            var failLogAt = 0;
+            while (captureRunning)
+            {
+                var hWnd = new IntPtr(Interlocked.Read(ref captureHwnd));
+                int w, h;
+                lock (captureGate) { w = captureWantW; h = captureWantH; }
+
+                if (hWnd != IntPtr.Zero && w > 0 && h > 0 &&
+                    NativeScreenCapture.TryGetWindowRect(hWnd, out var x, out var y, out var ww, out var hh) &&
+                    ww == w && hh == h)
+                {
+                    if (captureWrite == null || captureWrite.Length < w * h * 4)
+                        captureWrite = new byte[w * h * 4];
+
+                    var stopwatch = Stopwatch.StartNew();
+                    var ok = NativeScreenCapture.TryCaptureRegion(x, y, w, h, captureWrite, out var failStep);
+                    var took = stopwatch.ElapsedMilliseconds;
+
+                    if (ok)
+                    {
+                        lock (captureGate)
+                        {
+                            (captureWrite, captureLatest) = (captureLatest, captureWrite);
+                            captureLatestW = w;
+                            captureLatestH = h;
+                        }
+                    }
+                    else if (Environment.TickCount - failLogAt > 5000)
+                    {
+                        failLogAt = Environment.TickCount;
+                        UnityEngine.Debug.Log($"[LiquidGlass] 桌面抓屏失败: step={failStep} rect=({x},{y},{ww}x{hh})");
+                    }
+
+                    if (took > 100 && Environment.TickCount - slowLogAt > 5000)
+                    {
+                        slowLogAt = Environment.TickCount;
+                        UnityEngine.Debug.LogWarning($"[LiquidGlass] 抓屏耗时 {took}ms（DWM/驱动阻塞；已在工作线程，不影响主循环）");
+                    }
+                }
+
+                Thread.Sleep(33);
+            }
         }
 
         void UpdateBlurWeights()

@@ -9,6 +9,10 @@
 //    没有进入正常渲染循环（场景里无人调用 MarkRenderLoopHealthy）就硬退出。
 //    为什么必须是独立线程：主线程一旦卡在图形/窗口 API 调用里，Update、协程全部停摆，
 //    只有不受主线程调度的线程还能执行"自杀"，把占屏的窗口带走。
+// 1b) 运行期心跳看门狗（本类，2026-09-19）：启动健康之后主线程也可能卡死在同步
+//    调用里（全屏 BitBlt 撞驱动繁忙、跨进程 SetWindowPos 等）——Windows 判 hung、
+//    幽灵窗口接管、用户看到"卡死/加载光标/是否关闭"。心跳（PetWindowSetup.Update
+//    每帧递增）停滞超 10 秒且 5 秒复核无恢复即强杀（事件日志曾实锤 4 次 AppHang）。
 // 2) 未处理异常兜底：AppDomain 级处理器在托管层即将崩溃时硬退出，
 //    不留"半死但窗口还在"的中间态。
 // 3) 崩溃处理器移除（构建期，见 BuildPlayer）：Unity 自带的 UnityCrashHandler 在崩溃时
@@ -30,6 +34,14 @@ namespace TransparentPet.Core
         /// <summary>启动超时（毫秒）：托管层就绪后超过这么久仍未见渲染循环就硬退出</summary>
         const int StartupTimeoutMs = 30000;
 
+        /// <summary>
+        /// 运行期心跳停滞判定（毫秒）：主线程健康后心跳停这么久即疑似主循环卡死。
+        /// 10 秒＝远超任何正常单帧耗时（全屏抓屏 <10ms 量级），又短于"占屏挂死
+        /// 不可接受"的忍耐度；之后再做一次 5 秒复核才动手（防系统睡眠恢复的竞态
+        /// 误杀：恢复后主线程毫秒级恢复心跳，二次检查必然看到增量）。
+        /// </summary>
+        const int HeartbeatTimeoutMs = 10000;
+
         const int PollIntervalMs = 500;
 
         /// <summary>
@@ -41,6 +53,7 @@ namespace TransparentPet.Core
             (RoleEnvironment.IsSpecies ? ".species" : ".glass"); // 双窗口双进程：同 exe 两角色不互斥，同角色仍防双开
 
         static volatile bool renderLoopHealthy;
+        static long heartbeat; // 主线程每帧递增（Heartbeat()）；看门狗观测增量判断主循环死活
         static int installed; // Interlocked 交换：EnsureInstalled 幂等
         static int watchdogStarted; // Interlocked 交换保证只安装一次
         static Mutex singleInstanceMutex; // 静态持有：进程存活期间不释放（进程退出由系统释放）
@@ -90,6 +103,9 @@ namespace TransparentPet.Core
         /// <summary>渲染循环已正常运行（主循环若干帧后由场景组件调用）；调用后看门狗自动结束。</summary>
         public static void MarkRenderLoopHealthy() => renderLoopHealthy = true;
 
+        /// <summary>主线程心跳（PetWindowSetup.Update 每帧调用）。运行期看门狗据此判活。</summary>
+        public static void Heartbeat() => Interlocked.Increment(ref heartbeat);
+
         static void StartWatchdog()
         {
             if (Interlocked.Exchange(ref watchdogStarted, 1) != 0)
@@ -109,15 +125,44 @@ namespace TransparentPet.Core
             while (stopwatch.ElapsedMilliseconds < StartupTimeoutMs)
             {
                 if (renderLoopHealthy)
-                    return;
+                    break;
                 Thread.Sleep(PollIntervalMs);
             }
 
-            if (renderLoopHealthy)
+            if (!renderLoopHealthy)
+            {
+                Log($"启动看门狗超时（{StartupTimeoutMs}ms 未进入渲染循环），强制退出以免占屏");
+                HardExit.KillNow();
                 return;
+            }
 
-            Log($"启动看门狗超时（{StartupTimeoutMs}ms 未进入渲染循环），强制退出以免占屏");
-            HardExit.KillNow();
+            // ── 运行期心跳看门狗 ──
+            // 启动健康之后主线程仍可能卡死在同步调用里（全屏 BitBlt 撞驱动繁忙、
+            // 跨进程 SetWindowPos 对方不泵消息……Windows 会把窗口判 hung 并幽灵化）。
+            // 心跳停滞超阈值 → 5 秒复核 → 仍无心跳即强杀。进程死掉后，配对进程由
+            // 窗口存活信号联动（GlassRole/SpeciesPets 互为镜像）在几秒内跟着退净。
+            long lastBeat = Interlocked.Read(ref heartbeat);
+            var lastProgress = stopwatch.ElapsedMilliseconds;
+            while (true)
+            {
+                Thread.Sleep(PollIntervalMs);
+                var beat = Interlocked.Read(ref heartbeat);
+                if (beat != lastBeat)
+                {
+                    lastBeat = beat;
+                    lastProgress = stopwatch.ElapsedMilliseconds;
+                    continue;
+                }
+                if (stopwatch.ElapsedMilliseconds - lastProgress < HeartbeatTimeoutMs)
+                    continue;
+
+                Log($"主线程心跳停滞 {HeartbeatTimeoutMs}ms（疑似主循环卡死），5 秒后复核");
+                Thread.Sleep(5000);
+                if (Interlocked.Read(ref heartbeat) != lastBeat)
+                    continue; // 复查前恢复了心跳（睡眠恢复竞态等）：放行
+                Log("复核仍无心跳：主循环卡死坐实，强杀退出");
+                HardExit.KillNow();
+            }
         }
 
         static void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)

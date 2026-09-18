@@ -80,6 +80,14 @@ namespace TransparentPet.Platform
         public static bool SetWindowPosBelow(IntPtr hWnd, IntPtr above) =>
             SetWindowPos(hWnd, above, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 
+        const uint GW_HWNDPREV = 3;
+
+        /// <summary>z 序紧邻上方（同带内）的窗口，无则 IntPtr.Zero。
+        /// 纯内部数据查询、不同步发消息——z 序配对先用它比对，正确就不动手，
+        /// 把跨进程 SetWindowPos（同步语义，对方不泵消息时会拖死本进程）从
+        /// 周期必发降为错乱才发。</summary>
+        public static IntPtr GetWindowAbove(IntPtr hWnd) => GetWindow(hWnd, GW_HWNDPREV);
+
         [DllImport("user32.dll")]
         static extern bool IsWindowVisible(IntPtr hWnd);
 
