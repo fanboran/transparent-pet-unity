@@ -32,3 +32,6 @@ sysinfo.txt
 
 # Crashlytics
 crashlytics-build.properties
+
+# 源码目录：Editor/Build 是构建工具代码，不是 Unity 构建产物（[Bb]uild/ 规则的例外）
+!Assets/Scripts/Editor/Build/
