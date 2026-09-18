@@ -59,10 +59,10 @@
 
 1. **两层结构**：仓库根放文档与 AGENTS.md，Unity 工程本体放 `transparent-pet/` 子目录（Unity Hub 打开的是它，不是仓库根）。
 2. **模块划分（功能定边界，asmdef 定依赖）**：`Assets/Scripts/` 下按功能域分模块，每模块一个 asmdef，依赖方向由 asmdef 引用白名单强制（等价 stick-world 的 audit_deps.py）：
-   - `Core/`（L0 应用基建）：事件总线、配置持久化、穿透判定输入、失控保护——零外部引用
+   - `Core/`（L0 应用基建）：事件总线、配置持久化、穿透判定输入、跨层中转状态（OverlayState/LiquidGlassPresence）、失控保护——零外部引用
    - `Platform/`（L1 Win32 窗口层）：透明置顶窗口、托盘、抓屏、开机自启、强杀退出——全项目唯一碰 Win32 的地方
    - `Pet/`（L2 玩法）：按物种线分目录 `Common/`（共享物理/仲裁/注册表）、`Glass/`（液态玻璃）、`Jelly/`（PBF 果冻）、`Shatter/`（碎裂）、`Textured/`（贴图）——目录=命名空间（`TransparentPet.Pet.Glass` 等）
-   - `UI/`（L2）：HUD
+   - `UI/`（L2）：HUD 与设置面板（SettingsPanel，设计见 docs/设置窗口与托盘菜单设计.md）
    - `Editor/`（Editor-only）：按用途分 `Build/`（构建入口）、`Capture/`（快照/宣传图）、`Generation/`（场景生成器）
 3. **耦合原则**：模块间通信走 `Core/EventBus.cs`（静态 C# 事件中心，对应 Godot 的 event_bus autoload）；**禁止** `GameObject.Find`、跨模块 `GetComponent` 裸引用。跨 asmdef 想引用对方类型必须显式加引用——依赖违规在编译期即失败。
 4. **命名规范**：C# 类型与文件 PascalCase（文件名=类名）；资产与目录 PascalCase；目录=命名空间（asmdef rootNamespace 对齐）。场景每个版本一个目录。
