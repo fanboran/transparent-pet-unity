@@ -23,6 +23,9 @@ namespace TransparentPet.Core
         /// <summary>请求收回一只。载荷 string："glass"（玻璃进程本地收回）/ "species"（转发物种进程）。</summary>
         public const string PetRecallRequested = "PetRecallRequested";
 
+        /// <summary>请求切换设置面板显隐。载荷 bool：true 显示 / false 隐藏。托盘左键、菜单"设置…"、ESC 让位共用。</summary>
+        public const string SettingsPanelToggleRequested = "SettingsPanelToggleRequested";
+
         /// <summary>配置已写盘。载荷 PetConfig：刚保存的完整配置（其他模块可据此同步内存状态）。</summary>
         public const string ConfigSaved = "ConfigSaved";
     }

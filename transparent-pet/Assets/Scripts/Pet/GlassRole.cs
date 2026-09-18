@@ -91,7 +91,8 @@ namespace TransparentPet.Pet
             if (target == "glass")
                 glass?.RemoveSlime();
             else
-                RoleEnvironment.SendSpeciesCommand("recall");
+                // "species" = 收回最近一只（托盘菜单）；其余值视为物种 id（设置面板按行收回）
+                RoleEnvironment.SendSpeciesCommand(target == "species" ? "recall" : "recall:" + target);
         }
     }
 }

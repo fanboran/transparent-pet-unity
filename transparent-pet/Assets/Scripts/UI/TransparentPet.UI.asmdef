@@ -3,7 +3,8 @@
     "rootNamespace": "TransparentPet.UI",
     "references": [
         "TransparentPet.Core",
-        "TransparentPet.Pet"
+        "TransparentPet.Pet",
+        "TransparentPet.Platform"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

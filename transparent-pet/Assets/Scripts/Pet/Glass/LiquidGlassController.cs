@@ -185,11 +185,14 @@ namespace TransparentPet.Pet.Glass
 
         void OnEnable()
         {
+            LiquidGlassPresence.Active = this; // 设置面板经 Core 注册表读数量/调开关（Pet↔UI 不直接依赖）
             EventBus.Subscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
         }
 
         void OnDisable()
         {
+            if (LiquidGlassPresence.Active == this)
+                LiquidGlassPresence.Active = null;
             EventBus.Unsubscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
         }
 

@@ -199,8 +199,10 @@ namespace TransparentPet.EditorTools
             AddPetComponents(petGo, kind, hoverMode, windowController);
 
             // UI：HUD（IMGUI，透明窗口上自带 alpha → 引导提示区域自动可交互）
+            // + 设置面板（同在 PetUI 对象；托盘左键/菜单/ESC 经事件开关）
             var uiGo = new GameObject("PetUI");
             uiGo.AddComponent<HudController>();
+            uiGo.AddComponent<SettingsPanel>();
 
             // SaveScene 对不存在的目录会"静默失败"（日志成功、磁盘无文件）——先建目录
             var fullPath = System.IO.Path.GetFullPath(scenePath);
@@ -330,7 +332,9 @@ namespace TransparentPet.EditorTools
             BuildWindowStack(glass, out var windowController);
             gc.WindowController = windowController;
             glassPet.AddComponent<GlassRole>();
-            new GameObject("PetUI").AddComponent<HudController>();
+            var glassUi = new GameObject("PetUI");
+            glassUi.AddComponent<HudController>();
+            glassUi.AddComponent<SettingsPanel>(); // 托盘在此进程：设置面板只装配玻璃侧
             SaveDeliveryScene(glass, GlassScenePath);
 
             // Species：物种召唤器 + 两材质一精灵注入（必须序列化进场景，构建后运行时 Find 不到未引用资产）

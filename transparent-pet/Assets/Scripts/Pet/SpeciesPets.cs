@@ -57,7 +57,8 @@ namespace TransparentPet.Pet
         readonly List<Live> pets = new();
         float nextSaveTime;
 
-        static string StorePath => Path.Combine(Application.persistentDataPath, "summoned_pets.json");
+        /// <summary>物种持久化文件路径（设置面板读它显示各物种数量——只读，写方仅本进程）。</summary>
+        public static string StorePath => Path.Combine(Application.persistentDataPath, "summoned_pets.json");
 
         void Start()
         {
@@ -78,6 +79,10 @@ namespace TransparentPet.Pet
             {
                 if (cmd == "recall")
                     RecallLast();
+                else if (cmd == "config")
+                    ApplyConfigReload(); // 设置面板落盘了：重读并热应用
+                else if (cmd.StartsWith("recall:", StringComparison.Ordinal))
+                    RecallLast(cmd.Substring(7)); // 收回指定物种（设置面板按行收回）
                 else if (cmd.StartsWith("add:", StringComparison.Ordinal))
                     Spawn(cmd.Substring(4));
             }
@@ -85,6 +90,19 @@ namespace TransparentPet.Pet
 #if !UNITY_EDITOR
             WatchGlassAlive();
 #endif
+        }
+
+        /// <summary>
+        /// 玻璃进程的设置面板落盘后发来 config 命令：重读 config.json 并重发布三条
+        /// 配置事件（缩放/抛射/角色），本进程订阅它们的各宠物控制器随即热应用——
+        /// 与它们 Start 时从 config 读初值走同一条处理路径。
+        /// </summary>
+        void ApplyConfigReload()
+        {
+            var config = PetConfigStore.Load();
+            EventBus.Publish(EventTopics.PetScaleChanged, config.petScale);
+            EventBus.Publish(EventTopics.ThrowParamsChanged, config.throwParams ?? new ThrowParams());
+            EventBus.Publish(EventTopics.CharacterChanged, config.characterId);
         }
 
 #if !UNITY_EDITOR
@@ -179,16 +197,20 @@ namespace TransparentPet.Pet
             pets.Add(new Live { Kind = kind, Pet = pet, LastSaved = pos });
         }
 
-        /// <summary>收回最近召唤的一只（Destroy；立即落盘）。</summary>
-        public void RecallLast()
+        /// <summary>收回最近召唤的一只；给 kind 时收回该物种最近的一只（设置面板按行收回）。</summary>
+        public void RecallLast(string kind = null)
         {
-            if (pets.Count == 0)
+            for (var i = pets.Count - 1; i >= 0; i--)
+            {
+                if (kind != null && pets[i].Kind != kind)
+                    continue;
+                var last = pets[i];
+                pets.RemoveAt(i);
+                if (last.Pet != null)
+                    Destroy(last.Pet.gameObject);
+                Save(force: true);
                 return;
-            var last = pets[pets.Count - 1];
-            pets.RemoveAt(pets.Count - 1);
-            if (last.Pet != null)
-                Destroy(last.Pet.gameObject);
-            Save(force: true);
+            }
         }
 
         /// <summary>出生点：屏幕中下部起，按已有数量向右上错开 + 随机抖动，钳制在工作区内。</summary>

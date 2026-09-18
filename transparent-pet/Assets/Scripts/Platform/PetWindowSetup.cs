@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using Kirurobo;
 using UnityEngine;
 using TransparentPet.Core;
@@ -67,22 +68,40 @@ namespace TransparentPet.Platform
             // 物种副进程不建托盘（双窗口只有一个图标；召唤菜单在玻璃进程侧）
             if (!RoleEnvironment.IsSpecies)
             {
-                tray = new NativeTray("透明桌宠", new[]
-                {
-                    new TrayMenuItem("召唤：贴图史莱姆", () => EventBus.Publish(EventTopics.PetSummonRequested, "textured")),
-                    new TrayMenuItem("召唤：果冻软体", () => EventBus.Publish(EventTopics.PetSummonRequested, "softbody")),
-                    new TrayMenuItem("召唤：碎裂软体", () => EventBus.Publish(EventTopics.PetSummonRequested, "mesh")),
-                    new TrayMenuItem("召唤：液态玻璃", () => EventBus.Publish(EventTopics.PetSummonRequested, "glass")),
-                    new TrayMenuItem(), // 分隔线
-                    new TrayMenuItem("收回：最近一只物种", () => EventBus.Publish(EventTopics.PetRecallRequested, "species")),
-                    new TrayMenuItem("收回：一只液态玻璃", () => EventBus.Publish(EventTopics.PetRecallRequested, "glass")),
-                    new TrayMenuItem(), // 分隔线
-                    new TrayMenuItem("退出", ExitFromTray),
-                });
+                tray = new NativeTray("透明桌宠", BuildTrayMenu(), OpenSettingsPanel);
             }
 #endif
             StartCoroutine(HideFromTaskbarWhenReady());
         }
+
+        /// <summary>
+        /// 托盘右键菜单（游戏化管理结构）：召唤/收回收纳为子菜单，设置独立入口。
+        /// 动作全部走 EventBus，由 GlassRole 分岔路由（glass 本进程、物种转发命令文件）；
+        /// 仅"退出"直接走实例的 ExitFromTray（要摘本组件持有的托盘图标）。
+        /// </summary>
+        TrayMenuItem[] BuildTrayMenu() => new[]
+        {
+            new TrayMenuItem("召唤", new List<TrayMenuItem>
+            {
+                new TrayMenuItem("液态玻璃", () => EventBus.Publish(EventTopics.PetSummonRequested, "glass")),
+                new TrayMenuItem("贴图史莱姆", () => EventBus.Publish(EventTopics.PetSummonRequested, "textured")),
+                new TrayMenuItem("果冻软体", () => EventBus.Publish(EventTopics.PetSummonRequested, "softbody")),
+                new TrayMenuItem("碎裂软体", () => EventBus.Publish(EventTopics.PetSummonRequested, "mesh")),
+            }),
+            new TrayMenuItem("收回", new List<TrayMenuItem>
+            {
+                new TrayMenuItem("最近一只物种", () => EventBus.Publish(EventTopics.PetRecallRequested, "species")),
+                new TrayMenuItem("一只液态玻璃", () => EventBus.Publish(EventTopics.PetRecallRequested, "glass")),
+            }),
+            new TrayMenuItem(),
+            new TrayMenuItem("设置…", OpenSettingsPanel),
+            new TrayMenuItem(),
+            new TrayMenuItem("退出", ExitFromTray),
+        };
+
+        /// <summary>打开设置面板（托盘左键单击与菜单"设置…"共用入口）。</summary>
+        static void OpenSettingsPanel() =>
+            EventBus.Publish(EventTopics.SettingsPanelToggleRequested, true);
 
         void ExitFromTray()
         {
@@ -109,10 +128,15 @@ namespace TransparentPet.Platform
             CrashGuard.Heartbeat(); // 运行期看门狗判活信号：主线程卡死（驱动/跨进程调用阻塞）时它停增
 
             // 安全网：全屏置顶窗口下 ESC 是最可靠的退出手段（顶层栈硬退，同托盘退出）。
-            // 原先各宠物控制器各自检查（4 处重复），上提到窗口层一处——所有版本场景
-            // 均由 SceneGenerator 装配本组件，覆盖不变
+            // 设置面板开着时 ESC 只关面板（模态让位；状态由 UI/SettingsPanel 维护，
+            // 经 Core/OverlayState 中转——Platform 不能直接依赖 UI）
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                if (OverlayState.SettingsVisible)
+                {
+                    EventBus.Publish(EventTopics.SettingsPanelToggleRequested, false);
+                    return;
+                }
                 HardExit.Now();
                 return;
             }

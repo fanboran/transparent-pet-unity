@@ -6,7 +6,8 @@ using UnityEngine;
 namespace TransparentPet.Platform
 {
     /// <summary>
-    /// 托盘菜单项：Label + 选中回调；Separator=true 时渲染为分隔线（Label/Action 被忽略）。
+    /// 托盘菜单项：Label + 选中回调；Separator=true 时渲染为分隔线（Label/Action 被忽略）；
+    /// Children 非空时渲染为弹出子菜单（此时 Action 不用，Label 用作子菜单标题）。
     /// "退出"不是特殊项——由调用方作为普通 TrayMenuItem 传入，其 Action 里自行
     /// Dispose() + Environment.Exit（Application.Quit 在托盘菜单的 Win32 模态循环
     /// 深栈里可能不被处理，硬退才可靠，原实现教训）。
@@ -17,11 +18,24 @@ namespace TransparentPet.Platform
         public Action Action;
         public bool Separator;
 
+        /// <summary>勾选态（渲染为 MF_CHECKED 前置 ✓，用于设置类快捷开关）。</summary>
+        public bool Checked;
+
+        /// <summary>子菜单项（非空列表 = 本项渲染为弹出子菜单）。</summary>
+        public List<TrayMenuItem> Children;
+
         /// <summary>普通菜单项</summary>
         public TrayMenuItem(string label, Action action)
         {
             Label = label;
             Action = action;
+        }
+
+        /// <summary>子菜单（Label 为子菜单标题，子项经 Children 传入）</summary>
+        public TrayMenuItem(string label, List<TrayMenuItem> children)
+        {
+            Label = label;
+            Children = children;
         }
 
         /// <summary>分隔线</summary>
@@ -49,9 +63,12 @@ namespace TransparentPet.Platform
         const uint NIF_TIP = 0x4;
         const uint WM_APP_TRAY = 0x8000 + 1; // WM_APP+1 托盘回调消息
         const uint WM_RBUTTONUP = 0x0205;
+        const uint WM_LBUTTONUP = 0x0202;
         const uint WM_NULL = 0x0;
         const int PM_REMOVE = 0x1;
         const uint MF_STRING = 0x0;
+        const uint MF_POPUP = 0x10;
+        const uint MF_CHECKED = 0x8;
         const uint MF_SEPARATOR = 0x800;
         const uint TPM_RIGHTBUTTON = 0x2;
         const uint TPM_RETURNCMD = 0x100;
@@ -169,15 +186,18 @@ namespace TransparentPet.Platform
         readonly IntPtr hwnd;
         readonly string tip;
         readonly TrayMenuItem[] menuItems; // 菜单数据随实例走（窗口过程经静态 active 取回）
+        readonly Action leftClickAction;   // 左键单击动作（可空；与右键菜单互不影响）
         readonly Queue<Action> pendingActions = new Queue<Action>(); // 菜单动作队列（Pump 顶层执行）
 
         /// <param name="tip">托盘悬停提示文字</param>
-        /// <param name="menuItems">右键菜单内容（含分隔线；"退出"也由调用方传入，
+        /// <param name="menuItems">右键菜单内容（含分隔线与子菜单；"退出"也由调用方传入，
         /// 其 Action 自行 Dispose() + Environment.Exit，见 TrayMenuItem 注释）</param>
-        public NativeTray(string tip, TrayMenuItem[] menuItems)
+        /// <param name="onLeftClick">左键单击托盘图标的动作（可空 = 不响应左键）</param>
+        public NativeTray(string tip, TrayMenuItem[] menuItems, Action onLeftClick = null)
         {
             this.tip = tip;
             this.menuItems = menuItems;
+            this.leftClickAction = onLeftClick;
             active = this;
 
             try
@@ -272,12 +292,37 @@ namespace TransparentPet.Platform
 
         static IntPtr TrayWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
-            // 托盘图标回调：右键抬起 → 弹出菜单
+            // 托盘图标回调：右键抬起 → 弹出菜单；左键抬起 → 直达动作（如打开设置）
             if (msg == WM_APP_TRAY && (uint)lParam == WM_RBUTTONUP)
                 ShowMenu(hWnd);
+            else if (msg == WM_APP_TRAY && (uint)lParam == WM_LBUTTONUP && active?.leftClickAction != null)
+                active.pendingActions.Enqueue(active.leftClickAction); // 同菜单动作：Pump 顶层执行
             else if (msg == 0x0010 /* WM_CLOSE */)
                 DestroyWindow(hWnd);
             return DefWindowProcW(hWnd, msg, wParam, lParam);
+        }
+
+        /// <summary>
+        /// 把菜单树摊平成"可点叶"序列——ShowMenu 构建 HMENU 与菜单 id 编号共用本逻辑
+        /// （菜单 id = 叶在序列中的 1 基序号）。纯函数供 NUnit 直接测试：
+        /// 子菜单标题不计入、分隔线不计入、空子菜单整体跳过。
+        /// </summary>
+        public static List<TrayMenuItem> FlattenLeaves(IEnumerable<TrayMenuItem> items)
+        {
+            var leaves = new List<TrayMenuItem>();
+            foreach (var item in items)
+            {
+                if (item == null || item.Separator)
+                    continue;
+                if (item.Children != null)
+                {
+                    if (item.Children.Count > 0)
+                        leaves.AddRange(FlattenLeaves(item.Children));
+                    continue;
+                }
+                leaves.Add(item);
+            }
+            return leaves;
         }
 
         static void ShowMenu(IntPtr hWnd)
@@ -290,24 +335,7 @@ namespace TransparentPet.Platform
             // 先置前台，菜单才能在点击别处时正确消失（Win32 经典要求）
             SetForegroundWindow(hWnd);
             var menu = CreatePopupMenu();
-
-            // 构建菜单：分隔线用 MF_SEPARATOR（不占号）；普通项按顺序记入本地列表，
-            // 菜单 id = 列表 1 基序号（0 保留给"点了别处/ESC"——TPM_RETURNCMD 此时返回 0）
-            var entries = new List<TrayMenuItem>();
-            foreach (var item in self.menuItems)
-            {
-                if (item == null)
-                    continue;
-                if (item.Separator)
-                {
-                    AppendMenuW(menu, MF_SEPARATOR, UIntPtr.Zero, null);
-                }
-                else
-                {
-                    entries.Add(item);
-                    AppendMenuW(menu, MF_STRING, (UIntPtr)entries.Count, item.Label ?? string.Empty);
-                }
-            }
+            var entries = AppendMenuTree(menu, self.menuItems);
 
             uint cmd = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD,
                 cursor.x, cursor.y, 0, hWnd, IntPtr.Zero);
@@ -319,6 +347,45 @@ namespace TransparentPet.Platform
                 // 只登记，不在这里执行：本方法跑在窗口过程的嵌套栈上，
                 // 动作（退出/打开设置面板）延后到 Pump 的顶层执行（见 Pump 注释）
                 self.pendingActions.Enqueue(entries[(int)cmd - 1].Action);
+            }
+        }
+
+        /// <summary>
+        /// 递归构建 HMENU（含子菜单），返回与菜单 id 对应的"可点叶"序列
+        /// （扁平规则与 FlattenLeaves 一致，直接复用其保证）。
+        /// </summary>
+        static List<TrayMenuItem> AppendMenuTree(IntPtr menu, TrayMenuItem[] items)
+        {
+            var entries = new List<TrayMenuItem>();
+            AppendItems(menu, items, entries);
+            return entries;
+        }
+
+        static void AppendItems(IntPtr menu, IList<TrayMenuItem> items, List<TrayMenuItem> entries)
+        {
+            foreach (var item in items)
+            {
+                if (item == null)
+                    continue;
+                if (item.Separator)
+                {
+                    AppendMenuW(menu, MF_SEPARATOR, UIntPtr.Zero, null);
+                }
+                else if (item.Children != null)
+                {
+                    if (item.Children.Count == 0)
+                        continue; // 空子菜单不渲染（AppendMenuW 挂空句柄会得到一个点不开的项）
+                    var sub = CreatePopupMenu();
+                    AppendItems(sub, item.Children, entries);
+                    // MF_POPUP 时第三参数是子菜单句柄（Win32 语义；UIntPtr 无 IntPtr 显式转换）
+                    AppendMenuW(menu, MF_STRING | MF_POPUP, (UIntPtr)sub.ToInt64(), item.Label ?? string.Empty);
+                }
+                else
+                {
+                    entries.Add(item);
+                    var flags = MF_STRING | (item.Checked ? MF_CHECKED : 0u);
+                    AppendMenuW(menu, flags, (UIntPtr)entries.Count, item.Label ?? string.Empty);
+                }
             }
         }
 
