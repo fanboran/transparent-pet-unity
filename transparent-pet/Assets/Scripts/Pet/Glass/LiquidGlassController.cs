@@ -634,29 +634,63 @@ namespace TransparentPet.Pet.Glass
         }
 
         /// <summary>
-        /// 抓屏工作线程：~30fps 循环 BitBlt 全屏。窗口矩形与期望尺寸不符时跳过
-        ///（DPI/分辨率过渡期），成功帧与尺寸成对发布。耗时超 100ms 打限流警告
-        ///——下次再有"驱动级阻塞"日志能直接指认，且不影响主循环分毫。
+        /// 抓屏工作线程：优先 Desktop Duplication（GPU 直拷 + 变化驱动等待，桌面
+        /// 静止时挂起零开销）；会话不可建立/死亡时回退 BitBlt 轮询（Optimus 或虚拟
+        /// 显示器驱动环境下 duplication 会整体不可用，实测踩坑）。两条路径产出同一
+        /// bottom-up BGRA 契约，主线程消费无感知差异。
         /// </summary>
         void CaptureLoop()
         {
             var slowLogAt = 0;
             var failLogAt = 0;
+            var dup = DesktopDuplicator.TryCreatePrimary();
+
             while (captureRunning)
             {
-                var hWnd = new IntPtr(Interlocked.Read(ref captureHwnd));
-                int w, h;
-                lock (captureGate) { w = captureWantW; h = captureWantH; }
-
-                if (hWnd != IntPtr.Zero && w > 0 && h > 0 &&
-                    NativeScreenCapture.TryGetWindowRect(hWnd, out var x, out var y, out var ww, out var hh) &&
-                    ww == w && hh == h)
+                if (dup != null)
                 {
-                    if (captureWrite == null || captureWrite.Length < w * h * 4)
-                        captureWrite = new byte[w * h * 4];
+                    if (dup.HasDied)
+                    {
+                        dup.Dispose();
+                        dup = null;
+                        Debug.Log("[LiquidGlass] 桌面复制会话死亡，回退 BitBlt 抓屏");
+                        continue;
+                    }
+                    int w, h;
+                    lock (captureGate) { w = captureWantW; h = captureWantH; }
+                    if (w > 0 && h > 0 && dup.Width == w && dup.Height == h)
+                    {
+                        if (captureWrite == null || captureWrite.Length < w * h * 4)
+                            captureWrite = new byte[w * h * 4];
+                        if (dup.TryAcquireInto(captureWrite, 33)) // 超时即节拍：变化驱动 ~30fps 上限
+                            lock (captureGate)
+                            {
+                                (captureWrite, captureLatest) = (captureLatest, captureWrite);
+                                captureLatestW = w;
+                                captureLatestH = h;
+                            }
+                    }
+                    else
+                    {
+                        Thread.Sleep(w > 0 && h > 0 ? 100 : 33); // 尺寸不符（DPI/分辨率过渡）稍后重试
+                    }
+                    continue;
+                }
+
+                // ── BitBlt 回退路径 ──
+                var hWnd = new IntPtr(Interlocked.Read(ref captureHwnd));
+                int bw, bh;
+                lock (captureGate) { bw = captureWantW; bh = captureWantH; }
+
+                if (hWnd != IntPtr.Zero && bw > 0 && bh > 0 &&
+                    NativeScreenCapture.TryGetWindowRect(hWnd, out var x, out var y, out var ww, out var hh) &&
+                    ww == bw && hh == bh)
+                {
+                    if (captureWrite == null || captureWrite.Length < bw * bh * 4)
+                        captureWrite = new byte[bw * bh * 4];
 
                     var stopwatch = Stopwatch.StartNew();
-                    var ok = NativeScreenCapture.TryCaptureRegion(x, y, w, h, captureWrite, out var failStep);
+                    var ok = NativeScreenCapture.TryCaptureRegion(x, y, bw, bh, captureWrite, out var failStep);
                     var took = stopwatch.ElapsedMilliseconds;
 
                     if (ok)
@@ -664,25 +698,27 @@ namespace TransparentPet.Pet.Glass
                         lock (captureGate)
                         {
                             (captureWrite, captureLatest) = (captureLatest, captureWrite);
-                            captureLatestW = w;
-                            captureLatestH = h;
+                            captureLatestW = bw;
+                            captureLatestH = bh;
                         }
                     }
                     else if (Environment.TickCount - failLogAt > 5000)
                     {
                         failLogAt = Environment.TickCount;
-                        UnityEngine.Debug.Log($"[LiquidGlass] 桌面抓屏失败: step={failStep} rect=({x},{y},{ww}x{hh})");
+                        Debug.Log($"[LiquidGlass] 桌面抓屏失败: step={failStep} rect=({x},{y},{ww}x{hh})");
                     }
 
                     if (took > 100 && Environment.TickCount - slowLogAt > 5000)
                     {
                         slowLogAt = Environment.TickCount;
-                        UnityEngine.Debug.LogWarning($"[LiquidGlass] 抓屏耗时 {took}ms（DWM/驱动阻塞；已在工作线程，不影响主循环）");
+                        Debug.LogWarning($"[LiquidGlass] 抓屏耗时 {took}ms（DWM/驱动阻塞；已在工作线程，不影响主循环）");
                     }
                 }
 
                 Thread.Sleep(33);
             }
+
+            dup?.Dispose();
         }
 
         void UpdateBlurWeights()

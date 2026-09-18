@@ -12,6 +12,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using UnityEngine;
 using Debug = UnityEngine.Debug; // System.Diagnostics.Debug 同名，显式别名消歧（同 CrashGuard）
 
@@ -40,6 +41,8 @@ namespace TransparentPet.Core
             if (IsSpecies || speciesChild != null)
                 return;
 
+            EnsureKillOnCloseJob(); // OS 级"父死子亡"：先于任何子进程创建
+
             var exe = Process.GetCurrentProcess().MainModule?.FileName;
             if (string.IsNullOrEmpty(exe))
                 return;
@@ -56,6 +59,91 @@ namespace TransparentPet.Core
             });
             Debug.Log($"[Role] 物种副进程已拉起 pid={speciesChild?.Id}");
 #endif
+        }
+
+        // ── Job Object 进程配对（"父死子亡"的 OS 级保证，优于自制轮询）──
+        // 把自己放进一个 KILL_ON_JOB_CLOSE 的 Job Object：job 内进程再创建的子进程
+        // 自动继承成员身份；玻璃进程死亡 → 最后一 个 job 句柄关闭 → OS 立即终止
+        // 全部成员（物种副进程），零轮询零宽限。"子死父随"Job Object 管不了，
+        // 仍由窗口存活信号联动（GlassRole）承担——两层互补。
+        // 兜底：创建/设置/加入任一步失败则静默放弃（窗口信号联动仍在，双保险）。
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct IO_COUNTERS
+        {
+            public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount;
+            public ulong ReadTransferCount, WriteTransferCount, OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+        {
+            public long PerProcessUserTimeLimit, PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize, MaximumWorkingSetSize; // SIZE_T
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity; // ULONG_PTR
+            public uint PriorityClass, SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        {
+            public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+            public IO_COUNTERS IoInfo;
+            public UIntPtr ProcessMemoryLimit, JobMemoryLimit, PeakProcessMemoryUsed, PeakJobMemoryUsed;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr CreateJobObjectW(IntPtr lpJobAttributes, string lpName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetInformationJobObject(IntPtr hJob, int infoClass,
+            ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION lpInfo, int infoSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
+
+        [DllImport("kernel32.dll")]
+        static extern IntPtr GetCurrentProcess();
+
+        static IntPtr killOnCloseJob; // static 持有：进程存活期间不关闭（关闭即触发 kill）
+
+        const int JobObjectExtendedLimitInformation = 9;
+        const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+
+        static void EnsureKillOnCloseJob()
+        {
+            if (killOnCloseJob != IntPtr.Zero)
+                return;
+            try
+            {
+                var job = CreateJobObjectW(IntPtr.Zero, null);
+                if (job == IntPtr.Zero)
+                {
+                    Debug.LogWarning($"[Role] CreateJobObject 失败 err={Marshal.GetLastWin32Error()}（放弃 job 保护，窗口信号联动兜底）");
+                    return;
+                }
+                var info = default(JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                        ref info, System.Runtime.InteropServices.Marshal.SizeOf<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()))
+                {
+                    Debug.LogWarning($"[Role] SetInformationJobObject 失败 err={Marshal.GetLastWin32Error()}（放弃 job 保护，窗口信号联动兜底）");
+                    return;
+                }
+                if (!AssignProcessToJobObject(job, GetCurrentProcess()))
+                {
+                    Debug.LogWarning($"[Role] AssignProcessToJobObject 失败 err={Marshal.GetLastWin32Error()}（放弃 job 保护，窗口信号联动兜底）");
+                    return;
+                }
+                killOnCloseJob = job;
+                Debug.Log("[Role] KILL_ON_JOB_CLOSE Job Object 已生效：父进程死亡时 OS 即时带走全部子进程");
+            }
+            catch
+            {
+                // 放弃 job 保护（窗口信号联动兜底仍在）
+            }
         }
 
         /// <summary>玻璃角色退出前先带走物种副进程（HardExit 链路调用）。</summary>
