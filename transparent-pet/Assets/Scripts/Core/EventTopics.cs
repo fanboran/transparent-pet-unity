@@ -1,4 +1,5 @@
 // 事件主题常量表：全项目的事件名统一在此定义，避免散落的魔法字符串
+
 namespace TransparentPet.Core
 {
     /// <summary>事件 topic 名常量。字段名即 topic 字符串，注释说明对应载荷类型。</summary>

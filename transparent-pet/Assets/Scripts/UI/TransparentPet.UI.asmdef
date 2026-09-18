@@ -1,0 +1,17 @@
+{
+    "name": "TransparentPet.UI",
+    "rootNamespace": "TransparentPet.UI",
+    "references": [
+        "TransparentPet.Core",
+        "TransparentPet.Pet"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

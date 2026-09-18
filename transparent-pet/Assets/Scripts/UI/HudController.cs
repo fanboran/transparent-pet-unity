@@ -1,6 +1,7 @@
 using TransparentPet.Core;
 using TransparentPet.Pet;
 using UnityEngine;
+using TransparentPet.Pet.Common;
 
 namespace TransparentPet.UI
 {

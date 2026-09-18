@@ -4,7 +4,10 @@
     "references": [
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
-        "TransparentPet.Runtime"
+        "TransparentPet.Core",
+        "TransparentPet.Platform",
+        "TransparentPet.Pet",
+        "TransparentPet.UI"
     ],
     "includePlatforms": [
         "Editor"

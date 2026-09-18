@@ -17,3 +17,6 @@ Builds/
 
 # 本地验证临时产物（补回：规则随被丢弃的提交一并消失）
 test-results.xml
+
+# ZCode 会话内部文件
+.zcode/
