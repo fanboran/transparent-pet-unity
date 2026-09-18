@@ -7,7 +7,7 @@ namespace TransparentPet.UI
     /// <summary>
     /// 角色切换提示 HUD：屏幕中上显示角色名，停留 2 秒后淡出。
     /// 兼首次启动引导：配置里未标记 introShown 时显示一次玩法提示（拖拽/抛掷/托盘）。
-    /// 与 SettingsPanel 同理走 IMGUI——绘制内容自带 alpha，落在文字上时
+    /// 走 IMGUI——绘制内容自带 alpha，落在文字上时
     /// UniWinC 按像素命中判为可交互区；淡出时 alpha 下降，穿透状态自然恢复。
     /// </summary>
     public class HudController : MonoBehaviour

@@ -164,7 +164,7 @@ namespace TransparentPet.Pet
                 LogDiagnostics();
         }
 
-        // ── EventBus 处理器（SettingsPanel 发布 → 此处应用）──
+        // ── EventBus 处理器（配置/事件发布 → 此处应用）──
 
         void OnScaleChanged(float scale)
         {

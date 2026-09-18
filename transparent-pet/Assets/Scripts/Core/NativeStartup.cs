@@ -14,9 +14,9 @@ namespace TransparentPet.Core
     /// 注意事项：
     /// - 仅 Windows 有意义；本文件不做平台宏隔离（调用方处于 Player only 语境）。
     /// - 编辑器下调用会把开发机注册表写上 Unity 编辑器 exe 的路径——正式版调用方
-    ///   应自行在 UNITY_EDITOR 下跳过，spike 阶段由 SettingsPanel 直接调用，可接受。
+    ///   应自行在 UNITY_EDITOR 下跳过（spike 阶段由启动流程直接调用，可接受）。
     /// - 所有失败（注册表拒绝访问、取 exe 路径失败等）只 LogWarning 不抛，
-    ///   保证设置面板不因自启功能异常而崩溃。
+    ///   保证调用方不因自启功能异常而崩溃。
     /// </summary>
     public static class NativeStartup
     {

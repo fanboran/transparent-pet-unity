@@ -65,8 +65,6 @@ namespace TransparentPet.Core
             // "退出"先点 HardExit 的延迟强杀引信再摘图标，见 ExitFromTray
             tray = new NativeTray("透明宠物", new[]
             {
-                new TrayMenuItem("设置", () => EventBus.Publish(EventTopics.SettingsPanelToggleRequested, true)),
-                new TrayMenuItem(), // 分隔线
                 new TrayMenuItem("退出", ExitFromTray),
             });
 #endif
@@ -105,7 +103,7 @@ namespace TransparentPet.Core
         }
 
         /// <summary>
-        /// 整窗穿透：指针压在宠物不透明区域或设置面板上 → 可交互；否则穿透到桌面。
+        /// 整窗穿透：指针压在宠物不透明区域上 → 可交互；否则穿透到桌面。
         /// 判定输入来自各绘制方自报（见 PointerHover），不再每帧读屏回读。
         /// 注意两点（都有实测教训）：
         ///   1. 必须持续驱动——此前"相等即跳过"以 native 读回为准，初始态两者同为

@@ -179,9 +179,8 @@ namespace TransparentPet.EditorTools
 
             AddPetComponents(petGo, kind, hoverMode, windowController);
 
-            // UI：设置面板 + HUD（IMGUI，透明窗口上自带 alpha → 面板区域自动可交互）
+            // UI：HUD（IMGUI，透明窗口上自带 alpha → 引导提示区域自动可交互）
             var uiGo = new GameObject("PetUI");
-            uiGo.AddComponent<SettingsPanel>();
             uiGo.AddComponent<HudController>();
 
             // SaveScene 对不存在的目录会"静默失败"（日志成功、磁盘无文件）——先建目录

@@ -16,9 +16,6 @@ namespace TransparentPet.Core
         /// <summary>抛射物理参数变更。载荷 ThrowParams：新的重力/速度上限等参数。</summary>
         public const string ThrowParamsChanged = "ThrowParamsChanged";
 
-        /// <summary>请求开/关设置面板。载荷 bool：true 打开 / false 关闭。</summary>
-        public const string SettingsPanelToggleRequested = "SettingsPanelToggleRequested";
-
         /// <summary>配置已写盘。载荷 PetConfig：刚保存的完整配置（其他模块可据此同步内存状态）。</summary>
         public const string ConfigSaved = "ConfigSaved";
     }

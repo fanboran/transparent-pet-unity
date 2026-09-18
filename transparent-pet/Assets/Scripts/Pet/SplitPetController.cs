@@ -236,7 +236,7 @@ namespace TransparentPet.Pet
             childHadGravity.Add(false); // 分身同样保持漂浮：碎渣直接飘回母体，不落地
         }
 
-        // ── EventBus 处理器（SettingsPanel 发布 → 此处应用）──
+        // ── EventBus 处理器（配置/事件发布 → 此处应用）──
 
         void OnScaleChanged(float scale)
         {

@@ -165,14 +165,11 @@ namespace TransparentPet.Pet
         void OnEnable()
         {
             EventBus.Subscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
-            LiquidGlassPresence.Active = this; // 设置面板据此显示液态玻璃区块
         }
 
         void OnDisable()
         {
             EventBus.Unsubscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
-            if (LiquidGlassPresence.Active == this)
-                LiquidGlassPresence.Active = null;
         }
 
         void Start()
@@ -219,7 +216,7 @@ namespace TransparentPet.Pet
                 Destroy(quadMesh);
         }
 
-        // ── 多只管理（设置面板经 LiquidGlassPresence 调用）──
+        // ── 多只管理（公共 API；多只由配置数组装载恢复）──
 
         /// <summary>当前只数（1~MaxSlimes）。</summary>
         public int SlimeCount => slimes.Count;
