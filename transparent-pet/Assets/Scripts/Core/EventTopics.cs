@@ -17,6 +17,12 @@ namespace TransparentPet.Core
         /// <summary>抛射物理参数变更。载荷 ThrowParams：新的重力/速度上限等参数。</summary>
         public const string ThrowParamsChanged = "ThrowParamsChanged";
 
+        /// <summary>请求召唤一只物种桌宠。载荷 string：物种 id（glass/textured/softbody/mesh）。</summary>
+        public const string PetSummonRequested = "PetSummonRequested";
+
+        /// <summary>请求收回一只。载荷 string："glass"（玻璃进程本地收回）/ "species"（转发物种进程）。</summary>
+        public const string PetRecallRequested = "PetRecallRequested";
+
         /// <summary>配置已写盘。载荷 PetConfig：刚保存的完整配置（其他模块可据此同步内存状态）。</summary>
         public const string ConfigSaved = "ConfigSaved";
     }

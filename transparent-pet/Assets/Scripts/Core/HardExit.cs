@@ -56,6 +56,7 @@ namespace TransparentPet.Core
 
         public static void Now()
         {
+            RoleEnvironment.KillSpeciesChild(); // 双窗口：主进程退出前先带走物种副进程
             if (killing)
                 return;
             killing = true;

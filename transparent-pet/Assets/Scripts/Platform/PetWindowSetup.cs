@@ -63,11 +63,23 @@ namespace TransparentPet.Platform
 #if !UNITY_EDITOR
             // 托盘：全屏无边框窗口的控制出口（编辑器下跳过）。
             // 菜单动作由 NativeTray 排队后在 Pump 顶层执行（不在窗口过程里做），
-            // "退出"先点 HardExit 的延迟强杀引信再摘图标，见 ExitFromTray
-            tray = new NativeTray("透明宠物", new[]
+            // "退出"先点 HardExit 的延迟强杀引信再摘图标，见 ExitFromTray。
+            // 物种副进程不建托盘（双窗口只有一个图标；召唤菜单在玻璃进程侧）
+            if (!RoleEnvironment.IsSpecies)
             {
-                new TrayMenuItem("退出", ExitFromTray),
-            });
+                tray = new NativeTray("透明桌宠", new[]
+                {
+                    new TrayMenuItem("召唤：贴图史莱姆", () => EventBus.Publish(EventTopics.PetSummonRequested, "textured")),
+                    new TrayMenuItem("召唤：果冻软体", () => EventBus.Publish(EventTopics.PetSummonRequested, "softbody")),
+                    new TrayMenuItem("召唤：碎裂软体", () => EventBus.Publish(EventTopics.PetSummonRequested, "mesh")),
+                    new TrayMenuItem("召唤：液态玻璃", () => EventBus.Publish(EventTopics.PetSummonRequested, "glass")),
+                    new TrayMenuItem(), // 分隔线
+                    new TrayMenuItem("收回：最近一只物种", () => EventBus.Publish(EventTopics.PetRecallRequested, "species")),
+                    new TrayMenuItem("收回：一只液态玻璃", () => EventBus.Publish(EventTopics.PetRecallRequested, "glass")),
+                    new TrayMenuItem(), // 分隔线
+                    new TrayMenuItem("退出", ExitFromTray),
+                });
+            }
 #endif
             StartCoroutine(HideFromTaskbarWhenReady());
         }

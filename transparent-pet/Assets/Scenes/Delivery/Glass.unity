@@ -366,10 +366,9 @@ MonoBehaviour:
   m_GameObject: {fileID: 1589504982}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2a44138dd2e03cb4b817a0aacc7b8bde, type: 3}
+  m_Script: {fileID: 11500000, guid: fe9d3d61d458ef742a5b808c6e07e83d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  hoverMode: 1
 --- !u!114 &1589504984
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -379,9 +378,36 @@ MonoBehaviour:
   m_GameObject: {fileID: 1589504982}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 9905955ef35547042981d3457985d5e8, type: 3}
+  m_Script: {fileID: 11500000, guid: ed0133b8a1f2f0e468395eb6d12552f9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  MainShader: {fileID: 4800000, guid: a8a5816c983606f429c9323592f43746, type: 3}
+  BgShader: {fileID: 4800000, guid: 8da91fad556f51f488d678805a8ef15b, type: 3}
+  BlurShader: {fileID: 4800000, guid: acb7e82dcc81ccd419aa4f2808eca262, type: 3}
+  SlimeWidthPx: 320
+  RefThickness: 80
+  RefFactor: 1.45
+  RefDispersion: 7
+  FresnelRange: 60
+  FresnelHardness: 0.2
+  FresnelFactor: 0.5
+  GlareRange: 70
+  GlareHardness: 0.2
+  GlareConvergence: 0.5
+  GlareOppositeFactor: 0.8
+  GlareFactor: 0.9
+  GlareAngleDeg: -45
+  BgType: 0
+  BgTexture: {fileID: 0}
+  BlurRadius: 6
+  BlurEdge: 0
+  Tint: {r: 1, g: 1, b: 1, a: 0.08}
+  ShadowExpand: 26
+  ShadowFactor: 0.5
+  Step: 9
+  CaptureInvisible: 1
+  DesktopReflection: 1
+  WindowController: {fileID: 1028715447}
 --- !u!23 &1589504985
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -402,7 +428,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: eb5cadbd9029e3b459525fe744f3f1fd, type: 2}
+  - {fileID: 0}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0

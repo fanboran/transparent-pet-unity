@@ -38,8 +38,8 @@ namespace TransparentPet.Pet.Glass
     {
         public const float PixelsPerUnit = 100f;
 
-        /// <summary>史莱姆上限：与 shader 的 MAX_ITEMS 槽位数一致。</summary>
-        public const int MaxSlimes = 3;
+        /// <summary>史莱姆上限：与 shader 的 MAX_ITEMS 槽位数一致（空槽早退，扩容即支持更多只）。</summary>
+        public const int MaxSlimes = 16;
 
         [Header("着色器（SceneGenerator 装配时赋值；空则运行时 Shader.Find 兜底）")]
         public Shader MainShader;

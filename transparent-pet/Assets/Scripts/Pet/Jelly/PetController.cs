@@ -160,6 +160,9 @@ namespace TransparentPet.Pet.Jelly
         /// <summary>关闭位置持久化（多只同屏时不写配置，避免互相覆盖/污染单只版本的位置记忆）</summary>
         public void SetPersistPosition(bool persist) => persistPosition = persist;
 
+        /// <summary>物理是否就绪（召唤器落盘守卫：未就绪沿用上次保存值）。</summary>
+        public bool PhysicsReady => sim != null;
+
         /// <summary>直接应用角色配色（绕开 EventBus——广播会让同屏所有史莱姆一起变色）</summary>
         public void ApplyCharacterDirect(string id) =>
             bodyColor = CharacterRegistry.GetById(id).GlassColor;

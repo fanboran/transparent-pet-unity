@@ -42,6 +42,7 @@ namespace TransparentPet.Pet.Shatter
         /// <summary>悬浮语义（碎裂版）：落定即关重力原地漂浮——由场景生成器注入</summary>
         [SerializeField] bool hoverMode = false;
         bool hoverSettled;
+        bool spawnFloating;
 
         /// <summary>展厅注入的出生位置（屏像素）；null = 用配置/默认位置</summary>
         Vector2? spawnOverride;
@@ -89,7 +90,8 @@ namespace TransparentPet.Pet.Shatter
                     : new Vector2(width * 0.5f, ground * 0.5f));
 
             sim = new SlimePbfMesh(spawn, BaseHalfWidth * userScale);
-            gravityOn = true; // 出生下落：落定后自动回悬浮
+            gravityOn = !spawnFloating;      // 悬浮语义出生：停在注入点不落下（甩出才受力）
+            hoverSettled = spawnFloating;
             lastSavedScreenPos = spawn;
             nextSaveTime = Time.time + 1f;
         }
@@ -163,6 +165,15 @@ namespace TransparentPet.Pet.Shatter
         // ── 展厅（多只同屏）外部注入 ──
         public void SetSpawnOverride(Vector2 screenPos) => spawnOverride = screenPos;
         public void SetPersistPosition(bool persist) => persistPosition = persist;
+
+        /// <summary>悬浮语义开关（须在 Start 前调）：平时悬浮、甩出才受力。</summary>
+        public void SetHoverMode(bool hover) => hoverMode = hover;
+
+        /// <summary>出生即悬浮在注入点（须在 Start 前调；配合 SetHoverMode(true)）。</summary>
+        public void SetSpawnFloating() => spawnFloating = true;
+
+        /// <summary>物理是否就绪（召唤器落盘守卫：未就绪沿用上次保存值）。</summary>
+        public bool PhysicsReady => sim != null;
         public void ApplyCharacterDirect(string id) => bodyColor = CharacterRegistry.GetById(id).GlassColor;
         public Vector2 ScreenPosition => sim != null ? sim.Centroid : Vector2.zero;
         public bool IsHoverMode => hoverMode;

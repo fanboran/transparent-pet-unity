@@ -8,38 +8,35 @@ namespace TransparentPet.EditorTools
     /// <summary>
     /// 命令行构建入口（2022.3 的 -buildWindowsPlayer64 老参数已失效）：
     /// -batchmode -quit -projectPath ... -executeMethod TransparentPet.EditorTools.BuildPlayer.BuildWindows64
-    /// 产物输出到工程下 Builds/PetSpike.exe。
+    /// 产物输出到工程下 Builds/TransparentPet.exe（双窗口交付：Bootstrap 按角色分岔）。
     /// </summary>
     public static class BuildPlayer
     {
-        /// <summary>交付默认版本（构建设置 index 0 = 真液态玻璃桌面版）；体验其他保留版本改此路径（见 SceneGenerator.Versions）。</summary>
-        const string ScenePath = "Assets/Scenes/Versions/LiquidGlassDesktop/PetScene.unity";
+        /// <summary>双窗口交付三场景（Bootstrap 进 index 0，按 -species 分岔到玻璃/物种窗口）。</summary>
+        static readonly string[] DeliveryScenes =
+        {
+            SceneGenerator.BootstrapScenePath,
+            SceneGenerator.GlassScenePath,
+            SceneGenerator.SpeciesScenePath,
+        };
 
         /// <summary>版本展厅场景（各版本同屏，演示/面试用）。</summary>
         const string GalleryScenePath = "Assets/Scenes/Showcase/PetGallery.unity";
 
-        /// <summary>构建交付默认版（单只宠物，透明桌宠形态）。</summary>
-        public static void BuildWindows64() => Build(ScenePath, "PetSpike.exe");
+        /// <summary>构建透明桌宠交付版（双窗口：液态玻璃 + 可召唤物种）。</summary>
+        public static void BuildWindows64() => Build(DeliveryScenes, "TransparentPet.exe");
 
-        /// <summary>构建真液态玻璃桌面版（当前液态玻璃验收主线）。</summary>
-        public static void BuildLiquidGlassWindows64() =>
-            Build("Assets/Scenes/Versions/LiquidGlassDesktop/PetScene.unity", "PetLiquidGlass.exe");
+        /// <summary>构建版本展厅（各版本史莱姆同屏）。</summary>
+        public static void BuildGalleryWindows64() => Build(new[] { GalleryScenePath }, "PetGallery.exe");
 
-        /// <summary>构建碎裂版（PBF + 等值线渲染，拉扯过猛碎成块；存档版本体验/验收用）。</summary>
-        public static void BuildShatterWindows64() =>
-            Build("Assets/Scenes/Versions/PbfHover/PetScene.unity", "PetShatter.exe");
-
-        /// <summary>构建版本展厅（五只不同版本史莱姆同屏）。</summary>
-        public static void BuildGalleryWindows64() => Build(GalleryScenePath, "PetGallery.exe");
-
-        static void Build(string scenePath, string exeName)
+        static void Build(string[] scenePaths, string exeName)
         {
             var projectRoot = Directory.GetParent(Application.dataPath).FullName;
             var outputPath = Path.Combine(projectRoot, "Builds", exeName);
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
 
             var report = BuildPipeline.BuildPlayer(
-                new[] { scenePath },
+                scenePaths,
                 outputPath,
                 BuildTarget.StandaloneWindows64,
                 BuildOptions.None);

@@ -24,13 +24,53 @@ namespace TransparentPet.Platform
         /// <summary>Unity Player 主窗口的窗口类名（精确定位主窗口用）</summary>
         const string UnityWindowClass = "UnityWndClass";
 
-        delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
         [DllImport("user32.dll")]
         static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
 
         [DllImport("user32.dll")]
         static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern bool SetWindowTextW(IntPtr hWnd, string text);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int maxCount);
+
+        // ── 双窗口 z 序配对（玻璃进程在上、物种进程紧贴其下，都置顶）──
+
+        /// <summary>枚举全部顶层窗口（回调返回 false 停止）。</summary>
+        public static void EnumTopLevelWindows(EnumWindowsProc proc) => EnumWindows(proc, IntPtr.Zero);
+
+        /// <summary>读窗口所属进程 id。</summary>
+        public static uint GetWindowProcessId(IntPtr hWnd) =>
+            GetWindowThreadProcessId(hWnd, out var pid) != 0 ? pid : 0;
+
+        /// <summary>设置窗口标题（物种副进程改专用标题供玻璃侧配对识别）。</summary>
+        public static bool SetWindowText(IntPtr hWnd, string title) => SetWindowTextW(hWnd, title);
+
+        /// <summary>读窗口标题（空串 = 无标题）。</summary>
+        public static string GetWindowText(IntPtr hWnd)
+        {
+            var buffer = new StringBuilder(256);
+            return GetWindowTextW(hWnd, buffer, buffer.Capacity) > 0 ? buffer.ToString() : "";
+        }
+
+        /// <summary>取窗口类名。</summary>
+        public static string GetClassName(IntPtr hWnd)
+        {
+            var buffer = new StringBuilder(64);
+            return GetClassNameW(hWnd, buffer, buffer.Capacity) > 0 ? buffer.ToString() : "";
+        }
+
+        /// <summary>窗口置顶（不移动不激活）。HWND_TOPMOST = -1。</summary>
+        public static bool SetWindowPosTopmost(IntPtr hWnd) =>
+            SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+        /// <summary>把窗口插到 another 窗口之后（同 TOPMOST 层内紧贴其下），位置尺寸不动。</summary>
+        public static bool SetWindowPosBelow(IntPtr hWnd, IntPtr above) =>
+            SetWindowPos(hWnd, above, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 
         [DllImport("user32.dll")]
         static extern bool IsWindowVisible(IntPtr hWnd);

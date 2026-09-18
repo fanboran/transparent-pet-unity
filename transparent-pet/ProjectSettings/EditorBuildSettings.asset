@@ -6,6 +6,15 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Scenes/Delivery/Bootstrap.unity
+    guid: 92fce49b0e723e5499a3172862e207c3
+  - enabled: 1
+    path: Assets/Scenes/Delivery/Glass.unity
+    guid: 54b812d9181092b48b08f184c18bc72b
+  - enabled: 1
+    path: Assets/Scenes/Delivery/Species.unity
+    guid: f84f597167a70a04ba63407cb41ddb43
+  - enabled: 1
     path: Assets/Scenes/Versions/LiquidGlassDesktop/PetScene.unity
     guid: 7a0b188684947f34d9895a9ab139f2f1
   - enabled: 1

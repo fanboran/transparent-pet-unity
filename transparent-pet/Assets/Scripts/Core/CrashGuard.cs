@@ -37,7 +37,8 @@ namespace TransparentPet.Core
         /// 与 PetGallery（版本展厅）是两个独立产品形态，允许各自单开一份、互不排斥。
         /// </summary>
         static string SingleInstanceMutexName =>
-            $@"Local\TransparentPet.{Process.GetCurrentProcess().ProcessName}.SingleInstance";
+            $@"Local\TransparentPet.{Process.GetCurrentProcess().ProcessName}.SingleInstance" +
+            (RoleEnvironment.IsSpecies ? ".species" : ".glass"); // 双窗口双进程：同 exe 两角色不互斥，同角色仍防双开
 
         static volatile bool renderLoopHealthy;
         static int installed; // Interlocked 交换：EnsureInstalled 幂等

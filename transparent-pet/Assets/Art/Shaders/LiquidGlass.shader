@@ -98,7 +98,7 @@ Shader "TransparentPet/LiquidGlass"
             // 物品数组（与 CPU 端 LiquidGlassController 一一对应）：
             // xy = 中心（GL 像素，左下原点）；目前只装配史莱姆形状一种，
             // 保留 3 槽位 + smin 融合，多只玻璃史莱姆融合零成本可加。
-            #define MAX_ITEMS 3
+            #define MAX_ITEMS 16
             float4 _ItemPositions[MAX_ITEMS];
             float _ItemWidths[MAX_ITEMS];
             float _ItemScales[MAX_ITEMS];

@@ -139,6 +139,7 @@ namespace TransparentPet.Pet.Textured
             transform.position = ScreenToWorld(logicScreenPos);
             lastSavedScreenPos = logicScreenPos;
             nextSaveTime = Time.time + 1f;
+            PhysicsReady = true;
         }
 
         void Update()
@@ -184,6 +185,9 @@ namespace TransparentPet.Pet.Textured
 
         /// <summary>撤销当前抓取（输入仲裁：被更高层宠物的点击抢占时调用）</summary>
         public void CancelGrab() => physics.Reset();
+
+        /// <summary>物理是否就绪（召唤器落盘守卫；Start 走完即就绪）。</summary>
+        public bool PhysicsReady { get; private set; }
 
         void OnThrowParamsChanged(ThrowParams p) => ApplyThrowParams(p);
 

@@ -28,7 +28,7 @@
 
 ## 快速开始
 
-**直接体验（Windows）**：运行 `Builds/PetSpike.exe`（无窗口、进托盘，右键托盘图标可设置/退出）。
+**直接体验（Windows）**：运行 `Builds/TransparentPet.exe`（透明桌宠·双窗口形态：液态玻璃主窗口 + 物种副窗口，托盘右键可召唤/收回四种史莱姆、退出）。
 
 **从源码构建**：
 
@@ -38,7 +38,7 @@
   -projectPath "transparent-pet" \
   -executeMethod TransparentPet.EditorTools.SceneGenerator.GenerateAll
 
-# 构建 Windows x64（输出 transparent-pet/Builds/PetSpike.exe，构建后自动注入应用图标）
+# 构建 Windows x64（输出 transparent-pet/Builds/TransparentPet.exe，构建后自动注入应用图标）
 "F:/Unity/2022.3.62f1c1/Editor/Unity.exe" -batchmode -quit \
   -projectPath "transparent-pet" \
   -executeMethod TransparentPet.EditorTools.BuildPlayer.BuildWindows64
@@ -50,7 +50,7 @@
 
 - **多开**：由 `CrashGuard` 的命名互斥体做单实例保护——已有实例在运行时再次双击，新进程会立即自退出。例外：两次启动几乎同时（间隔 < 约 20 秒、前一个实例尚未稳定）时，后启动的进程可能卡在显卡初始化（Windows/驱动层的资源竞争，此时应用代码还未开始运行，无法拦截），任务管理器结束它即可
 - **异常自愈**：启动看门狗（30 秒未进入渲染循环即硬退出，独立线程执行以免主线程卡死时失效）、托管层未处理异常兜底、构建产物不包含崩溃处理器（`UnityCrashHandler64.exe`，它在崩溃时会挂起进程）——异常路径一律"死得干净"，进程始终可被正常终止
-- **万一失控**（窗口残留 / 进程不响应）：任务管理器结束 `PetSpike.exe` 即可；极少数情况下进程会卡在显卡驱动调用中导致无法结束（Windows 层面的现象，非本程序可拦截），此时注销或重启系统清除
+- **万一失控**（窗口残留 / 进程不响应）：任务管理器结束 `TransparentPet.exe`（两进程都会被退出链带走）即可；极少数情况下进程会卡在显卡驱动调用中导致无法结束（Windows 层面的现象，非本程序可拦截），此时注销或重启系统清除
 - 窗口是全屏透明覆盖层（宠物可在屏幕任意位置移动），这是透明桌宠的常规实现；对应代价是"渲染异常时遮挡整个桌面"。若需进一步降低失败影响面，可改为窗口跟随宠物包围盒（见 [docs/待办事项.md](docs/待办事项.md)）
 
 ## 项目结构
