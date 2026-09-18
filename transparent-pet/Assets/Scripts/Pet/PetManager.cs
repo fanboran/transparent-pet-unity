@@ -238,11 +238,7 @@ namespace TransparentPet.Pet
         }
 
         /// <summary>
-        /// 创建一只贴图史莱姆。挂场景根（绝不挂全屏 quad——它被拉到数十倍，后代全部
-        /// 等比爆炸，实测踩坑）；层用 PetRefract（进玻璃折射链路）。
-        /// </summary>
-        /// <summary>
-        /// 创建一只贴图史莱姆——就是 V6/V7 交付默认的那一套：PetSlime.png 精灵 +
+        /// 创建一只贴图史莱姆——V6/V7 交付默认的那一套：PetSlime.png 精灵 +
         /// SvgPetController（ThrowPhysics 抛射/拖甩/戳 + alpha 命中）+ PetLifeVisual
         ///（呼吸/倾斜/落地挤压）。挂场景根、层 PetRefract（进玻璃折射链路）；
         /// Sprites/Default 是内置着色器，构建必然包含，可运行时 Shader.Find。
@@ -258,7 +254,7 @@ namespace TransparentPet.Pet
             renderer.sortingOrder = 5; // 果冻软体(10)之下、液态玻璃(0)之上，与仲裁取值一致
 
             var pet = go.AddComponent<SvgPetController>();
-            pet.BaseScale = 0.4f; // 物种平等：800px 烘焙图 × 0.4 = 显示全宽 320px
+            pet.BaseScale = PetMetrics.BaseFullWidthPx / petSprite.texture.width; // 物种平等：显示全宽 200px（原版基准）
             pet.SetSpawnOverride(spawnPx);
             pet.SetPersistPosition(false); // 位置由本管理器按只持久化
             if (dropFromAir)

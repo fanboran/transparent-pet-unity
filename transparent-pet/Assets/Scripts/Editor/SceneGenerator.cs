@@ -465,7 +465,9 @@ namespace TransparentPet.EditorTools
             var species = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             BuildDeliveryCamera(species);
             var sp = new GameObject("Species");
-            sp.AddComponent<PetManager>();
+            var manager = sp.AddComponent<PetManager>();
+            manager.SoftbodyMaterial = EnsureMaterial("TransparentPet/SlimeLiquid", SlimeLiquidMaterialPath);
+            manager.MeshMaterial = EnsureMaterial("TransparentPet/SlimeMesh", SlimeMeshMaterialPath);
             sp.AddComponent<SpeciesRole>();
             BuildWindowStack(species, out _);
             SaveDeliveryScene(species, SpeciesScenePath);
