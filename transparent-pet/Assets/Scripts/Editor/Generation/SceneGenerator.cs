@@ -109,7 +109,7 @@ namespace TransparentPet.EditorTools
 
             ConfigurePetTextureImporter();
 
-            var scenes = new EditorBuildSettingsScene[Versions.Length + 1];
+            var scenes = new EditorBuildSettingsScene[Versions.Length];
             for (var i = 0; i < Versions.Length; i++)
             {
                 var (path, kind, hoverMode, description) = Versions[i];
@@ -117,10 +117,6 @@ namespace TransparentPet.EditorTools
                 scenes[i] = new EditorBuildSettingsScene(path, true);
                 Debug.Log($"[SceneGenerator] 版本场景生成完成: {path} —— {description}");
             }
-
-            // 展厅排在版本场景之后：index 0 仍是交付默认版本（展厅只作演示，由 BuildPlayer 单独指定）
-            BuildGalleryScene();
-            scenes[Versions.Length] = new EditorBuildSettingsScene(GalleryScenePath, true);
 
             // 双窗口交付三场景插到最前：index 0 = Bootstrap（按 -species 命令行分岔到玻璃/物种窗口）
             GenerateDeliveryScenes();
@@ -213,8 +209,7 @@ namespace TransparentPet.EditorTools
         }
 
         /// <summary>
-        /// 按版本类型给宠物对象装配组件——版本场景与展厅共用，保证"展厅里看到的就是
-        /// 各版本场景里的同一套实现"（避免两处装配漂移）。
+        /// 按版本类型给宠物对象装配组件（版本场景的统一装配点，避免多处装配漂移）。
         /// </summary>
         static void AddPetComponents(GameObject petGo, PetKind kind, bool hoverMode,
             UniWindowController windowController = null)
@@ -303,79 +298,6 @@ namespace TransparentPet.EditorTools
             }
         }
 
-        // ── 展厅场景：各版本同屏（演示/面试用；不进 Versions 版本表——它是展示场景，
-        //    不是观感/行为的某个版本，也不参与"index 0 = 交付默认"的约定）──
-
-        /// <summary>展厅场景路径。</summary>
-        const string GalleryScenePath = "Assets/Scenes/Showcase/PetGallery.unity";
-
-        /// <summary>
-        /// 展厅里的宠物（数组顺序 = 从左到右）。不放纯烘焙版：它和生命感版用同一张贴图，
-        /// 静止时外观完全一样（区别只在生命感版有呼吸/倾斜/挤压动画），同屏会让人误以为"重复"。
-        /// </summary>
-        static readonly (PetKind kind, bool hoverMode, string label)[] GalleryPets =
-        {
-            (PetKind.PbfMesh,    true,  "碎裂软体（PBF + 等值线渲染 · 漂浮 · 会碎成块）"),
-            (PetKind.SvgLife,    false, "生命感（呼吸 / 倾斜 / 落地挤压）"),
-            (PetKind.SvgClassic, false, "玻璃着色器 Slime.shader"),
-            (PetKind.Pbf,        false, "PBF 流体（metaball 渲染 · 重力落地）"),
-        };
-
-        [MenuItem("TransparentPet/生成展厅场景（各版本同屏）")]
-        public static void GenerateGalleryFromMenu()
-        {
-            if (!ConfirmUnsavedSceneBeforeNew())
-                return; // 用户在保存确认框选择了取消
-
-            ConfigurePetTextureImporter();
-            BuildGalleryScene();
-            AssetDatabase.SaveAssets();
-        }
-
-        /// <summary>
-        /// 生成"版本展厅"场景：各版本史莱姆同屏横排、各自可独立拖拽。
-        /// 出生位置与配色由 GalleryLayout 在 Awake 注入（多只同屏必须各给各的位置，
-        /// 且关闭位置持久化，否则会互相覆盖并污染单只版本记住的位置）。
-        /// </summary>
-        static void BuildGalleryScene()
-        {
-            var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-
-            // 相机：正交、纯色透明背景（与版本场景一致）
-            var cameraGo = new GameObject("Main Camera");
-            cameraGo.tag = "MainCamera";
-            var camera = cameraGo.AddComponent<Camera>();
-            camera.orthographic = true;
-            camera.orthographicSize = 5.4f;
-            camera.clearFlags = CameraClearFlags.SolidColor;
-            camera.backgroundColor = new Color(0f, 0f, 0f, 0f);
-            camera.allowHDR = false;
-            camera.transform.position = new Vector3(0f, 0f, -10f);
-            cameraGo.AddComponent<AudioListener>();
-
-            var root = new GameObject("GalleryRoot");
-            for (var i = 0; i < GalleryPets.Length; i++)
-            {
-                var (kind, hoverMode, _) = GalleryPets[i];
-                var petGo = new GameObject($"Pet{i}_{kind}");
-                petGo.transform.SetParent(root.transform);
-                // x 初值递增：GalleryLayout 按 transform.x 排序决定左右顺序
-                petGo.transform.position = new Vector3(i * 0.5f, 0f, 0f);
-                AddPetComponents(petGo, kind, hoverMode);
-            }
-
-            root.AddComponent<GalleryLayout>();
-
-            // 窗口互操作：UniWinC 透明/置顶/穿透 + 任务栏隐藏/托盘（含退出入口）
-            var windowGo = new GameObject("WindowController");
-            windowGo.AddComponent<UniWindowController>();
-            windowGo.AddComponent<PetWindowSetup>();
-
-            var fullPath = System.IO.Path.GetFullPath(GalleryScenePath);
-            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath));
-            EditorSceneManager.SaveScene(scene, fullPath);
-            Debug.Log($"[SceneGenerator] 展厅场景生成完成: {GalleryScenePath}（{GalleryPets.Length} 只同屏）");
-        }
 
         // ── 双窗口交付三场景：Bootstrap（入口分岔）/ Glass（玻璃主进程）/ Species（物种副进程）──
         // 玻璃窗口采屏时排除自己(WDA)，物种窗口不排除——玻璃因此把物种窗口当

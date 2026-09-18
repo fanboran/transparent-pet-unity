@@ -35,7 +35,4 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/Versions/LiquidGlass/PetScene.unity
     guid: 344879a5c58725348b4db51243bebeb9
-  - enabled: 1
-    path: Assets/Scenes/Showcase/PetGallery.unity
-    guid: 6bb1dee40268e934cb37c17123a5619f
   m_configObjects: {}

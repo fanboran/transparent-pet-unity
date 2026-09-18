@@ -20,14 +20,8 @@ namespace TransparentPet.EditorTools
             SceneGenerator.SpeciesScenePath,
         };
 
-        /// <summary>版本展厅场景（各版本同屏，演示/面试用）。</summary>
-        const string GalleryScenePath = "Assets/Scenes/Showcase/PetGallery.unity";
-
         /// <summary>构建透明桌宠交付版（双窗口：液态玻璃 + 可召唤物种）。</summary>
         public static void BuildWindows64() => Build(DeliveryScenes, "TransparentPet.exe");
-
-        /// <summary>构建版本展厅（各版本史莱姆同屏）。</summary>
-        public static void BuildGalleryWindows64() => Build(new[] { GalleryScenePath }, "PetGallery.exe");
 
         static void Build(string[] scenePaths, string exeName)
         {

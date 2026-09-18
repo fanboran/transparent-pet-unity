@@ -42,10 +42,10 @@ namespace TransparentPet.Pet.Jelly
         [SerializeField] bool hoverMode = false;
         bool hoverSettled; // hover 模式专用：落定标记（抓住/甩出即复位）
 
-        /// <summary>展厅注入的出生位置（屏像素）；null = 用配置/默认位置（见 SetSpawnOverride）</summary>
+        /// <summary>外部注入的出生位置（屏像素，召唤器用）；null = 用配置/默认位置</summary>
         Vector2? spawnOverride;
 
-        /// <summary>是否把位置写回配置（展厅等"多只同屏"场景要关掉，避免互相覆盖）</summary>
+        /// <summary>是否把位置写回配置（召唤器按只持久化时要关掉，避免互相覆盖）</summary>
         bool persistPosition = true;
 
         // 位置自动保存（节流：移动 >5px 且距上次 ≥1s）
