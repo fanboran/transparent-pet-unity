@@ -8,7 +8,7 @@
 //   liquidglass_sdf.png        STEP 0：SDF 梯度（核对轮廓形状/比例）
 //   liquidglass_normal.png     STEP 2：法线彩虹图（核对法线连续性）
 // 运行：-executeMethod TransparentPet.EditorTools.LiquidGlassSnapshot.CaptureHeadless
-// 输出：C:/Users/fanbo/AppData/Local/Temp/pet-snapshot/
+// 输出：%TEMP%/pet-snapshot/（Path.GetTempPath() 派生，不写死个人路径）
 // ============================================================================
 using System.IO;
 using TransparentPet.Pet;
@@ -22,7 +22,8 @@ namespace TransparentPet.EditorTools
     {
         const int W = 800, H = 560;
         const float PPU = 100f;
-        const string OutDir = "C:/Users/fanbo/AppData/Local/Temp/pet-snapshot";
+        // 输出目录：系统临时目录派生——写死个人用户名的绝对路径，换台机器一跑就指向不存在的位置
+        static readonly string OutDir = Path.Combine(Path.GetTempPath(), "pet-snapshot");
 
         [MenuItem("TransparentPet/快照：液态玻璃")]
         public static void CaptureFromMenu() => CaptureHeadless();
@@ -58,12 +59,7 @@ namespace TransparentPet.EditorTools
             {
                 controller.Tick();     // Blit 管线（素材 → 模糊 → 主合成参数）
                 cam.Render();          // quad 携主合成材质上屏
-                RenderTexture.active = rt;
-                var tex = new Texture2D(W, H, TextureFormat.RGBA32, false);
-                tex.ReadPixels(new Rect(0, 0, W, H), 0, 0);
-                tex.Apply();
-                RenderTexture.active = null;
-                File.WriteAllBytes(Path.Combine(OutDir, fileName), tex.EncodeToPNG());
+                SaveRtPng(rt, fileName);
                 Debug.Log($"[LiquidGlassSnapshot] 输出 {fileName}");
             }
 
@@ -86,6 +82,13 @@ namespace TransparentPet.EditorTools
             Snap("liquidglass_normal.png");
 
             cam.targetTexture = null;
+
+            // ── 清理：camGo/glassGo/RT 都是一次性临时产物，同一编辑器会话内
+            //    反复运行（菜单点多次/batchmode 多次 executeMethod）不销毁就累积泄漏 ──
+            Object.DestroyImmediate(camGo);
+            Object.DestroyImmediate(glassGo);
+            rt.Release();
+            Object.DestroyImmediate(rt);
         }
 
         static void DumpRt(RenderTexture rt, string fileName)
@@ -95,6 +98,14 @@ namespace TransparentPet.EditorTools
                 Debug.LogWarning($"[LiquidGlassSnapshot] {fileName}: RT 为 null，跳过");
                 return;
             }
+            SaveRtPng(rt, fileName);
+        }
+
+        // Snap 与 DumpRt 的公共出口：读 RT → 存 PNG。此前是两份几乎相同的实现且
+        // active 处理不一致（一处置 null、一处恢复 prev），抽到一处统一为
+        // "保存 prev → 用完恢复"；读屏用的 Texture2D 用完即销毁（多次运行会累积泄漏）。
+        static void SaveRtPng(RenderTexture rt, string fileName)
+        {
             var prev = RenderTexture.active;
             RenderTexture.active = rt;
             var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGBA32, false);
@@ -102,6 +113,7 @@ namespace TransparentPet.EditorTools
             tex.Apply();
             RenderTexture.active = prev;
             File.WriteAllBytes(Path.Combine(OutDir, fileName), tex.EncodeToPNG());
+            Object.DestroyImmediate(tex);
         }
     }
 }

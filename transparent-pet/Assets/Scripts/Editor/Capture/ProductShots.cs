@@ -7,6 +7,7 @@
 // 输出：docs/images/hero.png + docs/images/_frames_{breathe,throw}/frame_*.png
 //       帧序列随后由 tools/make_gif.py 合成 GIF（并清理帧目录）
 // ============================================================================
+using System.Collections.Generic;
 using System.IO;
 using TransparentPet.Pet;
 using UnityEditor;
@@ -48,6 +49,26 @@ namespace TransparentPet.EditorTools
         static string RepoRoot => Path.GetFullPath(Path.Combine(Application.dataPath, "..", ".."));
         static string OutDir => Path.Combine(RepoRoot, "docs", "images");
 
+        // ── 临时对象登记：渲染全部结束后统一销毁 ──
+        // new Material / 程序化 Texture2D / Sprite.Create 的产物是独立原生对象，
+        // DestroyImmediate(root) 只连带销毁 GO 层级里的组件，管不到它们；
+        // 不登记销毁的话，同一编辑器会话内反复运行会累积泄漏。
+        static readonly List<Object> TempObjects = new List<Object>();
+
+        static T Track<T>(T obj) where T : Object
+        {
+            TempObjects.Add(obj);
+            return obj;
+        }
+
+        static void DestroyTracked()
+        {
+            foreach (var obj in TempObjects)
+                if (obj != null)
+                    Object.DestroyImmediate(obj);
+            TempObjects.Clear();
+        }
+
         [MenuItem("TransparentPet/渲染作品集门面图")]
         public static void CaptureFromMenu() => CaptureHeadless();
 
@@ -57,10 +78,9 @@ namespace TransparentPet.EditorTools
 
             var petSprite = LoadPetSprite();
             if (petSprite == null)
-            {
-                Debug.LogError("[ProductShots] 找不到宠物贴图，渲染中止: " + SceneGeneratorTexturePath);
-                return;
-            }
+                // batchmode -executeMethod 下只有抛异常才能让进程退出码非零；
+                // LogError+return 等于"静默成功"，批处理会误判渲染通过——对齐 BuildPlayer 的失败即 throw
+                throw new System.Exception("[ProductShots] 找不到宠物贴图，渲染中止: " + SceneGeneratorTexturePath);
 
             var shadowSprite = CreateRadialSprite(128, new Color(0f, 0f, 0f, 1f), 0.9f);
             var cursorSprite = CreateRadialSprite(64, new Color(1f, 1f, 1f, 1f), 1f);
@@ -68,6 +88,7 @@ namespace TransparentPet.EditorTools
             CaptureHero(petSprite, shadowSprite);
             CaptureBreathe(petSprite, shadowSprite);
             CaptureThrow(petSprite, shadowSprite, cursorSprite);
+            DestroyTracked(); // 三个镜头的场景已各自销毁，这里收掉登记过的贴图/Sprite/材质
 
             Debug.Log("[ProductShots] 全部帧渲染完成 → " + OutDir);
         }
@@ -79,8 +100,9 @@ namespace TransparentPet.EditorTools
             var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(SceneGeneratorTexturePath);
             if (texture == null)
                 return null;
-            return Sprite.Create(texture, new Rect(0f, 0f, texture.width, texture.height),
-                new Vector2(0.5f, 0.5f), PPU);
+            // 贴图是工程资产（绝不可销毁），只登记销毁 Sprite.Create 产生的包装对象
+            return Track(Sprite.Create(texture, new Rect(0f, 0f, texture.width, texture.height),
+                new Vector2(0.5f, 0.5f), PPU));
         }
 
         // ── 静帧 hero：静息 + 呼吸峰值相位 + 贴地柔影 ──
@@ -178,7 +200,7 @@ namespace TransparentPet.EditorTools
             var cursor = cursorGo.AddComponent<SpriteRenderer>();
             cursor.sprite = cursorSprite;
             cursor.sortingOrder = 20;
-            cursor.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
+            cursor.sharedMaterial = Track(new Material(Shader.Find("Sprites/Default")));
             cursor.transform.localScale = Vector3.one * 0.22f;
             cursor.color = new Color(1f, 1f, 1f, 1f);
             cursorGo.SetActive(false);
@@ -320,7 +342,7 @@ namespace TransparentPet.EditorTools
             go.transform.SetParent(root.transform);
             Object.DestroyImmediate(go.GetComponent<Collider>());
             go.GetComponent<MeshRenderer>().sharedMaterial =
-                new Material(Shader.Find("Unlit/Color")) { color = GroundColor };
+                Track(new Material(Shader.Find("Unlit/Color")) { color = GroundColor });
             // 足够宽以覆盖抛掷跟拍的相机行程（±100 世界单位）
             go.transform.localScale = new Vector3(220f, 0.02f, 1f);
             go.transform.position = new Vector3(0f, ToWorld(new Vector2(0f, groundY), w, h).y, 0.5f);
@@ -333,7 +355,7 @@ namespace TransparentPet.EditorTools
             var sr = go.AddComponent<SpriteRenderer>();
             sr.sprite = sprite;
             sr.sortingOrder = 10;
-            sr.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
+            sr.sharedMaterial = Track(new Material(Shader.Find("Sprites/Default")));
             return sr;
         }
 
@@ -344,7 +366,7 @@ namespace TransparentPet.EditorTools
             var sr = go.AddComponent<SpriteRenderer>();
             sr.sprite = sprite;
             sr.sortingOrder = 1;
-            sr.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
+            sr.sharedMaterial = Track(new Material(Shader.Find("Sprites/Default")));
             sr.color = new Color(0f, 0f, 0f, 0.45f);
             return sr;
         }
@@ -352,7 +374,7 @@ namespace TransparentPet.EditorTools
         /// <summary>程序化径向渐变圆形精灵（柔软阴影 / 光标圆点），PPU=尺寸 → 世界尺寸 1</summary>
         static Sprite CreateRadialSprite(int size, Color color, float power)
         {
-            var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            var texture = Track(new Texture2D(size, size, TextureFormat.RGBA32, false));
             var pixels = new Color32[size * size];
             var center = (size - 1) * 0.5f;
             for (var y = 0; y < size; y++)
@@ -370,7 +392,7 @@ namespace TransparentPet.EditorTools
             }
             texture.SetPixels32(pixels);
             texture.Apply();
-            return Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), size);
+            return Track(Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), size));
         }
 
         // ── 工具 ──

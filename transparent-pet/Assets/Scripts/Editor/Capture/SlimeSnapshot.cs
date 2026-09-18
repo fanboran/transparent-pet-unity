@@ -5,7 +5,7 @@
 // PBF 史莱姆的：出生 / 落地趴姿 / **真实拖拽**（抓偏心点绕圈拖动，途中
 // 抓拍——检验受力点是否真的是点击处、身体是否垂坠而非绕鼠标成正圆）。
 // 运行：-executeMethod TransparentPet.EditorTools.SlimeSnapshot.CaptureHeadless
-// 输出：C:/Users/fanbo/AppData/Local/Temp/pet-snapshot/*.png
+// 输出：%TEMP%/pet-snapshot/*.png（Path.GetTempPath() 派生，不写死个人路径）
 // ============================================================================
 using System; // 注：Random/Object 用 UnityEngine 限定，避免与 System 二义
 using System.IO;
@@ -21,7 +21,8 @@ namespace TransparentPet.EditorTools
         const int W = 800, H = 560;
         const float PPU = 100f;
         const float GroundYpx = 460f;                     // 地面（屏幕像素，Y 向下）
-        const string OutDir = "C:/Users/fanbo/AppData/Local/Temp/pet-snapshot";
+        // 输出目录：系统临时目录派生——写死个人用户名的绝对路径，换台机器一跑就指向不存在的位置
+        static readonly string OutDir = Path.Combine(Path.GetTempPath(), "pet-snapshot");
 
         [MenuItem("TransparentPet/快照：PBF 与原版对比")]
         public static void CaptureFromMenu() => CaptureHeadless();
@@ -42,21 +43,23 @@ namespace TransparentPet.EditorTools
 
             var ground = GameObject.CreatePrimitive(PrimitiveType.Quad);
             UnityEngine.Object.DestroyImmediate(ground.GetComponent<Collider>());
-            ground.GetComponent<MeshRenderer>().sharedMaterial =
-                new Material(Shader.Find("Unlit/Color")) { color = new Color(0.07f, 0.08f, 0.10f) };
+            var groundMat = new Material(Shader.Find("Unlit/Color")) { color = new Color(0.07f, 0.08f, 0.10f) };
+            ground.GetComponent<MeshRenderer>().sharedMaterial = groundMat; // 存引用：结束时手动销毁（new Material 不随 GO 连带销毁）
             ground.transform.localScale = new Vector3(W / PPU + 2f, 0.04f, 1f);
             ground.transform.position = new Vector3(0f, (H * 0.5f - GroundYpx) / PPU, 0.5f);
 
             // ── 原版烘焙图（PetSlime_ref.png：git 历史提取，先落 OutDir）──
             GameObject refGo = null;
+            Texture2D refTex = null;   // 提到 if 块外：结束清理要按 null 判断后销毁
+            Sprite refSprite = null;
             var refPath = Path.Combine(OutDir, "PetSlime_ref.png");
             if (File.Exists(refPath))
             {
-                var refTex = new Texture2D(2, 2);
+                refTex = new Texture2D(2, 2);
                 refTex.LoadImage(File.ReadAllBytes(refPath));
                 refGo = new GameObject("RefSprite");
                 var sr = refGo.AddComponent<SpriteRenderer>();
-                sr.sprite = Sprite.Create(refTex,
+                refSprite = sr.sprite = Sprite.Create(refTex,
                     new Rect(0, 0, refTex.width, refTex.height), new Vector2(0.5f, 0.5f), PPU);
                 sr.sortingOrder = 5;
                 // 贴图 800×528 = 4× 画布 200×132；缩放 0.25 → 画布 200px 宽。
@@ -73,7 +76,8 @@ namespace TransparentPet.EditorTools
             var fieldGo = new GameObject("PbfField");
             var mf = fieldGo.AddComponent<MeshFilter>();
             var mr = fieldGo.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = new Material(Shader.Find("TransparentPet/SlimeLiquid"));
+            var fieldMat = new Material(Shader.Find("TransparentPet/SlimeLiquid")); // 存引用：被下行顶掉后成孤儿，结束时销毁
+            mr.sharedMaterial = fieldMat;
             mr.sortingOrder = 10;
             var quad = new Mesh { name = "FieldQuad" };
             quad.vertices = new[]
@@ -144,7 +148,7 @@ namespace TransparentPet.EditorTools
                     Closeup(cam, rt, sim, frame == 320 ? "closeup_drag_moving.png" : "closeup_drag_hold.png");
                 }
                 if (frame == 424)
-                    sim.Release(350f, 800f, 2f, true);
+                    sim.Release(350f, 800f, 2f, true); // 对齐 ThrowParams 默认值：MinSpeed/MaxSpeed/Multiplier/enabled
 
                 if (frame == 480 && refGo != null)
                 {
@@ -152,6 +156,25 @@ namespace TransparentPet.EditorTools
                     Snap(cam, rt, "combined_compare.png");
                 }
             }
+
+            // ── 清理：本方法搭的全是一次性临时产物。GameObject 连同组件 DestroyImmediate 即可，
+            //    但 new Material / 程序化 Mesh / RenderTexture 是独立原生对象，不销毁会在
+            //    同一编辑器会话的反复运行中累积泄漏。field.MaterialInstance（带 buffer 实例）
+            //    由 using var 的 Dispose 负责，这里管其余对象。──
+            UnityEngine.Object.DestroyImmediate(camGo);
+            UnityEngine.Object.DestroyImmediate(ground);
+            UnityEngine.Object.DestroyImmediate(fieldGo);
+            UnityEngine.Object.DestroyImmediate(quad);
+            UnityEngine.Object.DestroyImmediate(groundMat);
+            UnityEngine.Object.DestroyImmediate(fieldMat);
+            if (refGo != null)
+            {
+                UnityEngine.Object.DestroyImmediate(refGo);
+                UnityEngine.Object.DestroyImmediate(refSprite); // Sprite 与贴图是两个对象，须分别销毁
+                UnityEngine.Object.DestroyImmediate(refTex);
+            }
+            rt.Release();
+            UnityEngine.Object.DestroyImmediate(rt);
 
             Debug.Log($"[SlimeSnapshot] restSize={restSize:F0}(期望≈160x101) " +
                       $"settledSize={sim.BoundsSize():F0} centroid={sim.Centroid:F0} " +
@@ -161,10 +184,12 @@ namespace TransparentPet.EditorTools
         static void Snap(Camera cam, RenderTexture rt, string file)
         {
             cam.Render();
+            var prev = RenderTexture.active; // 保存 prev → 用完恢复：别把外层的 active 绑定留在读屏 RT 上
             RenderTexture.active = rt;
             var tex = new Texture2D(W, H, TextureFormat.RGBA32, false);
             tex.ReadPixels(new Rect(0, 0, W, H), 0, 0);
             tex.Apply();
+            RenderTexture.active = prev;
             File.WriteAllBytes(Path.Combine(OutDir, file), tex.EncodeToPNG());
             UnityEngine.Object.DestroyImmediate(tex);
             Debug.Log("[SlimeSnapshot] 已保存 " + file);
