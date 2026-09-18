@@ -25,9 +25,9 @@ namespace TransparentPet.EditorTools
         public static void BuildLiquidGlassWindows64() =>
             Build("Assets/Scenes/Versions/V9LiquidGlassDesktop/PetScene.unity", "PetLiquidGlass.exe");
 
-        /// <summary>构建 V4 分裂/融合版（撞墙面积转移式分裂 + 分身吸引融合；存档版本体验/验收用）。</summary>
-        public static void BuildSplitFusionWindows64() =>
-            Build("Assets/Scenes/Versions/V4SplitFusion/PetScene.unity", "PetSplitFusion.exe");
+        /// <summary>构建 V2 碎裂版（PBF + 等值线渲染，拉扯过猛碎成块；存档版本体验/验收用）。</summary>
+        public static void BuildShatterWindows64() =>
+            Build("Assets/Scenes/Versions/V2PbfHover/PetScene.unity", "PetShatter.exe");
 
         /// <summary>构建版本展厅（五只不同版本史莱姆同屏）。</summary>
         public static void BuildGalleryWindows64() => Build(GalleryScenePath, "PetGallery.exe");
