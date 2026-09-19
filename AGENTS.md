@@ -21,7 +21,7 @@
   "F:/Unity/2022.3.62f1c1/Editor/Unity.exe" -batchmode -quit -projectPath "F:/VSCode/transparent-pet-unity/transparent-pet" -logFile -
   ```
   退出码 0 = 工程可打开；非 0 先查输出里的 error 再处置。
-- 改进待办项记录在 `docs/待办事项.md`
+- 改进待办项记录在 `docs/项目/待办事项.md`
 - **commit 后必须立即 `git push`**：用户以 GitHub（fanboran/transparent-pet-unity）为准确认进度，本地领先远端 = 用户认为"什么都没提交"（2026-09-12 曾因此积压 35 笔）
 - **效果版本保留约定（用户拍板）**：一切观感/行为迭代都作为**独立版本场景**永久保留在 `Assets/Scenes/Versions/`（一版本一目录，SceneGenerator.Versions 表登记，GenerateAll 成套生成并全部收录构建设置，index 0 = 交付默认）；不做运行时开关、不删旧版本。构建 exe 默认只打 index 0（BuildPlayer 显式指定场景）；体验其他版本用编辑器打开对应场景
   - **新方案取代旧方案时，必须先把旧效果 resurrect 成独立版本场景，再谈下架**——绝不能"只在 git 历史/待办里留个记录"就当保留过了
@@ -36,8 +36,9 @@
 | 要做什么 | 读哪个 |
 | --- | --- |
 | 了解项目目标与当前状态 | [README.md](README.md) |
-| **查模块划分/asmdef 依赖/目录约定** | [docs/代码结构.md](docs/代码结构.md) |
-| **决定是否继续投入的生死判定** | [docs/spike-透明窗口.md](docs/spike-透明窗口.md) |
+| 查全部文档（分类索引） | [docs/README.md](docs/README.md) |
+| **查模块划分/asmdef 依赖/目录约定** | [docs/技术/代码结构.md](docs/技术/代码结构.md) |
+| **决定是否继续投入的生死判定** | [docs/技术/spike-透明窗口.md](docs/技术/spike-透明窗口.md) |
 | 查 Godot 版某功能怎么实现的 | `../game/transparent-pet/`（原项目，直接读它的代码与文档） |
 | 查 AI 规则的原始出处 | `../game/.trae/rules/`（rule.md 通用规范） |
 
@@ -45,7 +46,7 @@
 
 ## 核心行为指令
 
-1. **Spike 优先**：透明窗口 spike（`docs/spike-透明窗口.md`）未通过验收清单前，**禁止编写任何业务功能代码**。项目生死未定时不堆功能，防止弃坑成本膨胀。
+1. **Spike 优先**：透明窗口 spike（`docs/技术/spike-透明窗口.md`）未通过验收清单前，**禁止编写任何业务功能代码**。项目生死未定时不堆功能，防止弃坑成本膨胀。
 2. **参照库强制**：写新系统（尤其 Win32 互操作）前，先下载星标多、维护活跃的开源参照项目到 `external/`（已 gitignore），读懂后**翻译改编，不凭记忆写**。简单参数调整不需要。
 3. **测试驱动**：核心逻辑（软体物理模拟、抛射物理参数、事件总线、配置持久化）必须附带 Unity Test Framework（NUnit）测试，放 `transparent-pet/Assets/Tests/`。
 4. **安全第一**：`transparent-pet/Assets/Scripts/Platform/`（Win32 窗口互操作层）一经 spike 验收，修改须谨慎——它是全项目唯一碰 Win32 API 的地方，改动可能破坏透明/穿透行为，改前跑全量测试。
@@ -55,14 +56,14 @@
 
 ## Unity 模块化架构原则
 
-> 从 Godot 模块化四原则翻译而来，精神一致、载体不同。结构总览见 [docs/代码结构.md](docs/代码结构.md)。
+> 从 Godot 模块化四原则翻译而来，精神一致、载体不同。结构总览见 [docs/技术/代码结构.md](docs/技术/代码结构.md)。
 
 1. **两层结构**：仓库根放文档与 AGENTS.md，Unity 工程本体放 `transparent-pet/` 子目录（Unity Hub 打开的是它，不是仓库根）。
 2. **模块划分（功能定边界，asmdef 定依赖）**：`Assets/Scripts/` 下按功能域分模块，每模块一个 asmdef，依赖方向由 asmdef 引用白名单强制（等价 stick-world 的 audit_deps.py）：
    - `Core/`（L0 应用基建）：事件总线、配置持久化、穿透判定输入、跨层中转状态（OverlayState/LiquidGlassPresence）、失控保护——零外部引用
    - `Platform/`（L1 Win32 窗口层）：透明置顶窗口、托盘、抓屏、开机自启、强杀退出——全项目唯一碰 Win32 的地方
    - `Pet/`（L2 玩法）：按物种线分目录 `Common/`（共享物理/仲裁/注册表）、`Glass/`（液态玻璃）、`Jelly/`（PBF 果冻）、`Shatter/`（碎裂）、`Textured/`（贴图）——目录=命名空间（`TransparentPet.Pet.Glass` 等）
-   - `UI/`（L2）：HUD 与设置面板（SettingsPanel，设计见 docs/设置窗口与托盘菜单设计.md）
+   - `UI/`（L2）：HUD 与设置面板（SettingsPanel，设计见 docs/设计/设置窗口与托盘菜单设计.md）
    - `Editor/`（Editor-only）：按用途分 `Build/`（构建入口）、`Capture/`（快照/宣传图）、`Generation/`（场景生成器）
 3. **耦合原则**：模块间通信走 `Core/EventBus.cs`（静态 C# 事件中心，对应 Godot 的 event_bus autoload）；**禁止** `GameObject.Find`、跨模块 `GetComponent` 裸引用。跨 asmdef 想引用对方类型必须显式加引用——依赖违规在编译期即失败。
 4. **命名规范**：C# 类型与文件 PascalCase（文件名=类名）；资产与目录 PascalCase；目录=命名空间（asmdef rootNamespace 对齐）。场景每个版本一个目录。
@@ -77,7 +78,7 @@
 transparent-pet-unity/          # 仓库根（文档与规则）
 ├── AGENTS.md                   # 本文件
 ├── README.md                   # 项目门面
-├── docs/                       # 任务书与设计文档（spike、代码结构在此）
+├── docs/                       # 文档（设计/技术/项目分类子目录 + README.md 总索引）
 ├── external/                   # 开源参照库（gitignored，不入库）
 └── transparent-pet/            # Unity 工程本体（Unity Hub 打开这个）
     ├── Assets/
