@@ -32,9 +32,13 @@ namespace TransparentPet.Pet
         // （杀掉副进程后事件不触发、HasExited 恒 false，日志确证）；而物种窗口只要
         // 进程活着就必然存在——按标题找窗口是物理事实，不会说谎。曾见过、消失超
         // 3 秒（宽限掩盖瞬时的枚举抖动）即判死，主线程走 HardExit 配对退出。
+        // 三个监视字段只在 Player 分支使用：编辑器编译面留字段声明会报 CS0414
+        // （speciesGoneAt 带初始化器、只写不读），随 Update 一起进平台宏。
+#if !UNITY_EDITOR
         float nextProbe;
         bool speciesWindowSeen;
         float speciesGoneAt = -1f;
+#endif
 
         void Update()
         {
