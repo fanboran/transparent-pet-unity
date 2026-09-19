@@ -44,6 +44,53 @@ namespace TransparentPet.Platform
     }
 
     /// <summary>
+    /// 托盘图标重加的重试调度（纯逻辑，时钟由调用方注入，供 NUnit 直接测）。
+    /// 为什么需要重试："TaskbarCreated" 广播在 explorer 重启后只来一次，重加若撞上
+    /// 任务栏初始化未完成的竞态（MS 文档明示）就永久失败——下次机会要等 explorer
+    /// 再死一次。托盘是设置/退出的唯一入口，失败由 Pump 周期重试兜底。
+    /// 语义：空闲（初始/成功后）不触发；每次失败——空闲则装填全部预算、否则消耗
+    /// 一次——只要还有预算就排定下次尝试时刻；成功 Clear 复位（下次故障重新计数）。
+    /// </summary>
+    public sealed class ReaddRetryState
+    {
+        static readonly double NoAttempt = double.PositiveInfinity;
+
+        readonly int maxRetries;
+        readonly double intervalSeconds;
+        int retriesRemaining;
+        double nextAttemptTime = NoAttempt;
+
+        public ReaddRetryState(int maxRetries, double intervalSeconds)
+        {
+            this.maxRetries = maxRetries;
+            this.intervalSeconds = intervalSeconds;
+        }
+
+        /// <summary>剩余重试次数（0 = 空闲或已用尽）。</summary>
+        public int RetriesRemaining => retriesRemaining;
+
+        /// <summary>到点且仍有预算（true = 调用方现在应再试一次）。</summary>
+        public bool Due(double now) => now >= nextAttemptTime;
+
+        /// <summary>一次重加尝试失败：装填/消耗预算并排下次尝试；用尽则永停。</summary>
+        public void OnFailure(double now)
+        {
+            if (retriesRemaining <= 0)
+                retriesRemaining = maxRetries; // 空闲后的首次失败：装填全部预算
+            else
+                retriesRemaining--;
+            nextAttemptTime = retriesRemaining > 0 ? now + intervalSeconds : NoAttempt;
+        }
+
+        /// <summary>重加成功：复位到空闲（下一次故障重新计数）。</summary>
+        public void Clear()
+        {
+            retriesRemaining = 0;
+            nextAttemptTime = NoAttempt;
+        }
+    }
+
+    /// <summary>
     /// 系统托盘图标（右键弹出通用菜单）——全屏无边框窗口的常驻入口。
     /// 实现要点：
     /// - Shell_NotifyIcon + 隐藏消息窗口（HWND_MESSAGE 父窗口，不显示不抢焦点）
@@ -75,6 +122,11 @@ namespace TransparentPet.Platform
         const uint TPM_RETURNCMD = 0x100;
         static readonly IntPtr HWND_MESSAGE = new IntPtr(-3);
         const int IDI_APPLICATION = 32512;
+
+        // explorer 重启重加失败的重试参数：5 次 × 0.5s 覆盖任务栏初始化竞态窗口
+        // （MS 文档提示 TaskbarCreated 到达时任务栏可能尚未就绪），又不至于长时间空转。
+        const int MaxReaddRetries = 5;
+        const double ReaddRetryIntervalSeconds = 0.5;
 
         delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
@@ -197,6 +249,7 @@ namespace TransparentPet.Platform
         readonly Action leftClickAction;   // 左键单击动作（可空；与右键菜单互不影响）
         readonly Queue<Action> pendingActions = new Queue<Action>(); // 菜单动作队列（Pump 顶层执行）
         NOTIFYICONDATAW trayIconData; // 首次 NIM_ADD 的完整数据（hIcon/szTip 原样），explorer 重启后重加图标复用
+        readonly ReaddRetryState readdRetry = new ReaddRetryState(MaxReaddRetries, ReaddRetryIntervalSeconds);
 
         /// <param name="tip">托盘悬停提示文字</param>
         /// <param name="menuItems">右键菜单内容（含分隔线与子菜单；"退出"也由调用方传入，
@@ -241,7 +294,10 @@ namespace TransparentPet.Platform
                     hIcon = ResolveTrayIcon(),
                     szTip = tip,
                 };
-                Shell_NotifyIconW(NIM_ADD, ref trayIconData);
+                // 启动首次添加同样可能撞任务栏未就绪（与 explorer 重启同一竞态），
+                // 失败登记重试，由 Pump 周期补加——托盘是唯一入口，启动即丢不可接受
+                if (!Shell_NotifyIconW(NIM_ADD, ref trayIconData))
+                    readdRetry.OnFailure(NowSeconds);
             }
             catch
             {
@@ -277,15 +333,25 @@ namespace TransparentPet.Platform
         /// explorer 重启（崩溃或被重启）后系统收走全部托盘图标且不会自动恢复，
         /// 不重新 NIM_ADD 就永久消失；"TaskbarCreated" 广播是系统给的唯一补偿窗口，
         /// 收到即用构造时缓存的 trayIconData 原样重加——托盘是设置/退出的唯一入口，
-        /// 必须自愈，否则用户只剩 ESC 硬退。
+        /// 必须自愈，否则用户只剩 ESC 硬退。单次重加可能撞上任务栏初始化未完成的
+        /// 竞态（MS 文档明示），失败登记重试由 Pump 每 0.5s 补试至成功或 5 次用尽
+        /// （见 ReaddRetryState）。
         /// </summary>
         void ReaddIcon()
         {
             if (hwnd == IntPtr.Zero)
                 return;
-            if (!Shell_NotifyIconW(NIM_ADD, ref trayIconData))
-                Debug.LogWarning("[NativeTray] explorer 重启后重加托盘图标失败");
+            if (Shell_NotifyIconW(NIM_ADD, ref trayIconData))
+            {
+                readdRetry.Clear();
+                return;
+            }
+            readdRetry.OnFailure(NowSeconds);
+            Debug.LogWarning($"[NativeTray] 重加托盘图标失败（任务栏可能尚未就绪），剩余重试 {readdRetry.RetriesRemaining} 次");
         }
+
+        /// <summary>单调时钟（秒）：realtime 不受 timeScale 影响，跨暂停/失焦仍走时。</summary>
+        static double NowSeconds => Time.realtimeSinceStartup;
 
         /// <summary>每帧抽干消息窗口队列，并在消息循环结束后执行菜单动作；由 PetWindowSetup.Update 调用。</summary>
         public void Pump()
@@ -298,6 +364,11 @@ namespace TransparentPet.Platform
                 TranslateMessage(ref msg);
                 DispatchMessageW(ref msg);
             }
+
+            // explorer 重启/启动时重加失败的兜底重试：到点再试一次（顶层栈执行，
+            // 同菜单动作的纪律——Shell_NotifyIcon 是同步跨进程调用，不进 wndproc 嵌套栈）
+            if (readdRetry.Due(NowSeconds))
+                ReaddIcon();
 
             // 菜单动作在主循环顶层执行，而不是在窗口过程里直接调：
             // ShowMenu 跑在 DispatchMessageW 的嵌套栈上，在那里摘托盘图标
