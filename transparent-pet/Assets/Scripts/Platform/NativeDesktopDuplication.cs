@@ -314,28 +314,56 @@ namespace TransparentPet.Platform
             if (CreateDXGIFactory1(ref factoryGuid, out var factory) != 0)
                 return null;
 
-            for (uint ai = 0; ; ai++)
+            try
             {
-                if (factory.EnumAdapters1(ai, out var adapter) != 0)
-                    break;
-                for (uint oi = 0; ; oi++)
+                for (uint ai = 0; ; ai++)
                 {
-                    if (adapter.EnumOutputs(oi, out var output) != 0)
+                    if (factory.EnumAdapters1(ai, out var adapter) != 0)
                         break;
-                    output.GetDesc(out var desc);
-                    if (desc.AttachedToDesktop == 0 || desc.DesktopCoordinates.Left != 0 || desc.DesktopCoordinates.Top != 0)
-                        continue;
-
-                    var session = TryCreateOn(adapter, output, desc);
-                    if (session != null)
+                    // adapter 引用二选一：被会话收编（session.adapter 持有，DisposeCore 释放）
+                    // 或本层扫描结束立即释放——收编后这里再放会双重释放，都不放则泄漏
+                    var adopted = false;
+                    try
                     {
-                        Debug.Log($"[Duplication] 桌面复制会话建立成功：{desc.DeviceName} {session.Width}x{session.Height}");
-                        return session;
+                        for (uint oi = 0; ; oi++)
+                        {
+                            if (adapter.EnumOutputs(oi, out var output) != 0)
+                                break;
+                            try
+                            {
+                                output.GetDesc(out var desc);
+                                if (desc.AttachedToDesktop == 0 || desc.DesktopCoordinates.Left != 0 || desc.DesktopCoordinates.Top != 0)
+                                    continue;
+
+                                var session = TryCreateOn(adapter, output, desc);
+                                if (session != null)
+                                {
+                                    Debug.Log($"[Duplication] 桌面复制会话建立成功：{desc.DeviceName} {session.Width}x{session.Height}");
+                                    adopted = true;
+                                    return session;
+                                }
+                            }
+                            finally
+                            {
+                                // output 从不入会话（会话只持 adapter/device/context/duplication/staging），扫完即还
+                                Marshal.ReleaseComObject(output);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        // 未被会话收编的 adapter 在此归还；被收编的归会话所有（DisposeCore 释放）
+                        if (!adopted) Marshal.ReleaseComObject(adapter);
                     }
                 }
+                Debug.Log("[Duplication] 全部适配器上 DuplicateOutput 均不可用，走 BitBlt 回退");
+                return null;
             }
-            Debug.Log("[Duplication] 全部适配器上 DuplicateOutput 均不可用，走 BitBlt 回退");
-            return null;
+            finally
+            {
+                // factory 纯属创建期中间对象：会话只留 adapter/device 的引用，所有返回路径都归还这份
+                Marshal.ReleaseComObject(factory);
+            }
         }
 
         static DesktopDuplicator TryCreateOn(IDXGIAdapter1 adapter, IDXGIOutput output, DXGI_OUTPUT_DESC desc)
@@ -347,7 +375,12 @@ namespace TransparentPet.Platform
 
             var output1 = (IDXGIOutput1)output;
             if (output1.DuplicateOutput(device, out var duplication) != S_OK)
+            {
+                // 失败路径 device/context 无人接管，就地归还，否则每试一个非桌面适配器泄漏一对设备
+                Marshal.ReleaseComObject(context);
+                Marshal.ReleaseComObject(device);
                 return null; // 非 DWM 适配器（Optimus）/虚拟显示器 → UNSUPPORTED
+            }
 
             return new DesktopDuplicator
             {
@@ -382,6 +415,8 @@ namespace TransparentPet.Platform
                 Marshal.QueryInterface(unk, ref texGuid, out var texPtr);
                 Marshal.Release(unk);
                 var texture = (ID3D11Texture2D)Marshal.GetObjectForIUnknown(texPtr);
+                // QI 引用已由 RCW 接管，立即归还，否则每帧泄漏一次引用计数（长期运行阻止 DWM 重用表面）
+                Marshal.Release(texPtr);
                 try
                 {
                     texture.GetDesc(out var td);

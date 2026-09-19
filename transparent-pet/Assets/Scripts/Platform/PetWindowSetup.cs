@@ -118,9 +118,16 @@ namespace TransparentPet.Platform
         }
 
 #if !UNITY_EDITOR
-        // 优雅退出（ESC/Application.Quit 路径）的最终兜底：退出流程结束的瞬间
-        // 强杀，杜绝任何形态的残留
-        void OnApplicationQuit() => HardExit.KillNow();
+        // Application.Quit 退出流程的兜底：只点 700ms 延迟强杀引信（幂等，重复调用
+        // 只生效一次），绝不在此直接 KillNow——OnApplicationQuit 在卸载流程开头执行，
+        // 这里立即强杀会令 OnDestroy（tray.Dispose 摘托盘图标）永远执行不到，留下
+        // 死图标（旧实现正是如此：KillSoon 的 700ms 窗口被自己人绕过）。
+        // - ESC 路径：HardExit.Now() 已点 700ms 引信，这里再调是幂等 no-op；
+        //   OnDestroy 会在退出卸载阶段摘图标，之后引信到点强杀兜底。
+        // - 外部触发的退出（系统关机/注销等直接走 Application.Quit 的路径）：从本
+        //   调用起 700ms 内进程必然死亡，"绝不残留"的保证不变，只是死亡时点从
+        //   "立即"改为"卸载后"。
+        void OnApplicationQuit() => HardExit.KillSoon(700);
 #endif
 
         void Update()

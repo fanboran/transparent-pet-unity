@@ -8,9 +8,10 @@ namespace TransparentPet.Platform
     /// <summary>
     /// 托盘菜单项：Label + 选中回调；Separator=true 时渲染为分隔线（Label/Action 被忽略）；
     /// Children 非空时渲染为弹出子菜单（此时 Action 不用，Label 用作子菜单标题）。
-    /// "退出"不是特殊项——由调用方作为普通 TrayMenuItem 传入，其 Action 里自行
-    /// Dispose() + Environment.Exit（Application.Quit 在托盘菜单的 Win32 模态循环
-    /// 深栈里可能不被处理，硬退才可靠，原实现教训）。
+    /// "退出"不是特殊项——由调用方作为普通 TrayMenuItem 传入，其 Action 走
+    /// HardExit 延迟强杀引信（动作在 Pump 顶层执行："退出"项先 KillSoon 点引信
+    /// → Dispose 摘图标 → KillNow，见 PetWindowSetup.ExitFromTray 与 Core/HardExit.cs；
+    /// Application.Quit 在托盘菜单的 Win32 模态循环深栈里可能不被处理，硬退才可靠，原实现教训）。
     /// </summary>
     public sealed class TrayMenuItem
     {
@@ -80,6 +81,10 @@ namespace TransparentPet.Platform
         // 防 GC 回收的窗口过程（必须静态持有）
         static readonly WndProcDelegate wndProc = TrayWndProc;
         static NativeTray active;
+        // "TaskbarCreated" 广播消息 id（同字符串在同会话内每次注册返回同值，重复注册无害）；
+        // TrayWndProc 是 static、经 active 路由回实例，消息比对在静态侧做，故存静态字段。
+        // 0 = RegisterWindowMessageW 注册失败，窗口过程据此跳过该分支。
+        static uint taskbarCreatedMsg;
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         struct WNDCLASSW
@@ -132,6 +137,9 @@ namespace TransparentPet.Platform
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         static extern ushort RegisterClassW(ref WNDCLASSW lpWndClass);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern uint RegisterWindowMessageW(string message);
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         static extern IntPtr CreateWindowExW(uint exStyle, string className, string windowName,
@@ -188,10 +196,11 @@ namespace TransparentPet.Platform
         readonly TrayMenuItem[] menuItems; // 菜单数据随实例走（窗口过程经静态 active 取回）
         readonly Action leftClickAction;   // 左键单击动作（可空；与右键菜单互不影响）
         readonly Queue<Action> pendingActions = new Queue<Action>(); // 菜单动作队列（Pump 顶层执行）
+        NOTIFYICONDATAW trayIconData; // 首次 NIM_ADD 的完整数据（hIcon/szTip 原样），explorer 重启后重加图标复用
 
         /// <param name="tip">托盘悬停提示文字</param>
         /// <param name="menuItems">右键菜单内容（含分隔线与子菜单；"退出"也由调用方传入，
-        /// 其 Action 自行 Dispose() + Environment.Exit，见 TrayMenuItem 注释）</param>
+        /// 其 Action 走 HardExit 延迟强杀引信，见 TrayMenuItem 注释）</param>
         /// <param name="onLeftClick">左键单击托盘图标的动作（可空 = 不响应左键）</param>
         public NativeTray(string tip, TrayMenuItem[] menuItems, Action onLeftClick = null)
         {
@@ -215,7 +224,14 @@ namespace TransparentPet.Platform
                 if (hwnd == IntPtr.Zero)
                     return;
 
-                var nid = new NOTIFYICONDATAW
+                // 注册 explorer 重启广播 "TaskbarCreated"：explorer 崩溃/重启会收走全部
+                // 托盘图标，这条广播是系统给的唯一补偿窗口（返回 0 = 注册失败，
+                // 窗口过程按 0 跳过）
+                taskbarCreatedMsg = RegisterWindowMessageW("TaskbarCreated");
+
+                // 缓存进实例字段而非局部变量：TaskbarCreated 到达时要用同一份
+                // hIcon/szTip 重新 NIM_ADD
+                trayIconData = new NOTIFYICONDATAW
                 {
                     cbSize = Marshal.SizeOf<NOTIFYICONDATAW>(),
                     hWnd = hwnd,
@@ -225,7 +241,7 @@ namespace TransparentPet.Platform
                     hIcon = ResolveTrayIcon(),
                     szTip = tip,
                 };
-                Shell_NotifyIconW(NIM_ADD, ref nid);
+                Shell_NotifyIconW(NIM_ADD, ref trayIconData);
             }
             catch
             {
@@ -255,6 +271,20 @@ namespace TransparentPet.Platform
                 // 落到回退分支
             }
             return LoadIconW(IntPtr.Zero, (IntPtr)IDI_APPLICATION);
+        }
+
+        /// <summary>
+        /// explorer 重启（崩溃或被重启）后系统收走全部托盘图标且不会自动恢复，
+        /// 不重新 NIM_ADD 就永久消失；"TaskbarCreated" 广播是系统给的唯一补偿窗口，
+        /// 收到即用构造时缓存的 trayIconData 原样重加——托盘是设置/退出的唯一入口，
+        /// 必须自愈，否则用户只剩 ESC 硬退。
+        /// </summary>
+        void ReaddIcon()
+        {
+            if (hwnd == IntPtr.Zero)
+                return;
+            if (!Shell_NotifyIconW(NIM_ADD, ref trayIconData))
+                Debug.LogWarning("[NativeTray] explorer 重启后重加托盘图标失败");
         }
 
         /// <summary>每帧抽干消息窗口队列，并在消息循环结束后执行菜单动作；由 PetWindowSetup.Update 调用。</summary>
@@ -297,6 +327,8 @@ namespace TransparentPet.Platform
                 ShowMenu(hWnd);
             else if (msg == WM_APP_TRAY && (uint)lParam == WM_LBUTTONUP && active?.leftClickAction != null)
                 active.pendingActions.Enqueue(active.leftClickAction); // 同菜单动作：Pump 顶层执行
+            else if (taskbarCreatedMsg != 0 && msg == taskbarCreatedMsg)
+                active?.ReaddIcon(); // explorer 重启广播：图标被系统收走，立即重加（0 = 未注册成功，跳过）
             else if (msg == 0x0010 /* WM_CLOSE */)
                 DestroyWindow(hWnd);
             return DefWindowProcW(hWnd, msg, wParam, lParam);

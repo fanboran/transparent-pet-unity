@@ -65,9 +65,23 @@ namespace TransparentPet.Platform
 
         [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, ref RECT rect);
 
+        // ---- BitBlt 回退路径的 GDI 对象缓存（内存 DC + 兼容位图）----
+        // 为什么：回退路径由抓屏线程约每 33ms 调一次，原先每轮
+        // CreateCompatibleDC/CreateCompatibleBitmap/SelectObject/删除全套重建 =
+        // 每秒约 30 轮 GDI 对象创建销毁的纯开销；抓取尺寸不变（常态）时全套复用。
+        // 非线程安全：缓存仅限单一抓屏线程使用（LiquidGlassController.CaptureLoop
+        // 独占调用），以下字段无任何同步。屏幕 DC 不缓存（显示模式切换后旧 DC
+        // 不可靠，且 GetDC/ReleaseDC 本身无对象分配、廉价）。
+        static IntPtr cachedMemDc;      // 内存 DC：仅首次创建成功，此后进程生命周期内复用
+        static IntPtr cachedBmp;        // 当前选入 cachedMemDc 的兼容位图；尺寸变化时重建
+        static IntPtr cachedDefaultBmp; // 建 DC 时的默认 1x1 单色位图；换位图前选回以解除选中
+        static int cachedW, cachedH;    // cachedBmp 的尺寸（命中判定用）
+
         /// <summary>
         /// 抓屏幕矩形（x,y = 左上原点物理像素；w,h = 尺寸）到 pixels
         /// （BGRA、底行在前；长度 ≥ w*h*4）。failStep 返回失败阶段（诊断用）。
+        /// 内存 DC/兼容位图按尺寸缓存复用，非线程安全：仅限单一抓屏线程
+        /// （LiquidGlassController.CaptureLoop）调用。
         /// </summary>
         public static bool TryCaptureRegion(int x, int y, int w, int h, byte[] pixels, out string failStep)
         {
@@ -85,21 +99,60 @@ namespace TransparentPet.Platform
                 return false;
             }
 
-            var memDc = IntPtr.Zero;
-            var bmp = IntPtr.Zero;
             var ok = false;
             try
             {
-                memDc = CreateCompatibleDC(screenDc);
-                bmp = CreateCompatibleBitmap(screenDc, w, h);
-                if (memDc == IntPtr.Zero || bmp == IntPtr.Zero)
+                // ---- 缓存准备：未命中（首次 / 尺寸变化 / 上次建位图失败）才重建 ----
+                // 注：cachedBmp 非 0 ⟺ 位图已成功选入（所有失败/删除路径都会把它清 0）
+                if (cachedMemDc == IntPtr.Zero || cachedBmp == IntPtr.Zero ||
+                    cachedW != w || cachedH != h)
                 {
-                    failStep = "CreateDCOrBitmap";
-                    return false;
+                    if (cachedMemDc == IntPtr.Zero)
+                    {
+                        cachedMemDc = CreateCompatibleDC(screenDc);
+                        if (cachedMemDc == IntPtr.Zero)
+                        {
+                            failStep = "CreateDCOrBitmap";
+                            return false; // finally 仍释放 screenDc
+                        }
+                    }
+
+                    if (cachedBmp != IntPtr.Zero)
+                    {
+                        // 旧位图仍选在缓存 DC 里——GDI 规定 DeleteObject 对选中态位图
+                        // 直接失败，必须先选回默认位图解除选中，再删（否则换尺寸一次就泄漏）
+                        SelectObject(cachedMemDc, cachedDefaultBmp);
+                        DeleteObject(cachedBmp);
+                        cachedBmp = IntPtr.Zero;
+                    }
+
+                    // 必须用屏幕 DC 建兼容位图（用内存 DC 会得到 1x1 单色兼容）
+                    cachedBmp = CreateCompatibleBitmap(screenDc, w, h);
+                    if (cachedBmp == IntPtr.Zero)
+                    {
+                        cachedW = cachedH = 0; // 失败即失效，下次调用自动走重建（自愈）
+                        failStep = "CreateDCOrBitmap";
+                        return false;
+                    }
+
+                    // 位图常驻选入缓存 DC（命中路径因此可跳过 SelectObject）；
+                    // 记住默认位图句柄，供本位图被替换时解除选中（"用完还原"）
+                    cachedDefaultBmp = SelectObject(cachedMemDc, cachedBmp);
+                    if (cachedDefaultBmp == IntPtr.Zero)
+                    {
+                        // SelectObject 失败 = 位图未选入，可安全删除；缓存复位下次重建
+                        DeleteObject(cachedBmp);
+                        cachedBmp = IntPtr.Zero;
+                        cachedW = cachedH = 0;
+                        failStep = "CreateDCOrBitmap";
+                        return false;
+                    }
+                    cachedW = w;
+                    cachedH = h;
                 }
 
-                var old = SelectObject(memDc, bmp);
-                ok = BitBlt(memDc, 0, 0, w, h, screenDc, x, y, SRCCOPY);
+                // ---- 抓取本体：命中/重建两路共用（原行序/格式契约不变）----
+                ok = BitBlt(cachedMemDc, 0, 0, w, h, screenDc, x, y, SRCCOPY);
                 if (ok)
                 {
                     var bmi = new BITMAPINFO
@@ -114,7 +167,7 @@ namespace TransparentPet.Platform
                             biCompression = BI_RGB,
                         }
                     };
-                    ok = GetDIBits(memDc, bmp, 0, (uint)h, pixels, ref bmi, DIB_RGB_COLORS) != 0;
+                    ok = GetDIBits(cachedMemDc, cachedBmp, 0, (uint)h, pixels, ref bmi, DIB_RGB_COLORS) != 0;
                     if (!ok)
                         failStep = "GetDIBits";
                 }
@@ -122,12 +175,11 @@ namespace TransparentPet.Platform
                 {
                     failStep = "BitBlt";
                 }
-                SelectObject(memDc, old);
+                // BitBlt/GetDIBits 失败（多为暂时性驱动繁忙）不复位缓存：位图与 DC
+                // 本身有效，下轮直接复用重试
             }
             finally
             {
-                if (bmp != IntPtr.Zero) DeleteObject(bmp);
-                if (memDc != IntPtr.Zero) DeleteDC(memDc);
                 ReleaseDC(IntPtr.Zero, screenDc);
             }
             return ok;

@@ -32,6 +32,9 @@ namespace TransparentPet.Core
         /// 退出流程开头调一次即可——之后卡在任何一句（摘托盘图标的
         /// Shell_NotifyIcon、Application.Quit 的卸载流程），进程都必然在 delayMs
         /// 后消失。幂等：只点一次。
+        /// 参与引信协议的调用方：HardExit.Now（ESC 路径，先点灯再 Quit）与
+        /// PetWindowSetup.OnApplicationQuit（Application.Quit 直达路径的兜底
+        /// 点灯）——两处先后调用时后者是 no-op，故各自可以无脑调用。
         /// </summary>
         public static void KillSoon(int delayMs = 300)
         {
