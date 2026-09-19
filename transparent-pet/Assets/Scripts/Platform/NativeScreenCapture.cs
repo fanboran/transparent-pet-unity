@@ -77,6 +77,41 @@ namespace TransparentPet.Platform
         static IntPtr cachedDefaultBmp; // 建 DC 时的默认 1x1 单色位图；换位图前选回以解除选中
         static int cachedW, cachedH;    // cachedBmp 的尺寸（命中判定用）
 
+#if UNITY_EDITOR
+        // ── 编辑器域重载兜底 ──
+        // static 缓存随域重载清零，而 GDI 句柄属于进程：不释放则每次脚本重编译
+        // 泄漏一对内存 DC + 兼容位图，直到编辑器退出（Player 构建无域重载，不受影响）。
+        // 静态构造器注册（首次用到本类时）：抓屏只在 Play 模式发生，此后任何一次
+        // 重编译前注册必然已就位。触发场景是编辑态改脚本（抓屏线程不存在）；
+        // "边播放边重编译继续播放"的非默认设置下理论上有与抓屏线程竞态的微小窗口，
+        // 代价是当轮抓取失败（BitBlt 返回 false 走既有失败路径），可接受。
+        static NativeScreenCapture()
+        {
+            UnityEditor.AssemblyReloadEvents.beforeAssemblyReload += ReleaseCacheForDomainReload;
+        }
+
+        /// <summary>域重载前释放 GDI 缓存（beforeAssemblyReload 时 statics 尚存活）。</summary>
+        static void ReleaseCacheForDomainReload()
+        {
+            // 先摘字段再释放：之后任何 TryCaptureRegion 调用按缓存未建处理（自动重建）
+            var memDc = cachedMemDc;
+            var bmp = cachedBmp;
+            var defaultBmp = cachedDefaultBmp;
+            cachedMemDc = cachedBmp = cachedDefaultBmp = IntPtr.Zero;
+            cachedW = cachedH = 0;
+            if (memDc == IntPtr.Zero)
+                return; // 从未建过缓存（类被触碰但未抓屏）
+
+            // 选中态位图 DeleteObject 直接失败：先选回默认位图解除选中（同换尺寸路径）
+            if (bmp != IntPtr.Zero && defaultBmp != IntPtr.Zero)
+                SelectObject(memDc, defaultBmp);
+            if (bmp != IntPtr.Zero)
+                DeleteObject(bmp);
+            DeleteDC(memDc);
+            Debug.Log("[NativeScreenCapture] 域重载前释放 GDI 缓存（内存 DC + 兼容位图）");
+        }
+#endif
+
         /// <summary>
         /// 抓屏幕矩形（x,y = 左上原点物理像素；w,h = 尺寸）到 pixels
         /// （BGRA、底行在前；长度 ≥ w*h*4）。failStep 返回失败阶段（诊断用）。
