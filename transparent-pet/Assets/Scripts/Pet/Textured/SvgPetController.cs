@@ -158,8 +158,12 @@ namespace TransparentPet.Pet.Textured
             transform.position = ScreenToWorld(logicScreenPos);
 
             SavePositionIfNeeded();
+
+            // 常驻进程逐帧诊断只留开发期，发布构建不参与编译（spike 排查"看不见史莱姆"的遗留）
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (Time.frameCount % 60 == 0)
                 LogDiagnostics();
+#endif
         }
 
         // ── EventBus 处理器（配置/事件发布 → 此处应用）──
@@ -246,6 +250,8 @@ namespace TransparentPet.Pet.Textured
             nextSaveTime = Time.time + 1f;
         }
 
+        // 常驻进程逐帧诊断只留开发期，发布构建不参与编译（省掉每秒拼串 + 写 Player.log 的开销）
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
         /// <summary>spike 排查用：把渲染链路关键状态写进 Player.log，定位"看不见史莱姆"用。</summary>
         void LogDiagnostics()
         {
@@ -265,6 +271,7 @@ namespace TransparentPet.Pet.Textured
                 Debug.Log("[PetDiag] 诊断本身出错: " + e.Message);
             }
         }
+#endif
 
         void HandleInput()
         {

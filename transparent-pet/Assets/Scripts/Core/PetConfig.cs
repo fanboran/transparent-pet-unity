@@ -58,7 +58,8 @@ namespace TransparentPet.Core
         public bool captureInvisible = false;
 
         /// <summary>液态玻璃各只史莱姆的屏幕位置（左上原点，成对使用）。
-        /// 空数组 = 从未保存过（回退单只居中）；上限与 shader 槽位数一致（3）。</summary>
+        /// 空数组 = 从未保存过（回退单只居中）；上限与 LiquidGlassController.MaxSlimes /
+        /// LiquidGlass.shader 的 MAX_ITEMS 对齐（16）。</summary>
         public float[] glassSlimeX = System.Array.Empty<float>();
         public float[] glassSlimeY = System.Array.Empty<float>();
     }
@@ -99,7 +100,8 @@ namespace TransparentPet.Core
             }
         }
 
-        /// <summary>保存配置为缩进 JSON；目标目录不存在时自动创建。写入异常向上抛给调用方。</summary>
+        /// <summary>保存配置为缩进 JSON；目标目录不存在时自动创建。写入异常向上抛给调用方。
+        /// 走原子写入（临时文件 + 替换）：崩溃安全，正式文件绝无半截损坏。</summary>
         public static void Save(PetConfig config, string filePath = null)
         {
             var path = filePath ?? DefaultFilePath;
@@ -108,7 +110,7 @@ namespace TransparentPet.Core
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
                 Directory.CreateDirectory(directory);
 
-            File.WriteAllText(path, JsonUtility.ToJson(config, true));
+            AtomicWrite.WriteAllText(path, JsonUtility.ToJson(config, true));
         }
     }
 }

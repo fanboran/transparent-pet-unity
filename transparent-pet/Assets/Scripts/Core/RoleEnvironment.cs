@@ -13,6 +13,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using UnityEngine;
 using Debug = UnityEngine.Debug; // System.Diagnostics.Debug 同名，显式别名消歧（同 CrashGuard）
 
@@ -165,11 +166,31 @@ namespace TransparentPet.Core
 
         static string CmdPath => Path.Combine(Application.persistentDataPath, "species_commands.json");
 
-        /// <summary>玻璃角色：向物种角色发送一条命令。</summary>
+        /// <summary>
+        /// 玻璃角色：向物种角色发送一条命令。
+        /// 追加写与物种进程的读后即清可能撞车（IOException）；之前撞了就静默吞，
+        /// 用户点的托盘命令无声消失。现做小重试（共 3 次尝试，间隔 2ms）：命令文件
+        /// 碰撞窗口是微秒级，一次重试即覆盖绝大多数撞车；2ms 微 sleep 在主线程完全
+        /// 可接受——本方法由托盘菜单点击等低频人操作触发，远非每帧路径，换来的是
+        /// 命令不再丢失。最终仍失败则告警留痕（带 cmd 内容），不再无声。
+        /// </summary>
         public static void SendSpeciesCommand(string cmd)
         {
-            try { File.AppendAllText(CmdPath, cmd + Environment.NewLine); }
-            catch (IOException) { }
+            for (var attempt = 1; attempt <= 3; attempt++)
+            {
+                try
+                {
+                    File.AppendAllText(CmdPath, cmd + Environment.NewLine);
+                    return;
+                }
+                catch (IOException)
+                {
+                    if (attempt == 3)
+                        Debug.LogWarning($"[Role] 物种命令发送失败（已重试 3 次，命令丢弃）：{cmd}");
+                    else
+                        Thread.Sleep(2);
+                }
+            }
         }
 
         /// <summary>物种角色：取走全部待执行命令（读后即清）。</summary>

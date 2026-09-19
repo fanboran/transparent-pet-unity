@@ -11,8 +11,9 @@
 //        └→ LiquidGlass(主合成: 桌面纹理 + hRT) → 全屏 quad
 //   抓屏失败/未开隐形时回退 LiquidGlassBg 程序化素材。
 //
-// 多只：shader 端保留 3 个物品槽位 + smin 融合（相邻史莱姆会像液滴一样
-// 合并），本控制器在 CPU 侧管理至多 3 只的位置/拖拽/持久化。
+// 多只：shader 端保留 16 个物品槽位（LiquidGlass.shader 的 MAX_ITEMS=16，与
+// 本类 MaxSlimes 对齐）+ smin 融合（相邻史莱姆会像液滴一样合并），本控制器
+// 在 CPU 侧管理至多 16 只的位置/拖拽/持久化。
 //
 // 命中与穿透：没有软体粒子，命中判定在 CPU 复算同一份史莱姆 SDF
 //（LiquidGlassSlimeSdf，与 GPU 端同源），命中时向 PointerHover 自报悬停，
@@ -145,6 +146,14 @@ namespace TransparentPet.Pet.Glass
         bool captureInvisibleActive; // affinity 当前生效中
         bool lastDesktopCaptureOk;   // 最近一次桌面抓屏是否成功（失败回退程序化素材）
 
+        // 物品槽位推送缓冲（只读复用）：RenderPipeline 每帧 new 4 个数组会产 ~400B
+        // 垃圾，常驻进程累积成 GC 尖峰——与 DensitySurface 的缓冲复用同策略。
+        // SetVectorArray/SetFloatArray 只取数组引用，长度恒为 MaxSlimes，shader 端契约不变
+        readonly Vector4[] itemPositions = new Vector4[MaxSlimes];
+        readonly float[] itemWidths = new float[MaxSlimes];
+        readonly float[] itemScales = new float[MaxSlimes];
+        readonly float[] itemEnabled = new float[MaxSlimes];
+
         readonly List<Slime> slimes = new();
         float nextSaveTime;
 
@@ -240,6 +249,11 @@ namespace TransparentPet.Pet.Glass
                 Destroy(desktopTex);
             if (quadMesh != null)
                 Destroy(quadMesh);
+            // bgMat/blurMat 不挂任何 renderer，无人代为清理；不销毁则每次场景重载泄漏两个材质
+            if (bgMat != null)
+                Destroy(bgMat);
+            if (blurMat != null)
+                Destroy(blurMat);
         }
 
         // ── 多只管理（公共 API；多只由配置数组装载恢复）──
@@ -421,6 +435,9 @@ namespace TransparentPet.Pet.Glass
                 }
             }
 
+            // 周期诊断日志（spike 排查遗留）：常驻进程每 120 帧写一条 Player.log 不妥，
+            // 仅编辑器/开发构建保留诊断能力，发布构建整段编译裁掉、零开销
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (Time.frameCount % 120 == 0)
             {
                 NativeScreenCapture.TryGetWindowRect(hwnd, out var rx, out var ry, out var rw, out var rh);
@@ -428,6 +445,7 @@ namespace TransparentPet.Pet.Glass
                           $"onSlime={(hit != null)} pix={mainCamera.pixelWidth}x{mainCamera.pixelHeight} " +
                           $"winRect=({rx},{ry},{rw}x{rh})");
             }
+#endif
 
             // 悬停自报：窗口层据此决定整窗穿透（与贴图/PBF 版本同契约）
             if (hit != null)
@@ -527,23 +545,19 @@ namespace TransparentPet.Pet.Glass
             mainMat.SetInt("_Step", Step);
 
             // 物品槽位打包：shader 端 SDF 坐标系为 y 向下（top-origin），与逻辑坐标同系；
-            // 空槽位 enabled=0，相邻只经 smin 融合
-            var positions = new Vector4[MaxSlimes];
-            var widths = new float[MaxSlimes];
-            var scales = new float[MaxSlimes];
-            var enabled = new float[MaxSlimes];
+            // 空槽位 enabled=0，相邻只经 smin 融合。填充进复用缓冲（见字段区注释），零分配
             for (var i = 0; i < MaxSlimes; i++)
             {
                 var live = i < slimes.Count;
-                positions[i] = live ? new Vector4(slimes[i].pos.x, slimes[i].pos.y, 0, 0) : Vector4.zero;
-                widths[i] = live ? SlimeWidthPx : 0f;
-                scales[i] = live ? Mathf.Clamp(userScale, MinUserScale, MaxUserScale) : 0f;
-                enabled[i] = live ? 1f : 0f;
+                itemPositions[i] = live ? new Vector4(slimes[i].pos.x, slimes[i].pos.y, 0, 0) : Vector4.zero;
+                itemWidths[i] = live ? SlimeWidthPx : 0f;
+                itemScales[i] = live ? Mathf.Clamp(userScale, MinUserScale, MaxUserScale) : 0f;
+                itemEnabled[i] = live ? 1f : 0f;
             }
-            mainMat.SetVectorArray("_ItemPositions", positions);
-            mainMat.SetFloatArray("_ItemWidths", widths);
-            mainMat.SetFloatArray("_ItemScales", scales);
-            mainMat.SetFloatArray("_ItemEnabled", enabled);
+            mainMat.SetVectorArray("_ItemPositions", itemPositions);
+            mainMat.SetFloatArray("_ItemWidths", itemWidths);
+            mainMat.SetFloatArray("_ItemScales", itemScales);
+            mainMat.SetFloatArray("_ItemEnabled", itemEnabled);
         }
 
         void EnsureTargets(int w, int h)

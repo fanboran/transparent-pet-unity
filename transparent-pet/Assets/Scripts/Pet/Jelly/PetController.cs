@@ -146,7 +146,12 @@ namespace TransparentPet.Pet.Jelly
         void OnScaleChanged(float scale)
         {
             userScale = Mathf.Clamp(scale, MinUserScale, MaxUserScale);
-            sim.SetUserScale(userScale); // 核半径与形状锚同步缩放，密度不变
+            // 订阅在 OnEnable、sim 在 Start 才创建：召唤同帧到达的 config 重载事件
+            //（SpeciesPets.Spawn → ApplyConfigReload → PetScaleChanged）会早于 Start，
+            // 此时 sim 还是 null——只更新 userScale 并跳过缩放同步
+            //（Start 本就从 config.petScale 构造模拟，行为自愈，不会丢缩放）。
+            if (sim != null)
+                sim.SetUserScale(userScale); // 核半径与形状锚同步缩放，密度不变
         }
 
         void OnCharacterChanged(string id) =>

@@ -208,7 +208,7 @@ namespace TransparentPet.Pet
                 pets.RemoveAt(i);
                 if (last.Pet != null)
                     Destroy(last.Pet.gameObject);
-                Save(force: true);
+                Save();
                 return;
             }
         }
@@ -287,10 +287,13 @@ namespace TransparentPet.Pet
             if (Time.time < nextSaveTime)
                 return;
             nextSaveTime = Time.time + 1f;
-            Save(force: false);
+            Save();
         }
 
-        void Save(bool force)
+        /// <summary>全量落盘当前宠物列表（节流由调用方控制：SaveIfNeeded 每秒一次，
+        /// 收回等即时路径直接调本方法）。走原子写入：崩溃安全，summoned_pets.json
+        /// 绝无半截损坏。写失败吞 IOException——下个节流周期或下次即时路径会再写。</summary>
+        void Save()
         {
             var recs = new List<PetRec>();
             foreach (var live in pets)
@@ -306,9 +309,8 @@ namespace TransparentPet.Pet
                 recs.Add(new PetRec { kind = live.Kind, x = pos.x, y = pos.y });
             }
             var list = new PetRecList { pets = recs };
-            try { File.WriteAllText(StorePath, Serialize(list)); }
+            try { AtomicWrite.WriteAllText(StorePath, Serialize(list)); }
             catch (IOException) { }
-            _ = force; // 节流由调用方控制（收回等即时路径直接调本方法）
         }
 
         /// <summary>读控制器当前位置（物理未就绪返回 false，沿用上次保存值）。</summary>
@@ -351,13 +353,16 @@ namespace TransparentPet.Pet
         }
     }
 
-    /// <summary>小工具：读文件，不存在或损坏返回空串（Load 容错用）。</summary>
+    /// <summary>小工具：读文件，不存在/无权限/损坏一律返回空串（Load 容错用）。
+    /// 对齐项目"IO 一律兜住不抛"的约定：只读目录/权限拒绝（UnauthorizedAccessException）
+    /// 与"无文件"（IOException）同义处理，调用方按空串走默认路径。</summary>
     internal static class FileExtensions
     {
         public static string ReadAllTextSafe(string path)
         {
             try { return File.Exists(path) ? File.ReadAllText(path) : ""; }
             catch (IOException) { return ""; }
+            catch (UnauthorizedAccessException) { return ""; }
         }
     }
 }
