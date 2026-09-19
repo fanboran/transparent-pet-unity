@@ -176,7 +176,13 @@ namespace TransparentPet.Core
             try
             {
                 var path = Path.Combine(Application.persistentDataPath, "crashguard.log");
-                File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + message + Environment.NewLine);
+                // 写盘加串行锁：Log 会被多个线程调（看门狗线程/主线程/异常兜底），
+                // File.AppendAllText 并发互撞时后写者整条丢失。取舍：日志频率极低
+                // （安装/超时/强杀各一条），锁开销可忽略，胜于丢崩溃证据。
+                lock (logLock)
+                {
+                    File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + message + Environment.NewLine);
+                }
             }
             catch
             {
@@ -184,5 +190,7 @@ namespace TransparentPet.Core
             }
             Debug.LogWarning("[CrashGuard] " + message);
         }
+
+        static readonly object logLock = new object();
     }
 }
