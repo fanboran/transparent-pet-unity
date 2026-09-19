@@ -80,20 +80,25 @@ namespace TransparentPet.Platform
                 }
                 try
                 {
-                    if (enable)
-                    {
-                        // MainModule 在部分受限宿主下会抛异常（InvalidOperationException/Win32Exception），
-                        // 由外层 catch 兜住，只告警不阻断
-                        var exePath = Process.GetCurrentProcess().MainModule.FileName;
-                        var value = "\"" + exePath + "\"";
-                        var bytes = new byte[Encoding.Unicode.GetByteCount(value) + 2]; // +2 = 宽字符终止符
-                        Encoding.Unicode.GetBytes(value, 0, value.Length, bytes, 0);
-                        RegSetValueExW(key, ValueName, 0, REG_SZ, bytes, (uint)bytes.Length);
-                    }
-                    else
-                    {
-                        RegDeleteValueW(key, ValueName); // 键不存在返回 2，幂等忽略
-                    }
+                if (enable)
+                {
+                    // MainModule 在部分受限宿主下会抛异常（InvalidOperationException/Win32Exception），
+                    // 由外层 catch 兜住，只告警不阻断
+                    var exePath = Process.GetCurrentProcess().MainModule.FileName;
+                    var value = "\"" + exePath + "\"";
+                    var bytes = new byte[Encoding.Unicode.GetByteCount(value) + 2]; // +2 = 宽字符终止符
+                    Encoding.Unicode.GetBytes(value, 0, value.Length, bytes, 0);
+                    var lstatus = RegSetValueExW(key, ValueName, 0, REG_SZ, bytes, (uint)bytes.Length);
+                    if (lstatus != 0)
+                        Debug.LogWarning($"[NativeStartup] 写开机自启键失败（LSTATUS={lstatus}），自启未生效");
+                }
+                else
+                {
+                    var lstatus = RegDeleteValueW(key, ValueName);
+                    // 2 = ERROR_FILE_NOT_FOUND：键本就不存在，删除幂等成功，不算失败
+                    if (lstatus != 0 && lstatus != 2)
+                        Debug.LogWarning($"[NativeStartup] 删开机自启键失败（LSTATUS={lstatus}）");
+                }
                 }
                 finally
                 {
