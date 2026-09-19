@@ -93,5 +93,21 @@ namespace TransparentPet.Core
         {
             listeners.Clear();
         }
+
+        /// <summary>
+        /// 诊断快照：仍在订阅表的条目（"topic(载荷类型) x处理器数"，排序去随机性）。
+        /// 退订纪律（OnEnable/OnDisable 成对）靠人肉维持，任何一处漏退订 = 对象被
+        /// 静态表钉死成泄漏且无提示——本方法给检查方（EventBusLeakCheck）一个
+        /// 可观测出口，返回空列表 = 干净。
+        /// </summary>
+        public static List<string> DescribeActiveSubscriptions()
+        {
+            var lines = new List<string>();
+            foreach (var topic in listeners)
+                foreach (var byType in topic.Value)
+                    lines.Add($"{topic.Key}({byType.Key.Name}) x{byType.Value.Count}");
+            lines.Sort();
+            return lines;
+        }
     }
 }
