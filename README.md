@@ -29,7 +29,7 @@
 
 ## 快速开始
 
-**直接体验（Windows）**：从 [GitHub Releases](https://github.com/fanboran/transparent-pet-unity/releases) 下载 `TransparentPet_v0.3.0_win64.zip` 解压后双击 `TransparentPet.exe`（透明桌宠·双窗口形态：液态玻璃主窗口 + 物种副窗口；托盘右键召唤/收回四种史莱姆，左键打开设置窗口）。
+**直接体验（Windows）**：从 [GitHub Releases](https://github.com/fanboran/transparent-pet-unity/releases) 下载 `TransparentPet_v0.4.0_win64.zip` 解压后双击 `TransparentPet.exe`（透明桌宠·双窗口形态：液态玻璃主窗口 + 物种副窗口；托盘右键召唤/收回四种史莱姆，左键打开设置窗口）。
 
 **从源码构建**：
 
