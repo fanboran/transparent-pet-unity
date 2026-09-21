@@ -227,6 +227,7 @@ namespace TransparentPet.Pet.Glass
         {
             LiquidGlassPresence.Active = this; // 设置面板经 Core 注册表读数量/调开关（Pet↔UI 不直接依赖）
             EventBus.Subscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
+            EventBus.Subscribe<bool>(EventTopics.CaptureInvisibleChanged, OnCaptureInvisibleChanged);
         }
 
         void OnDisable()
@@ -234,6 +235,7 @@ namespace TransparentPet.Pet.Glass
             if (LiquidGlassPresence.Active == this)
                 LiquidGlassPresence.Active = null;
             EventBus.Unsubscribe<float>(EventTopics.PetScaleChanged, OnScaleChanged);
+            EventBus.Unsubscribe<bool>(EventTopics.CaptureInvisibleChanged, OnCaptureInvisibleChanged);
         }
 
         void Start()
@@ -305,6 +307,7 @@ namespace TransparentPet.Pet.Glass
             var jitter = new Vector2(Random.Range(-220f, 220f), Random.Range(-140f, 160f));
             var pos = ClampToWorkArea(anchor + jitter);
             slimes.Add(new Slime { pos = pos, lastSaved = pos });
+            PersistSlimes(); // 只数变了立即落盘（节流窗口内退出会丢，且托盘菜单读的正是这份数量）
         }
 
         /// <summary>移除最后一只（至少保留一只）。</summary>
@@ -313,7 +316,7 @@ namespace TransparentPet.Pet.Glass
             if (slimes.Count <= 1)
                 return;
             slimes.RemoveAt(slimes.Count - 1);
-            UpdateSave(); // 立即持久化（移除不等节流）
+            PersistSlimes(); // 只数变了立即落盘（托盘"收回"的可用性读这份数量）
         }
 
         /// <summary>
@@ -358,6 +361,20 @@ namespace TransparentPet.Pet.Glass
         }
 
         void OnScaleChanged(float scale) => userScale = Mathf.Clamp(scale, MinUserScale, MaxUserScale);
+
+        /// <summary>
+        /// 抓屏隐形快捷开关（托盘菜单发起的 Core 事件）：应用 + 落盘。
+        /// 发起方在 Platform（看不到 Pet 层），落地点必须在这里——config.json 只由
+        /// 本进程（玻璃）写，约定不变；设置面板走同一入口（SetCaptureInvisible）。
+        /// </summary>
+        void OnCaptureInvisibleChanged(bool on)
+        {
+            SetCaptureInvisible(on);
+            var config = PetConfigStore.Load();
+            config.captureInvisible = on;
+            PetConfigStore.Save(config);
+            EventBus.Publish(EventTopics.ConfigSaved, config); // 其他模块据此同步内存态
+        }
 
         // ── 位置装载 / 持久化 ──
 
@@ -406,6 +423,17 @@ namespace TransparentPet.Pet.Glass
             if (!moved)
                 return;
 
+            PersistSlimes();
+            nextSaveTime = Time.time + 1f;
+        }
+
+        /// <summary>
+        /// 立刻把只数与位置写盘（不走 UpdateSave 的节流）。只数变化（增/删）必须马上落盘：
+        /// 一是新增一只后立刻退出不该丢；二是托盘菜单"收回"的可用性读的就是这份数量
+        /// （见 PetWindowSetup.RefreshTrayMenu），节流窗口内读到旧值会让菜单状态说谎。
+        /// </summary>
+        void PersistSlimes()
+        {
             var config = PetConfigStore.Load();
             config.glassSlimeX = new float[slimes.Count];
             config.glassSlimeY = new float[slimes.Count];
@@ -416,7 +444,6 @@ namespace TransparentPet.Pet.Glass
                 slimes[i].lastSaved = slimes[i].pos;
             }
             PetConfigStore.Save(config);
-            nextSaveTime = Time.time + 1f;
         }
 
         /// <summary>

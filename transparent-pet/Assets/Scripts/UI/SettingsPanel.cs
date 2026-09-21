@@ -1,7 +1,10 @@
 // ============================================================================
 // SettingsPanel.cs — 设置面板：IMGUI 自绘"经典白色对话框"
 // ============================================================================
-// 设计文档：docs/设置窗口与托盘菜单设计.md（2026-09-19 用户拍板）
+// 设计文档：docs/设计/设置窗口与托盘菜单设计.md（2026-09-19 用户拍板）
+// - 形态：左侧**图标+文字页列**（导航区）+ 右侧内容区，页内容超出可滚动——
+//   对齐 TrafficMonitor 的选项对话框（它是宿主对话框 + 自绘 TabCtrl + 每页一个
+//   子对话框 + 页内滚动条；这里用 IMGUI 等价实现，见 DrawPages/DrawContent）
 // - 显隐：SettingsPanelToggleRequested 事件（托盘左键单击 / 菜单"设置…" / ESC
 //   让位共用）；可见状态维护在 Core/OverlayState（窗口层据此把 ESC 从"硬退出"
 //   降级为"关面板"，Platform 不能依赖 UI，状态只能放 Core 中转）
@@ -9,6 +12,9 @@
 //   穿透桌面（面板不在宠物命中判定里，不自报就点不动）
 // - 数据流：打开时 Load 工作副本 → 控件只改副本 → Commit（发主题本进程即时
 //   生效 + 0.4s 防抖落盘 + ConfigSaved 广播 + 通知物种进程热更新）
+//   **与 TrafficMonitor 的有意差异**：它是"编辑副本 → 确定/应用/取消"三态，
+//   桌宠这边改一下就即时生效（拖滑条能实时看到缩放），故不做 Apply/Cancel——
+//   低频设置项进托盘菜单的快捷开关，高频项留在面板（见 PetWindowSetup.BuildTrayMenu）
 // - 写方约定：config.json 只由玻璃进程（本面板所在进程）写；物种侧收到
 //   "config" 命令后重读并重发布事件（见 SpeciesPets）
 // - 为什么 IMGUI 而不是 uGUI/真 Win32 窗口：与 HUD 同构、PointerHover 自报
@@ -34,10 +40,12 @@ namespace TransparentPet.UI
         static readonly string[] TabNames = { "桌宠", "物理", "窗口", "关于" };
 
         // ── 布局常量（像素）──
-        const float PanelWidth = 380f;
+        const float PanelWidth = 480f;
         const float PanelHeight = 500f;
         const float TitleBarHeight = 30f;
-        const float TabBarHeight = 32f;
+        const float PageColumnWidth = 112f; // 左列页导航宽度
+        const float PageRowHeight = 34f;
+        const float PageIconSize = 16f;
 
         // ── 滑条范围（与控制器约定一致）──
         const float MinScale = 0.25f;
@@ -73,20 +81,43 @@ namespace TransparentPet.UI
         // ── 皮肤与字体（GUIStyle 依赖 GUI.skin，只能在 OnGUI 期间懒创建）──
         bool skinReady;
         Font osFont;
-        Texture2D whiteTex, borderTex, darkTex, tabActiveTex, closeHoverTex, tabHoverTex;
+        Texture2D whiteTex, borderTex, darkTex, tabActiveTex, closeHoverTex, tabHoverTex, pageColumnTex;
+        Texture2D[] pageIcons;   // 左列页图标（16×16 白色实心图形，绘制时 GUI.color 上色）
         GUIStyle borderStyle, windowStyle, titleBarStyle, closeButtonStyle,
-            tabStyle, tabActiveStyle, labelStyle, valueStyle, buttonStyle, smallStyle, sectionStyle;
+            tabStyle, tabActiveStyle, labelStyle, valueStyle, buttonStyle, smallStyle, sectionStyle,
+            pageColumnStyle, pageLabelStyle, pageLabelActiveStyle;
+        Vector2 pageScroll;      // 内容区滚动位置（换页归零）
 
-        void OnEnable() =>
+        void OnEnable()
+        {
             EventBus.Subscribe<bool>(EventTopics.SettingsPanelToggleRequested, OnToggleRequested);
+            // 托盘菜单的快捷开关改的是同一份配置，面板开着时要同步工作副本——
+            // 面板的落盘是全量覆盖式的，不同步就会把托盘刚改的值写回去
+            EventBus.Subscribe<float>(EventTopics.PetScaleChanged, OnExternalScaleChanged);
+            EventBus.Subscribe<bool>(EventTopics.CaptureInvisibleChanged, OnExternalCaptureInvisible);
+        }
 
         void OnDisable()
         {
             EventBus.Unsubscribe<bool>(EventTopics.SettingsPanelToggleRequested, OnToggleRequested);
+            EventBus.Unsubscribe<float>(EventTopics.PetScaleChanged, OnExternalScaleChanged);
+            EventBus.Unsubscribe<bool>(EventTopics.CaptureInvisibleChanged, OnExternalCaptureInvisible);
             SetVisible(false); // 场景卸载时收走模态标记，别把窗口层的 ESC 永久让位
         }
 
         void OnToggleRequested(bool show) => SetVisible(show);
+
+        void OnExternalScaleChanged(float scale)
+        {
+            if (config != null)
+                config.petScale = scale;
+        }
+
+        void OnExternalCaptureInvisible(bool on)
+        {
+            if (config != null)
+                config.captureInvisible = on;
+        }
 
         void SetVisible(bool show)
         {
@@ -179,7 +210,7 @@ namespace TransparentPet.UI
             EnsureSkin();
 
             var titleRect = DrawChrome();
-            DrawTabs();
+            DrawPages();
             DrawContent();
             HandleDrag(titleRect);
         }
@@ -201,26 +232,58 @@ namespace TransparentPet.UI
             return titleRect;
         }
 
-        void DrawTabs()
+        /// <summary>
+        /// 左列页导航：每行 = 背景按钮（无文字）+ 图标 + 文字，选中行深底白字。
+        /// 对应 TrafficMonitor 选项对话框的 CTabCtrlEx（带图标的页签）；这里做成竖排
+        /// 导航列而不是横排页签，是因为页数会随功能增长、竖排不压缩页签宽度。
+        /// </summary>
+        void DrawPages()
         {
-            var tabW = PanelWidth / TabNames.Length;
-            var y = panelTopLeft.y + TitleBarHeight + 2f;
+            var x = panelTopLeft.x;
+            var y = panelTopLeft.y + TitleBarHeight;
+            var h = PanelHeight - TitleBarHeight;
+            GUI.Box(new Rect(x, y, PageColumnWidth, h), GUIContent.none, pageColumnStyle);
+
             for (var i = 0; i < TabNames.Length; i++)
             {
-                var r = new Rect(panelTopLeft.x + i * tabW, y, tabW - 2f, TabBarHeight - 6f);
-                if (GUI.Button(r, TabNames[i], i == (int)tab ? tabActiveStyle : tabStyle))
+                var selected = i == (int)tab;
+                var row = new Rect(x, y + 6f + i * PageRowHeight, PageColumnWidth - 1f, PageRowHeight - 4f);
+                if (GUI.Button(row, GUIContent.none, selected ? tabActiveStyle : tabStyle))
                 {
                     tab = (Tab)i;
                     characterListOpen = false;
+                    pageScroll = Vector2.zero; // 换页回到顶部
                 }
+
+                // 图标与文字用同一套前景色：选中=白（压在深底上）、未选中=深灰
+                var prev = GUI.color;
+                GUI.color = selected ? Color.white : new Color(0.28f, 0.28f, 0.28f);
+                GUI.DrawTexture(new Rect(row.x + 12f, row.y + (row.height - PageIconSize) * 0.5f,
+                    PageIconSize, PageIconSize), pageIcons[i]);
+                GUI.color = prev;
+                GUI.Label(new Rect(row.x + 38f, row.y, row.width - 38f, row.height), TabNames[i],
+                    selected ? pageLabelActiveStyle : pageLabelStyle);
             }
+
+            // 导航列与内容区的分界（1px，与窗体边框同色）
+            GUI.Box(new Rect(x + PageColumnWidth, y, 1f, h), GUIContent.none, borderStyle);
         }
 
+        /// <summary>
+        /// 内容区：只画当前页，整体可滚动（页内容比可视高度高时自动出滚动条——
+        /// 设置项会越加越多，靠"面板刚好装得下"是不可持续的）。
+        /// </summary>
         void DrawContent()
         {
-            var content = new Rect(panelTopLeft.x + 12f, panelTopLeft.y + TitleBarHeight + TabBarHeight,
-                PanelWidth - 24f, PanelHeight - TitleBarHeight - TabBarHeight - 12f);
+            var content = new Rect(
+                panelTopLeft.x + PageColumnWidth + 12f,
+                panelTopLeft.y + TitleBarHeight + 8f,
+                PanelWidth - PageColumnWidth - 24f,
+                PanelHeight - TitleBarHeight - 16f);
             GUILayout.BeginArea(content);
+            // 竖滚动条按需出现（不给 false 常显）：页内容装得下时画面干净，
+            // 装不下才让出 16px——代价是内容宽度会随滚动条出现变一次，可接受
+            pageScroll = GUILayout.BeginScrollView(pageScroll, false, false);
             switch (tab)
             {
                 case Tab.Pets: DrawPetsTab(); break;
@@ -228,6 +291,7 @@ namespace TransparentPet.UI
                 case Tab.Window: DrawWindowTab(); break;
                 case Tab.About: DrawAboutTab(); break;
             }
+            GUILayout.EndScrollView();
             GUILayout.EndArea();
         }
 
@@ -358,8 +422,9 @@ namespace TransparentPet.UI
             if (captureInvisible != config.captureInvisible)
             {
                 config.captureInvisible = captureInvisible;
-                // 立即生效走控制器现成入口（与 F11 同源）；落盘走防抖
-                (LiquidGlassPresence.Active as LiquidGlassController)?.SetCaptureInvisible(captureInvisible);
+                // 与托盘菜单的快捷开关走同一事件：应用 + 落盘都在玻璃控制器里
+                //（config.json 只由玻璃进程写，且开关落在 WDA 亲和性上——那只有 Pet 层能看到）
+                EventBus.Publish(EventTopics.CaptureInvisibleChanged, captureInvisible);
                 ScheduleSave();
             }
             GUILayout.Label("开启后录屏 / 直播 / 截图中桌宠不可见", smallStyle);
@@ -482,6 +547,47 @@ namespace TransparentPet.UI
             return tex;
         }
 
+        /// <summary>页图标形状（与 TabNames 一一对应）。</summary>
+        enum Glyph { Circle, Triangle, Square, Diamond }
+
+        /// <summary>
+        /// 页图标：16×16 **白色**实心图形（绘制时用 GUI.color 上色，一份贴图两种状态）。
+        /// 程序化生成而不是用字体符号——不依赖中文字体的符号覆盖（换台机器缺字形就成方块），
+        /// 也不依赖外部图标资源；与面板其余纯色皮肤同一套来源。
+        /// </summary>
+        static Texture2D MakeGlyph(Glyph glyph, int size = 16)
+        {
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            var pixels = new Color32[size * size];
+            var center = (size - 1) * 0.5f;
+            for (var y = 0; y < size; y++)
+            for (var x = 0; x < size; x++)
+            {
+                var dx = (x - center) / center;
+                var dy = (y - center) / center; // 纹理 y=0 在下，故 dy>0 = 上方
+                var on = glyph switch
+                {
+                    Glyph.Circle => dx * dx + dy * dy <= 1f,
+                    Glyph.Diamond => Mathf.Abs(dx) + Mathf.Abs(dy) <= 1f,
+                    Glyph.Square => IsSquareRing(dx, dy), // 空心方框 = 窗口
+                    // 三角（物理：抛射）：顶点朝上、底边撑满
+                    _ => dy <= 1f && Mathf.Abs(dx) <= (1f - dy) * 0.5f,
+                };
+                pixels[y * size + x] = on ? new Color32(255, 255, 255, 255) : new Color32(255, 255, 255, 0);
+            }
+            tex.SetPixels32(pixels);
+            tex.Apply();
+            tex.filterMode = FilterMode.Bilinear;
+            return tex;
+        }
+
+        /// <summary>空心方框（窗口图标）：外沿以内、内沿以外。</summary>
+        static bool IsSquareRing(float dx, float dy)
+        {
+            var m = Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dy));
+            return m <= 0.9f && m >= 0.5f;
+        }
+
         /// <summary>经典白对话框皮肤：白底窗体 + 深灰标题栏/选中页签 + 黑字（中文字体必需，
         /// Unity 内置字体无中文字形，透明窗口上会整段空白——与 HUD 同款动态系统字体）。</summary>
         void EnsureSkin()
@@ -495,9 +601,20 @@ namespace TransparentPet.UI
             whiteTex = MakeTex(new Color(0.941f, 0.941f, 0.941f));   // #F0F0F0 dialog 灰白
             borderTex = MakeTex(new Color(0.42f, 0.42f, 0.42f));     // 1px 边框
             darkTex = MakeTex(new Color(0.227f, 0.227f, 0.227f));    // 标题栏 #3A3A3A
-            tabActiveTex = MakeTex(new Color(0.31f, 0.31f, 0.31f));  // 选中页签
+            tabActiveTex = MakeTex(new Color(0.31f, 0.31f, 0.31f));  // 选中页/选中页签
             closeHoverTex = MakeTex(new Color(0.5f, 0.18f, 0.18f));  // 关闭按钮悬停（暗红）
             tabHoverTex = MakeTex(new Color(0.88f, 0.88f, 0.88f));   // 页签悬停
+            pageColumnTex = MakeTex(new Color(0.90f, 0.90f, 0.90f)); // 左列导航区（比窗体略深）
+
+            // 四个页的图标：形状与 TabNames 一一对应（圆点=桌宠 / 三角=物理抛射 /
+            // 方框=窗口 / 菱形=关于）
+            pageIcons = new[]
+            {
+                MakeGlyph(Glyph.Circle),   // 桌宠
+                MakeGlyph(Glyph.Triangle), // 物理
+                MakeGlyph(Glyph.Square),   // 窗口
+                MakeGlyph(Glyph.Diamond),  // 关于
+            };
 
             borderStyle = new GUIStyle { normal = new GUIStyleState { background = borderTex } };
             windowStyle = new GUIStyle { normal = new GUIStyleState { background = whiteTex } };
@@ -533,6 +650,19 @@ namespace TransparentPet.UI
                 hover = new GUIStyleState { background = tabActiveTex, textColor = Color.white },
             };
 
+            pageColumnStyle = new GUIStyle { normal = new GUIStyleState { background = pageColumnTex } };
+            pageLabelStyle = new GUIStyle
+            {
+                font = osFont,
+                fontSize = 13,
+                alignment = TextAnchor.MiddleLeft,
+                normal = new GUIStyleState { textColor = new Color(0.18f, 0.18f, 0.18f) },
+            };
+            pageLabelActiveStyle = new GUIStyle(pageLabelStyle)
+            {
+                normal = new GUIStyleState { textColor = Color.white },
+            };
+
             labelStyle = new GUIStyle { font = osFont, fontSize = 13, normal = new GUIStyleState { textColor = Color.black } };
             valueStyle = new GUIStyle(labelStyle) { alignment = TextAnchor.MiddleRight };
             smallStyle = new GUIStyle
@@ -558,6 +688,12 @@ namespace TransparentPet.UI
             Destroy(tabActiveTex);
             Destroy(closeHoverTex);
             Destroy(tabHoverTex);
+            Destroy(pageColumnTex);
+            if (pageIcons == null)
+                return;
+            foreach (var icon in pageIcons)
+                Destroy(icon);
+            pageIcons = null;
         }
     }
 }

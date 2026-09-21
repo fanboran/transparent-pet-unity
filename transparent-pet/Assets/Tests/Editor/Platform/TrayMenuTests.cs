@@ -107,5 +107,81 @@ namespace TransparentPet.Tests
             Assert.IsNotNull(item.Children);
             Assert.IsFalse(item.Separator);
         }
+
+        [Test]
+        public void FlattenLeaves_DisabledItem_StillOccupiesLeafId()
+        {
+            // 灰显项只是"点不动"，不是"不存在"：它照样占菜单 id 序号。
+            // 若实现里把灰显项跳过，后面每一项的 id 都会前移——点到的是别的命令。
+            var menu = new[]
+            {
+                new TrayMenuItem("收回", () => { }),
+                new TrayMenuItem("设置", () => { }) { Enabled = false },
+                new TrayMenuItem("退出", () => { }),
+            };
+
+            var leaves = NativeTray.FlattenLeaves(menu);
+
+            Assert.AreEqual(3, leaves.Count, "灰显项仍占序号");
+            Assert.IsFalse(leaves[1].Enabled);
+            Assert.AreEqual("退出", leaves[2].Label);
+        }
+
+        // ── HMENU 标志位 ──
+        // 这些是 Win32 的字面值（winuser.h）：写错不会编译报错，只会表现成
+        // "勾选了但没勾、该灰的还能点"，本项目在 DXGI/IID 上吃过同一类亏，故按字面钉住。
+        const uint MfString = 0x0;
+        const uint MfChecked = 0x8;
+        const uint MfGrayed = 0x1;
+        const uint MfRadioCheck = 0x200;
+
+        [Test]
+        public void FlagsFor_PlainItem_IsPlainString()
+        {
+            Assert.AreEqual(MfString, NativeTray.FlagsFor(new TrayMenuItem("退出", () => { })));
+        }
+
+        [Test]
+        public void FlagsFor_CheckedItem_AddsCheckMark()
+        {
+            var item = new TrayMenuItem("抓屏隐形", () => { }) { Checked = true };
+
+            Assert.AreEqual(MfString | MfChecked, NativeTray.FlagsFor(item));
+        }
+
+        [Test]
+        public void FlagsFor_RadioCheckedItem_AddsRadioDot()
+        {
+            // 单选组：同一时刻只有一项 Checked，各项都标 Radio → 画圆点而不是 ✓
+            var item = new TrayMenuItem("100%", () => { }) { Checked = true, Radio = true };
+
+            Assert.AreEqual(MfString | MfChecked | MfRadioCheck, NativeTray.FlagsFor(item),
+                "Radio 只在同时 Checked 时才叠 MFT_RADIOCHECK");
+        }
+
+        [Test]
+        public void FlagsFor_RadioWithoutCheck_ShowsNothing()
+        {
+            var item = new TrayMenuItem("100%", () => { }) { Radio = true };
+
+            Assert.AreEqual(MfString, NativeTray.FlagsFor(item));
+        }
+
+        [Test]
+        public void FlagsFor_DisabledItem_IsGrayed()
+        {
+            var item = new TrayMenuItem("一只液态玻璃", () => { }) { Enabled = false };
+
+            Assert.AreEqual(MfString | MfGrayed, NativeTray.FlagsFor(item));
+        }
+
+        [Test]
+        public void FlagsFor_DisabledAndChecked_KeepsBoth()
+        {
+            // 灰显的选中项仍要保持勾选态（否则用户看不出"当前是它、但暂时不能改"）
+            var item = new TrayMenuItem("抓屏隐形", () => { }) { Checked = true, Enabled = false };
+
+            Assert.AreEqual(MfString | MfChecked | MfGrayed, NativeTray.FlagsFor(item));
+        }
     }
 }

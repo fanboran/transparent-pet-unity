@@ -68,36 +68,141 @@ namespace TransparentPet.Platform
             // 物种副进程不建托盘（双窗口只有一个图标；召唤菜单在玻璃进程侧）
             if (!RoleEnvironment.IsSpecies)
             {
-                tray = new NativeTray("透明桌宠", BuildTrayMenu(), OpenSettingsPanel);
+                tray = new NativeTray("透明桌宠", BuildTrayMenu(), OpenSettingsPanel, RefreshTrayMenu);
             }
 #endif
             StartCoroutine(HideFromTaskbarWhenReady());
         }
 
         /// <summary>
-        /// 托盘右键菜单（游戏化管理结构）：召唤/收回收纳为子菜单，设置独立入口。
+        /// 托盘右键菜单（游戏化管理结构）：召唤/收回收纳为子菜单，设置独立入口，
+        /// 中间放三个"不用开面板就能改"的快捷开关（TrafficMonitor 的菜单同款思路：
+        /// 高频项直接进菜单，低频项进设置面板）。
         /// 动作全部走 EventBus，由 GlassRole 分岔路由（glass 本进程、物种转发命令文件）；
         /// 仅"退出"直接走实例的 ExitFromTray（要摘本组件持有的托盘图标）。
+        ///
+        /// 结构静态、状态动态：勾选/单选/灰显由 RefreshTrayMenu 在每次弹出前刷新。
         /// </summary>
-        TrayMenuItem[] BuildTrayMenu() => new[]
+        TrayMenuItem[] BuildTrayMenu()
         {
-            new TrayMenuItem("召唤", new List<TrayMenuItem>
+            miRecallGlass = new TrayMenuItem("一只液态玻璃",
+                () => EventBus.Publish(EventTopics.PetRecallRequested, "glass"));
+            miCaptureInvisible = new TrayMenuItem("抓屏隐形（折射真实桌面）", ToggleCaptureInvisible);
+            miAutoStart = new TrayMenuItem("开机自启动", ToggleAutoStart);
+
+            // 缩放档位：单选组（整组 Radio，刷新时只点亮最接近当前值的一档）
+            var scaleItems = new List<TrayMenuItem>();
+            miScalePresets = new TrayMenuItem[TrayScalePresets.Length];
+            for (var i = 0; i < TrayScalePresets.Length; i++)
             {
-                new TrayMenuItem("液态玻璃", () => EventBus.Publish(EventTopics.PetSummonRequested, "glass")),
-                new TrayMenuItem("贴图史莱姆", () => EventBus.Publish(EventTopics.PetSummonRequested, "textured")),
-                new TrayMenuItem("果冻软体", () => EventBus.Publish(EventTopics.PetSummonRequested, "softbody")),
-                new TrayMenuItem("碎裂软体", () => EventBus.Publish(EventTopics.PetSummonRequested, "mesh")),
-            }),
-            new TrayMenuItem("收回", new List<TrayMenuItem>
+                var preset = TrayScalePresets[i]; // 循环内取值 → 闭包各绑各的档位
+                var item = new TrayMenuItem($"{Mathf.RoundToInt(preset * 100f)}%", () => ApplyScale(preset))
+                {
+                    Radio = true,
+                };
+                miScalePresets[i] = item;
+                scaleItems.Add(item);
+            }
+
+            return new[]
             {
-                new TrayMenuItem("最近一只物种", () => EventBus.Publish(EventTopics.PetRecallRequested, "species")),
-                new TrayMenuItem("一只液态玻璃", () => EventBus.Publish(EventTopics.PetRecallRequested, "glass")),
-            }),
-            new TrayMenuItem(),
-            new TrayMenuItem("设置…", OpenSettingsPanel),
-            new TrayMenuItem(),
-            new TrayMenuItem("退出", ExitFromTray),
-        };
+                new TrayMenuItem("召唤", new List<TrayMenuItem>
+                {
+                    new TrayMenuItem("液态玻璃", () => EventBus.Publish(EventTopics.PetSummonRequested, "glass")),
+                    new TrayMenuItem("贴图史莱姆", () => EventBus.Publish(EventTopics.PetSummonRequested, "textured")),
+                    new TrayMenuItem("果冻软体", () => EventBus.Publish(EventTopics.PetSummonRequested, "softbody")),
+                    new TrayMenuItem("碎裂软体", () => EventBus.Publish(EventTopics.PetSummonRequested, "mesh")),
+                }),
+                new TrayMenuItem("收回", new List<TrayMenuItem>
+                {
+                    new TrayMenuItem("最近一只物种", () => EventBus.Publish(EventTopics.PetRecallRequested, "species")),
+                    miRecallGlass,
+                }),
+                new TrayMenuItem(),
+                miCaptureInvisible,
+                miAutoStart,
+                new TrayMenuItem("缩放", scaleItems),
+                new TrayMenuItem(),
+                new TrayMenuItem("设置…", OpenSettingsPanel),
+                new TrayMenuItem(),
+                new TrayMenuItem("退出", ExitFromTray),
+            };
+        }
+
+        /// <summary>
+        /// 缩放快捷档位（托盘单选组）。与设置面板同一份 `petScale`（面板滑条是连续的，
+        /// 这里只给几个常用档）；刷新时取最接近的一档点亮，见 TrayMenuState。
+        /// </summary>
+        static readonly float[] TrayScalePresets = { 0.5f, 0.75f, 1f, 1.5f, 2f };
+
+        // 刷新回调要按当前状态改这些项的字段，故保留引用（菜单结构在 BuildTrayMenu 时定死）
+        TrayMenuItem miCaptureInvisible, miAutoStart, miRecallGlass;
+        TrayMenuItem[] miScalePresets;
+
+        /// <summary>
+        /// 菜单弹出前刷新动态状态（勾选 / 单选档位 / 可用性）——菜单结构静态、状态动态，
+        /// 这是 TrafficMonitor 在 OnInitMenu 里做的那件事（该软件在弹出前逐项
+        /// CheckMenuItem/CheckMenuRadioItem/EnableMenuItem，见其 TrafficMonitorDlg.cpp）。
+        /// 每次弹出读一次配置 + 一次注册表，在弹出路径上可忽略。
+        /// </summary>
+        void RefreshTrayMenu()
+        {
+            var config = PetConfigStore.Load();
+
+            miCaptureInvisible.Checked = config.captureInvisible;
+            miAutoStart.Checked = AutoStartEnabled();
+
+            var nearest = TrayMenuState.NearestPresetIndex(config.petScale, TrayScalePresets);
+            for (var i = 0; i < miScalePresets.Length; i++)
+                miScalePresets[i].Checked = i == nearest;
+
+            // "至少保留一只"是控制器 RemoveSlime 的保证——只剩一只时"收回"点了也没用，
+            // 灰显它（灰显而不是隐藏：位置稳定，用户看得出这项现在不适用）。
+            // 只数在增/删时立即落盘（LiquidGlassController.PersistSlimes），故这里的读数可信。
+            miRecallGlass.Enabled = config.glassSlimeX is { Length: > 1 };
+        }
+
+        /// <summary>自启真值在注册表（编辑器下不读：开发机那份键是编辑器自己写的，会误导）。</summary>
+        static bool AutoStartEnabled()
+        {
+#if UNITY_EDITOR
+            return false;
+#else
+            return NativeStartup.IsEnabled();
+#endif
+        }
+
+        /// <summary>
+        /// 抓屏隐形快捷开关：只发事件，落盘由玻璃控制器做（config.json 只由玻璃进程写，
+        /// 且开关要落到 WDA 亲和性上——那只有 Pet 层能看到，见 PetConfigStore 的写方约定）。
+        /// </summary>
+        static void ToggleCaptureInvisible() =>
+            EventBus.Publish(EventTopics.CaptureInvisibleChanged, !PetConfigStore.Load().captureInvisible);
+
+        /// <summary>开机自启：注册表与配置一起改（同设置面板窗口页的写法）。</summary>
+        static void ToggleAutoStart()
+        {
+            var enabled = !AutoStartEnabled();
+#if !UNITY_EDITOR
+            NativeStartup.SetStartup(enabled); // 编辑器下不写注册表（写上去的是编辑器 exe 路径）
+#endif
+            var config = PetConfigStore.Load();
+            config.autoStart = enabled;
+            PetConfigStore.Save(config);
+        }
+
+        /// <summary>
+        /// 缩放档位：与设置面板同一条链——本进程即时（玻璃）、落盘、广播、
+        /// 通知物种进程重读配置热更新。
+        /// </summary>
+        static void ApplyScale(float scale)
+        {
+            var config = PetConfigStore.Load();
+            config.petScale = scale;
+            PetConfigStore.Save(config);
+            EventBus.Publish(EventTopics.PetScaleChanged, scale);
+            RoleEnvironment.SendSpeciesCommand("config");
+        }
 
         /// <summary>打开设置面板（托盘左键单击与菜单"设置…"共用入口）。</summary>
         static void OpenSettingsPanel() =>

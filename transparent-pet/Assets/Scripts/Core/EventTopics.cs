@@ -26,6 +26,14 @@ namespace TransparentPet.Core
         /// <summary>请求切换设置面板显隐。载荷 bool：true 显示 / false 隐藏。托盘左键、菜单"设置…"、ESC 让位共用。</summary>
         public const string SettingsPanelToggleRequested = "SettingsPanelToggleRequested";
 
+        /// <summary>
+        /// 请求切换抓屏隐形。载荷 bool：true 开启 / false 关闭。
+        /// 发起方是 Platform 层（托盘菜单的快捷开关，它看不到 Pet 层），
+        /// 落地方是液态玻璃控制器（应用 WDA 亲和性 + 写配置，config.json 的唯一写方）。
+        /// 设置面板走的是控制器现成入口（同源，见 SettingsPanel 的窗口页）。
+        /// </summary>
+        public const string CaptureInvisibleChanged = "CaptureInvisibleChanged";
+
         /// <summary>配置已写盘。载荷 PetConfig：刚保存的完整配置（其他模块可据此同步内存状态）。</summary>
         public const string ConfigSaved = "ConfigSaved";
     }

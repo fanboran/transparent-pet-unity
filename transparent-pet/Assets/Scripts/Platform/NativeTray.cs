@@ -12,6 +12,9 @@ namespace TransparentPet.Platform
     /// HardExit 延迟强杀引信（动作在 Pump 顶层执行："退出"项先 KillSoon 点引信
     /// → Dispose 摘图标 → KillNow，见 PetWindowSetup.ExitFromTray 与 Core/HardExit.cs；
     /// Application.Quit 在托盘菜单的 Win32 模态循环深栈里可能不被处理，硬退才可靠，原实现教训）。
+    ///
+    /// 勾选 / 单选 / 灰显三个字段都是"弹出菜单前按当前状态刷新"的（见 NativeTray
+    /// 的菜单刷新回调）——菜单结构是静态的，动态的是这几项。
     /// </summary>
     public sealed class TrayMenuItem
     {
@@ -19,8 +22,22 @@ namespace TransparentPet.Platform
         public Action Action;
         public bool Separator;
 
-        /// <summary>勾选态（渲染为 MF_CHECKED 前置 ✓，用于设置类快捷开关）。</summary>
+        /// <summary>勾选态（渲染为 MF_CHECKED，前置 ✓；用于设置类快捷开关）。</summary>
         public bool Checked;
+
+        /// <summary>
+        /// 单选组标记：与 Checked 同时成立时画**圆点**而不是 ✓（Win32 MFT_RADIOCHECK）。
+        /// 同组各项都标 Radio，任一时间只把一项 Checked——即 TrafficMonitor 的
+        /// CheckMenuRadioItem 用法（如"缩放：50% / 100% / 150%"）。
+        /// </summary>
+        public bool Radio;
+
+        /// <summary>
+        /// 可用性：false → MF_GRAYED（灰显且点不动）。**灰显而不是隐藏**，位置稳定、
+        /// 用户看得出"这项现在不适用"（如只剩一只玻璃时"收回"不可用）——
+        /// 对应 TrafficMonitor 的 EnableMenuItem。
+        /// </summary>
+        public bool Enabled = true;
 
         /// <summary>子菜单项（非空列表 = 本项渲染为弹出子菜单）。</summary>
         public List<TrayMenuItem> Children;
@@ -98,7 +115,9 @@ namespace TransparentPet.Platform
     /// - 窗口过程委托用静态字段持有，防止被 GC 回收后崩溃
     /// - 菜单数据（menuItems）随实例走；静态 active 只负责把窗口过程路由回当前实例
     /// - 菜单项动作不在窗口过程里直接执行，而是登记到队列由 Pump 在顶层执行
-    ///   （那里是 DispatchMessageW 的嵌套栈，压着同步跨进程调用会挂死进程）
+    ///   （窗口过程跑在 DispatchMessageW 的嵌套栈上，在那里压同步跨进程调用会挂死进程）
+    /// - 菜单**结构**静态、**状态**动态：勾选/单选/灰显/文案由 onRefreshMenu 回调在
+    ///   每次弹出前刷新（见 Pump 与 TrayMenuItem.Radio/Enabled）
     /// - 仅 Player 使用（编辑器下跳过，避免干扰编辑器会话）
     /// </summary>
     public sealed class NativeTray : IDisposable
@@ -118,6 +137,11 @@ namespace TransparentPet.Platform
         const uint MF_POPUP = 0x10;
         const uint MF_CHECKED = 0x8;
         const uint MF_SEPARATOR = 0x800;
+        // 灰显（不可点）：Win32 里 MF_GRAYED(0x1) 与 MF_DISABLED(0x2) 效果近似，
+        // GRAYED 额外把文字画成灰的，"这项不适用"的语义更清楚
+        const uint MF_GRAYED = 0x1;
+        // 勾选时画圆点而不是 ✓（单选组）：Win32 的 MFT_RADIOCHECK
+        const uint MFT_RADIOCHECK = 0x200;
         const uint TPM_RIGHTBUTTON = 0x2;
         const uint TPM_RETURNCMD = 0x100;
         static readonly IntPtr HWND_MESSAGE = new IntPtr(-3);
@@ -247,6 +271,7 @@ namespace TransparentPet.Platform
         readonly string tip;
         readonly TrayMenuItem[] menuItems; // 菜单数据随实例走（窗口过程经静态 active 取回）
         readonly Action leftClickAction;   // 左键单击动作（可空；与右键菜单互不影响）
+        readonly Action refreshMenuAction; // 弹出前刷新菜单状态（可空；见 Pump 里的调用点）
         readonly Queue<Action> pendingActions = new Queue<Action>(); // 菜单动作队列（Pump 顶层执行）
         NOTIFYICONDATAW trayIconData; // 首次 NIM_ADD 的完整数据（hIcon/szTip 原样），explorer 重启后重加图标复用
         readonly ReaddRetryState readdRetry = new ReaddRetryState(MaxReaddRetries, ReaddRetryIntervalSeconds);
@@ -255,11 +280,16 @@ namespace TransparentPet.Platform
         /// <param name="menuItems">右键菜单内容（含分隔线与子菜单；"退出"也由调用方传入，
         /// 其 Action 走 HardExit 延迟强杀引信，见 TrayMenuItem 注释）</param>
         /// <param name="onLeftClick">左键单击托盘图标的动作（可空 = 不响应左键）</param>
-        public NativeTray(string tip, TrayMenuItem[] menuItems, Action onLeftClick = null)
+        /// <param name="onRefreshMenu">右键菜单**弹出前**刷新各项状态的回调（可空）。
+        /// 菜单结构是静态的，勾选/单选/灰显/文案是动态的——回调里按当前配置改
+        /// menuItems 上的字段即可（TrafficMonitor 的 OnInitMenu 同职责，见 Pump 注释）。</param>
+        public NativeTray(string tip, TrayMenuItem[] menuItems, Action onLeftClick = null,
+            Action onRefreshMenu = null)
         {
             this.tip = tip;
             this.menuItems = menuItems;
             this.leftClickAction = onLeftClick;
+            this.refreshMenuAction = onRefreshMenu;
             active = this;
 
             try
@@ -361,6 +391,13 @@ namespace TransparentPet.Platform
 
             while (PeekMessageW(out var msg, hwnd, 0, 0, PM_REMOVE))
             {
+                // 右键弹出前刷新菜单状态（勾选/单选/灰显/文案）。对应 TrafficMonitor 的
+                // OnInitMenu——但那个跑在 MFC 消息泵的**嵌套栈**上（它没有别的选择，
+                // WM_INITMENUPOPUP 就在那里）；本层的刷新回调要读配置/注册表，按本项目
+                // "同步 IO 不进窗口过程嵌套栈"的纪律（见文件尾 ShowMenu 注释、HardExit 教训），
+                // 挪到 DispatchMessageW 之前、**顶层栈**执行：顺序上仍严格早于构建 HMENU。
+                if (msg.message == WM_APP_TRAY && (uint)msg.lParam == WM_RBUTTONUP)
+                    InvokeAction(active?.refreshMenuAction);
                 TranslateMessage(ref msg);
                 DispatchMessageW(ref msg);
             }
@@ -486,10 +523,24 @@ namespace TransparentPet.Platform
                 else
                 {
                     entries.Add(item);
-                    var flags = MF_STRING | (item.Checked ? MF_CHECKED : 0u);
-                    AppendMenuW(menu, flags, (UIntPtr)entries.Count, item.Label ?? string.Empty);
+                    AppendMenuW(menu, FlagsFor(item), (UIntPtr)entries.Count, item.Label ?? string.Empty);
                 }
             }
+        }
+
+        /// <summary>
+        /// 一个普通项的 HMENU 标志位（纯函数，供 NUnit 直接断言；AppendItems 是它的唯一调用方）：
+        /// 勾选 = MF_CHECKED，单选组再叠 MFT_RADIOCHECK（画圆点而不是 ✓），
+        /// 不可用 = MF_GRAYED。三者可共存（灰显的选中项也保持勾选态）。
+        /// </summary>
+        public static uint FlagsFor(TrayMenuItem item)
+        {
+            var flags = MF_STRING;
+            if (item.Checked)
+                flags |= MF_CHECKED | (item.Radio ? MFT_RADIOCHECK : 0u);
+            if (!item.Enabled)
+                flags |= MF_GRAYED;
+            return flags;
         }
 
         [DllImport("user32.dll")]
