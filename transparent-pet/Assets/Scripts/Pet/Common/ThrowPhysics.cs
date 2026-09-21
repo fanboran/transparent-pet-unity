@@ -129,8 +129,18 @@ namespace TransparentPet.Pet.Common
         /// <summary>
         /// 抛射积分一步：重力、地面/墙壁反弹、接地摩擦、安全网（对应 update_drag 抛射分支）。
         /// 非抛射状态原样返回。与 Godot 版相同：接地后微幅反弹不主动终止，直到再次被抓取。
+        /// 碰撞半尺寸按贴图比例估算（贴图线的用法）。
         /// </summary>
         public ThrowStepResult Step(Vector2 position, float deltaTime, Vector2 screenSize, Vector2 spriteSize, float spriteScale)
+            => Step(position, deltaTime, screenSize,
+                    spriteSize.x * HalfWRatio * spriteScale,
+                    spriteSize.y * BottomOffsetRatio * spriteScale);
+
+        /// <summary>
+        /// 抛射积分一步（显式碰撞半尺寸）。玻璃线的轮廓是 SDF 而非贴图，没有可折算的比例，
+        /// 由调用方按形状算出半宽与底部下沉量（见 GlassSlimeMotion）。
+        /// </summary>
+        public ThrowStepResult Step(Vector2 position, float deltaTime, Vector2 screenSize, float halfW, float bottomH)
         {
             var result = new ThrowStepResult { Position = position, Velocity = throwVelocity };
             if (!IsThrowing)
@@ -138,10 +148,6 @@ namespace TransparentPet.Pet.Common
 
             throwVelocity.y += Gravity * deltaTime;
             var newPos = position + throwVelocity * deltaTime;
-
-            // 矩形碰撞半尺寸（按贴图实际轮廓相对于中心的偏移估算，同 Godot）
-            float halfW = spriteSize.x * HalfWRatio * spriteScale;
-            float bottomH = spriteSize.y * BottomOffsetRatio * spriteScale;
 
             bool onGround = false;
             if (newPos.y + bottomH > screenSize.y)

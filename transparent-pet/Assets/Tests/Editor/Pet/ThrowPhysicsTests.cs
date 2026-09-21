@@ -160,6 +160,28 @@ namespace TransparentPet.Tests
         }
 
         [Test]
+        public void Step_ExplicitHalfSizes_MatchSpriteDerived()
+        {
+            // 玻璃线走显式半尺寸重载（SDF 轮廓没有贴图比例可折算）。
+            // 两条路径必须算出完全相同的结果，否则等于给玻璃偷偷换了一套物理参数。
+            var viaSprite = NewPhysics();
+            var viaExplicit = NewPhysics();
+            viaSprite.StartThrow(new Vector2(400f, 0f));
+            viaExplicit.StartThrow(new Vector2(400f, 0f));
+
+            var spriteSize = new Vector2(200f, 132f);
+            var pos = new Vector2(500f, 500f);
+            var screen = new Vector2(1920f, 1080f);
+
+            var a = viaSprite.Step(pos, 0.1f, screen, spriteSize, 1f);
+            var b = viaExplicit.Step(pos, 0.1f, screen,
+                spriteSize.x * viaSprite.HalfWRatio, spriteSize.y * viaSprite.BottomOffsetRatio);
+
+            Assert.AreEqual(a.Position, b.Position);
+            Assert.AreEqual(a.Velocity, b.Velocity);
+        }
+
+        [Test]
         public void Reset_ClearsAllState()
         {
             var p = NewPhysics();

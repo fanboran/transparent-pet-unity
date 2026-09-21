@@ -114,7 +114,8 @@ namespace TransparentPet.Pet.Glass
             public Vector2 pos;
             public Vector2 lastSaved;
             public bool dragging;
-            public Vector2 grab;
+            /// <summary>抛射 / 落定悬浮状态（拖拽偏移与速度样本都在其中）</summary>
+            public readonly GlassSlimeMotion motion = new();
         }
 
         // ── 运行时状态 ──
@@ -235,6 +236,7 @@ namespace TransparentPet.Pet.Glass
 
             SyncQuadToCamera();
             HandleInput();
+            StepMotions(Time.deltaTime);
             UpdateSave();
 
             RenderPipeline();
@@ -285,12 +287,17 @@ namespace TransparentPet.Pet.Glass
 
         /// <summary>
         /// 撤销当前抓取（输入仲裁：被更高层宠物的点击抢占时调用）。
-        /// 玻璃板平移语义下等同"松手"：全部 dragging 置 false，不给抛速。
+        /// 等同"松手"但**不给抛速**：拖拽中的那只清掉速度样本并停在原地。
         /// </summary>
         public void CancelGrab()
         {
             foreach (var s in slimes)
+            {
+                if (!s.dragging)
+                    continue;
                 s.dragging = false;
+                s.motion.CancelDrag();
+            }
         }
 
         /// <summary>抓屏隐形开关（设置面板/F11 共用入口）。开启有代价：录屏/截图中桌宠消失。</summary>
@@ -374,11 +381,23 @@ namespace TransparentPet.Pet.Glass
             nextSaveTime = Time.time + 1f;
         }
 
-        static Vector2 ClampToWorkArea(Vector2 pos)
+        /// <summary>
+        /// 把位置夹到工作区内，且整只轮廓不出界。半宽 / 顶 / 底随用户缩放变化，
+        /// 不能再用固定 60px 内缩——缩放 2.5 倍时半宽达 400px，旧写法会让玻璃大半挂在屏幕外。
+        /// 抛射中的边界由 ThrowPhysics 的墙 / 地面反弹负责（顶边不设墙，允许甩出屏幕再落回，
+        /// 与贴图 / PBF 线一致）。
+        /// </summary>
+        Vector2 ClampToWorkArea(Vector2 pos)
         {
+            var width = ScaleValue;
+            var halfW = GlassSlimeMotion.HalfWidthOf(width);
+            var topH = GlassSlimeMotion.TopOf(width);
+            var bottomH = GlassSlimeMotion.BottomOf(width);
             var w = NativeScreen.GetWorkAreaWidth();
             var h = NativeScreen.GetWorkAreaBottomY();
-            return new Vector2(Mathf.Clamp(pos.x, 60f, w - 60f), Mathf.Clamp(pos.y, 60f, h - 60f));
+            return new Vector2(
+                Mathf.Clamp(pos.x, halfW, Mathf.Max(halfW, w - halfW)),
+                Mathf.Clamp(pos.y, topH, Mathf.Max(topH, h - bottomH)));
         }
 
         // ── 相机 / 网格 ──
@@ -455,19 +474,26 @@ namespace TransparentPet.Pet.Glass
                 && PetInputArbiter.TryClaim(this, 0, Time.frameCount))
             {
                 hit.dragging = true;
-                hit.grab = hit.pos - mouseTop; // 抓哪里握哪里（玻璃板平移）
+                hit.motion.BeginDrag(mouseTop, hit.pos, NowMs());
             }
 
+            // 守卫同贴图 / PBF 两条线：Input.GetMouseButtonUp 是进程级输入，
+            // 没有"确实在被拖"的判断，松手会波及本进程内所有只（见 2026-09-21 投掷串扰修复）
             if (Input.GetMouseButtonUp(0))
             {
                 foreach (var s in slimes)
+                {
+                    if (!s.dragging)
+                        continue;
                     s.dragging = false;
+                    s.motion.EndDrag(); // 够快则起抛，否则原地落定
+                }
             }
 
             foreach (var s in slimes)
             {
                 if (s.dragging)
-                    s.pos = ClampToWorkArea(mouseTop + s.grab);
+                    s.pos = ClampToWorkArea(s.motion.DragMove(mouseTop, NowMs()));
             }
 
             // 抓屏隐形开关（F11；设置面板走 SetCaptureInvisible）
@@ -476,6 +502,27 @@ namespace TransparentPet.Pet.Glass
 
             // ESC 安全网退出已上提窗口层（PetWindowSetup），控制器不再各自检查
         }
+
+        /// <summary>
+        /// 抛射积分：只推进飞行中的那些（拖拽中由 HandleInput 直接跟手，落定后关重力悬浮）。
+        /// 碰撞半尺寸来自 SDF 轮廓、随用户缩放变化，故每帧重算。
+        /// </summary>
+        void StepMotions(float deltaTime)
+        {
+            var width = ScaleValue;
+            var halfW = GlassSlimeMotion.HalfWidthOf(width);
+            var bottomH = GlassSlimeMotion.BottomOf(width);
+            var workArea = new Vector2(NativeScreen.GetWorkAreaWidth(), NativeScreen.GetWorkAreaBottomY());
+
+            foreach (var s in slimes)
+            {
+                if (s.dragging || s.motion.Settled)
+                    continue;
+                s.pos = s.motion.Step(s.pos, deltaTime, workArea, halfW, bottomH);
+            }
+        }
+
+        static double NowMs() => Time.realtimeSinceStartup * 1000.0;
 
         // ── 渲染管线：桌面/素材 → 竖直模糊 → 水平模糊 → 主合成上屏 ──
 
