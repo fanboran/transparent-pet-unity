@@ -23,14 +23,19 @@
 // 调试视图：_Step 0=SDF 白色梯度 1=SDF 等高线 2=法线彩虹图 9=主渲染。
 //
 // 【绘制范围收敛（性能）】
-// 本 shader 逐像素很重（每像素 16 槽贝塞尔 SDF，法线再×4），全屏绘制在核显上要
+// 本 shader 逐像素很重（每像素 16 槽贝塞尔 SDF，法线再×2），全屏绘制在核显上要
 // 几十毫秒。玻璃本体只占屏幕一小块，其余像素算完 alpha≈0——于是 CPU 端
-// （GlassRenderRect）只让 quad 覆盖"轮廓 + 阴影可见半径"，并用 _ScreenUvRect 把
-// quad 的本地 uv 换算回屏幕 uv：片元里的 uv / pixel 与全屏绘制逐像素等价，
-// 画面（含轮廓外那圈淡阴影）逐字节不变。
-// 多只分散时并集矩形可能覆盖大半个屏幕，故主渲染路径再加两级跳过（均为
+// （GlassRenderRect）把绘制范围收敛成两个矩形（**不是一个**，见下），并用
+// _ScreenUvRect 把 quad 的本地 uv 换算回屏幕 uv：片元里的 uv / pixel 与全屏绘制
+// 逐像素等价，画面逐字节不变。
+//   · quad 矩形 = 轮廓 + 提前退出半径（8px）——轮廓外 8px 起输出恒为全透明；
+//   · 来源矩形 = 轮廓 + 折射位移 + 模糊核（116px）——**被采样**的模糊 RT / 桌面帧
+//     要延伸这么远（折射在轮廓边上要往外取 ~1.05·厚度），但它们只是纹理，
+//     与 quad 大小无关；quad 边界的像素用 _BlurRemap / _BgRemap 采到框外的纹理。
+//     早先两者共用一个矩形，主合成里有七成像素是"画完再丢弃"的空转。
+// 多只分散时 quad 的并集可能覆盖大半个屏幕，故主渲染路径再加两级跳过（均为
 // 「本来就不改变结果」的剪枝，见 allItemsFar / mainSDF）：
-//   · 整屏提前退出：离所有物品都远到阴影已不可见 → 直接输出全透明；
+//   · 整屏提前退出：离所有物品都远到轮廓外已无输出 → 直接输出全透明；
 //   · 逐项跳过：某物品的下界距离已超过当前 smin 结果 + 融合宽度 → 该项对结果
 //     无影响（smin 在 |a-b|≥k 时恒等于 min，逐位等价）。
 // 调试视图（_Step ≤ 2）保持全屏 + 不剪枝：SDF/法线图是形状锚定工具，需要看到
@@ -88,14 +93,18 @@ Shader "TransparentPet/LiquidGlass"
             float4 _Resolution;
             int _Step;
 
-            // 绘制矩形（左上原点像素 → 见 CPU 端 GlassRenderRect）。
-            // _ScreenUvRect：矩形在屏幕 uv（左下原点）的位置尺寸；_RectUvScale：
-            // 屏幕 uv → 矩形本地 uv 的缩放（= 屏幕尺寸 / 矩形尺寸，矩形与屏幕同像素密度）。
+            // 绘制矩形（左上原点像素 → 见 CPU 端 GlassRenderRect）。两个矩形**不同**：
+            //   · _ScreenUvRect：主合成 quad 覆盖的范围（屏幕 uv 位置尺寸）= 轮廓 + 提前
+            //     退出半径——轮廓外 8px 起输出恒为全透明，多画的像素只是在跑空转判定；
+            //   · _BlurRemap / _BgRemap：被采样的纹理（模糊 RT / 桌面帧）覆盖的范围，
+            //     比 quad 大一圈（还要含折射位移与模糊核），故采样一律用屏幕 uv 经各自
+            //     的 remap 换算，不再依赖 quad 的本地 uv。
             float4 _ScreenUvRect;
-            float4 _RectUvScale;
-            // 清晰背景 _Bg 的采样映射：xy = 该纹理左上角在屏幕 uv 的原点，
-            // zw = 屏幕 uv → 纹理 uv 的缩放。用于「桌面帧（区域随绘制矩形变化）」
-            // 与「素材 RT（与绘制矩形同尺寸）」两种来源，两者只是参数不同。
+            // 模糊 RT（hBlurRT，与"来源矩形"同像素密度）的采样映射：
+            // xy = 该矩形左上角在屏幕 uv 的原点，zw = 屏幕 uv → 纹理 uv 的缩放。
+            float4 _BlurRemap;
+            // 清晰背景 _Bg 的采样映射（同语义）：桌面帧（区域随来源矩形变化）
+            // 与素材 RT（与来源矩形同尺寸）两种来源只是参数不同。
             float4 _BgRemap;
             // 主渲染的整体提前退出阈值（px，已含安全余量）——超过它就没有任何可见输出
             float _EarlyOutPx;
@@ -135,17 +144,15 @@ Shader "TransparentPet/LiquidGlass"
             {
                 float4 pos : SV_POSITION;
                 float2 uv : TEXCOORD0;      // 屏幕 uv（与全屏绘制逐像素等价）
-                float2 uvLocal : TEXCOORD1; // 矩形本地 uv（模糊 RT / 素材 RT 用）
             };
 
             v2f vert(appdata_base v)
             {
                 v2f o;
                 o.pos = UnityObjectToClipPos(v.vertex);
-                // quad 本地 uv → 屏幕 uv：绘制矩形只覆盖画面一角时，片元拿到的
-                // uv 仍是"整屏坐标系"里的位置，SDF/阴影/折射的量纲全部不变
+                // quad 本地 uv → 屏幕 uv：quad 只覆盖玻璃周围一小块时，片元拿到的
+                // uv 仍是"整屏坐标系"里的位置，SDF/折射的量纲全部不变
                 o.uv = _ScreenUvRect.xy + v.texcoord.xy * _ScreenUvRect.zw;
-                o.uvLocal = v.texcoord.xy;
                 return o;
             }
 
@@ -458,16 +465,22 @@ Shader "TransparentPet/LiquidGlass"
             }
 
             // 清晰背景 _Bg 的采样映射：屏幕 uv → 该纹理自己的 uv。
-            // 桌面帧的矩形随绘制矩形移动、素材 RT 与绘制矩形同尺寸，两者只是参数不同。
+            // 桌面帧的矩形随来源矩形移动、素材 RT 与来源矩形同尺寸，两者只是参数不同。
             float2 bgUV(float2 screenUv)
             {
                 return (screenUv - _BgRemap.xy) * _BgRemap.zw;
             }
 
+            // 模糊 RT 的采样映射（同语义）。它比 quad 大一圈，所以不能拿 quad 的本地
+            // uv 当坐标——按屏幕 uv 换算，quad 边界的像素也能采到框外的模糊结果。
+            float2 blurUV(float2 screenUv)
+            {
+                return (screenUv - _BlurRemap.xy) * _BlurRemap.zw;
+            }
+
             // RGB 三通道按各自折射率分别偏移采样，再与模糊版逐通道混合。
-            // uv = 屏幕 uv；uvLocal = 矩形本地 uv（模糊 RT 的坐标系）——
-            // 同一个像素位移在两者间的换算就是 _RectUvScale
-            float4 getTextureDispersion(float mixRate, float2 offset, float factor, float2 uv, float2 uvLocal)
+            // uv = 屏幕 uv；偏移也是屏幕 uv，两种来源各自经自己的 remap 换算。
+            float4 getTextureDispersion(float mixRate, float2 offset, float factor, float2 uv)
             {
                 float2 offR = offset * (1.0 - (N_R - 1.0) * factor);
                 float2 offG = offset * (1.0 - (N_G - 1.0) * factor);
@@ -477,9 +490,9 @@ Shader "TransparentPet/LiquidGlass"
                 float bgG = tex2D(_Bg, bgUV(uv + offG)).g;
                 float bgB = tex2D(_Bg, bgUV(uv + offB)).b;
 
-                float blurR = tex2D(_BlurredBg, uvLocal + offR * _RectUvScale.xy).r;
-                float blurG = tex2D(_BlurredBg, uvLocal + offG * _RectUvScale.xy).g;
-                float blurB = tex2D(_BlurredBg, uvLocal + offB * _RectUvScale.xy).b;
+                float blurR = tex2D(_BlurredBg, blurUV(uv + offR)).r;
+                float blurG = tex2D(_BlurredBg, blurUV(uv + offG)).g;
+                float blurB = tex2D(_BlurredBg, blurUV(uv + offB)).b;
 
                 return float4(lerp(bgR, blurR, mixRate), lerp(bgG, blurG, mixRate), lerp(bgB, blurB, mixRate), 1.0);
             }
@@ -557,7 +570,7 @@ Shader "TransparentPet/LiquidGlass"
                         if (edgeFactor <= 0.0)
                         {
                             // 无偏移 → 直接模糊底 + 色调
-                            outColor = tex2D(_BlurredBg, i.uvLocal);
+                            outColor = tex2D(_BlurredBg, blurUV(i.uv));
                             outColor.rgb = lerp(outColor.rgb, _Tint.rgb, _Tint.a * 0.8);
                         }
                         else
@@ -571,8 +584,7 @@ Shader "TransparentPet/LiquidGlass"
                                 _BlurEdge > 0.5 ? 1.0 : edgeH,
                                 offsetUV,
                                 _RefDispersion,
-                                i.uv,
-                                i.uvLocal);
+                                i.uv);
 
                             outColor = float4(lerp(refracted.rgb, _Tint.rgb, _Tint.a * 0.8), 1.0);
 

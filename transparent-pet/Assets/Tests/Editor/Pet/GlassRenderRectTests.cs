@@ -2,8 +2,9 @@
 // GlassRenderRectTests.cs — 绘制范围（"只画玻璃包围盒"）的数学测试
 // ============================================================================
 // 保三条命：
-//   1. 边距覆盖得足够大——阴影尾巴 / 折射位移 / 模糊核三者中最大的那个都必须
-//      被包进来，否则玻璃边缘会露出被裁掉的接缝（视觉上等于改了观感）；
+//   1. 边距覆盖得足够大——折射位移 / 模糊核都必须被包进来，否则玻璃边缘会露出
+//      被裁掉的接缝（视觉上等于改了观感）；并保"来源矩形 ⊇ quad 矩形 + 采样位移"
+//      这条不变式（quad 与来源矩形解耦后，它才是画面无损的前提）；
 //   2. 容量量化 + 收缩滞回——拖拽时不能每帧重建 RenderTexture；
 //   3. 矩形被正确夹进屏幕（多只靠边时不能算到屏幕外去）。
 // 收敛后的画面等价性无法在 NUnit 里断言，由 LiquidGlassSnapshot 的定点图锚定
@@ -39,6 +40,41 @@ namespace TransparentPet.Pet.Tests
             var thick = GlassRenderRect.MarginFor(400f, 6f);
             Assert.Greater(thick, thin);
             Assert.GreaterOrEqual(thick, 400f);
+        }
+
+        // ── 两个矩形的关系（quad 与来源矩形解耦后的安全前提）──
+        // 控制器现在算两个矩形：quad = 轮廓 + EarlyOutPx，来源矩形 = 轮廓 + MarginFor。
+        // 前者要覆盖"所有可能有输出的像素"，后者要覆盖"前者 + 所有会被采到的样本"；
+        // 后者一旦小于前者，quad 边上的像素就会采到源纹理外面（拉边/接缝）。
+
+        [Test]
+        public void SourceMargin_AlwaysCoversQuadMargin()
+        {
+            // 参数取遍控制器可给的范围（默认、最薄、最厚、模糊核 0 与上限）
+            foreach (var refThickness in new[] { 0f, 20f, 80f, 400f })
+                foreach (var blurRadius in new[] { 0f, 1f, 6f, 31f })
+                    Assert.GreaterOrEqual(GlassRenderRect.MarginFor(refThickness, blurRadius),
+                                          GlassRenderRect.EarlyOutPx,
+                                          $"来源矩形（{refThickness}/{blurRadius}）小于 quad 矩形");
+        }
+
+        [Test]
+        public void SourceMargin_CoversRefractionDisplacementAndBlurKernel()
+        {
+            // 解耦的安全性算术：quad 内任一像素（最外落在 轮廓 + EarlyOutPx）按折射偏移
+            // 取样，采样点最远到 轮廓 + EarlyOutPx + 1.05·厚度；而模糊 pass 又要围绕
+            // 自己的每个输出像素往外读一个核半径。两条都得被来源矩形包住，否则
+            // quad 边上的像素会采到纹理外（拉边/接缝）。折射位移上界取 1.05·厚度
+            //（写法见 LiquidGlass.shader 里 offsetUV 的推导）。
+            foreach (var refThickness in new[] { 0f, 80f, 400f })
+            foreach (var blurRadius in new[] { 0f, 6f, 31f })
+            {
+                var margin = GlassRenderRect.MarginFor(refThickness, blurRadius);
+                Assert.GreaterOrEqual(margin, GlassRenderRect.EarlyOutPx + refThickness * 1.05f,
+                                      $"厚度 {refThickness} 时来源矩形盖不住最远的折射采样点");
+                Assert.GreaterOrEqual(margin, GlassRenderRect.EarlyOutPx + blurRadius,
+                                      $"模糊半径 {blurRadius} 时来源矩形盖不住模糊核的外读");
+            }
         }
 
         // ── 轮廓外包矩形（含生命感缩放与旋转）──

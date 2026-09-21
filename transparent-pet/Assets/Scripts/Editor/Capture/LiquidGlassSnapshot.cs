@@ -56,7 +56,8 @@ namespace TransparentPet.EditorTools
                 Controller.Tick();  // Blit 管线（素材 → 模糊 → 主合成参数）
                 Cam.Render();       // quad 携主合成材质上屏
                 SaveRtPng(Rt, fileName);
-                Debug.Log($"[LiquidGlassSnapshot] 输出 {fileName} 绘制矩形={Controller.CurrentRenderRect}");
+                Debug.Log($"[LiquidGlassSnapshot] 输出 {fileName} 来源矩形={Controller.CurrentRenderRect} " +
+                          $"quad矩形={Controller.CurrentQuadRect}");
             }
 
             public void Dispose()

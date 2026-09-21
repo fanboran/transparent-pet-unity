@@ -12,9 +12,11 @@
 //   抓屏失败/未开隐形时回退 LiquidGlassBg 程序化素材。
 //
 // 绘制范围（性能）：主合成是逐像素的重活，而玻璃本体只占屏幕一小块——本控制器
-// 每帧算出"轮廓 + 阴影可见半径"的绘制矩形（GlassRenderRect），让 quad、三张
-// RenderTexture 与抓屏区域全部收敛到它；shader 端用 _ScreenUvRect 把 uv 换算回
-// 屏幕坐标，画面逐像素不变（等价性由 LiquidGlassSnapshot 的定点图锚定）。
+// 每帧算出两个矩形（GlassRenderRect）：**来源矩形**（轮廓 + 折射位移 + 模糊核，
+// 116px 边距）让三张 RenderTexture 与抓屏区域收敛到它；**quad 矩形**（轮廓 +
+// 提前退出半径，8px）只让主合成的 quad 覆盖到它。shader 端用 _ScreenUvRect 把
+// quad 的 uv 换算回屏幕 uv、用 _BlurRemap/_BgRemap 采样框外的来源纹理，画面逐像素
+// 不变（等价性由 LiquidGlassSnapshot 的定点图锚定）。
 //
 // 多只：shader 端保留 16 个物品槽位（LiquidGlass.shader 的 MAX_ITEMS=16，与
 // 本类 MaxSlimes 对齐）+ smin 融合（相邻史莱姆会像液滴一样合并），本控制器
@@ -158,8 +160,11 @@ namespace TransparentPet.Pet.Glass
         Vector4 desktopRemap;        // 桌面帧纹理的屏幕 uv 映射（xy=原点，zw=屏幕uv→帧uv缩放）
 
         // ── 绘制范围（"只画玻璃包围盒"；见 GlassRenderRect 的文件头）──
-        PixelRect renderRect;        // 本帧绘制矩形（窗口内像素、左上原点）
-        int renderCapW, renderCapH;  // 容量（量化 + 收缩滞回，拖拽时不重建 RT）
+        // 两个矩形刻意解耦（见 ComputeRenderRect）：renderRect 是"被采样的来源"范围
+        // （模糊/素材 RT、抓屏、_BlurRemap），quadRect 是主合成 quad 的范围。
+        PixelRect renderRect;        // 来源矩形（窗口内像素、左上原点）
+        PixelRect quadRect;          // 主合成 quad 矩形（＝轮廓 + 提前退出半径）
+        int renderCapW, renderCapH;  // 来源矩形容量（量化 + 收缩滞回，拖拽时不重建 RT）
 
         // 物品槽位推送缓冲（只读复用）：RenderPipeline 每帧 new 4 个数组会产 ~400B
         // 垃圾，常驻进程累积成 GC 尖峰——与 DensitySurface 的缓冲复用同策略。
@@ -444,13 +449,13 @@ namespace TransparentPet.Pet.Glass
         }
 
         /// <summary>
-        /// 把 quad 摆到本帧的绘制矩形上（相机固定在原点正前方、视野中心 = 世界原点，
+        /// 把 quad 摆到本帧的 quadRect 上（相机固定在原点正前方、视野中心 = 世界原点，
         /// 故矩形中心的世界坐标 = (像素中心 - 屏幕中心) / PPU，y 轴向上取反）。
         /// 片元里的 uv 由 shader 端经 _ScreenUvRect 换算回屏幕 uv，与全屏绘制逐像素等价。
         /// </summary>
         void SyncQuadToCamera(int screenW, int screenH)
         {
-            var r = renderRect;
+            var r = quadRect;
             transform.localScale = new Vector3(r.W / PixelsPerUnit, r.H / PixelsPerUnit, 1f);
             transform.position = new Vector3(
                 (r.X + r.W * 0.5f - screenW * 0.5f) / PixelsPerUnit,
@@ -459,9 +464,17 @@ namespace TransparentPet.Pet.Glass
         }
 
         /// <summary>
-        /// 计算本帧绘制矩形（"只画玻璃包围盒"，见 GlassRenderRect 文件头）。
-        /// 调试视图（Step ≤ 2）与无史莱姆时退回整屏——SDF/法线图是形状锚定工具，
-        /// 需要看到轮廓外的数值分布（快照逐像素比对也依赖这一点）。
+        /// 计算本帧的两个矩形（"只画玻璃包围盒"，见 GlassRenderRect 文件头）。
+        ///
+        /// 它们为什么不是一个（性能）：轮廓外的输出在 8px 处就被抗锯齿项乘成 0
+        ///（推导见 GlassRenderRect.EarlyOutPx），可**被采样的纹理**（折射要往外
+        /// 取 ~1.05·厚度、模糊核再往外 3σ）却要延伸到 116px。原先两件事共用一个
+        /// 516×434 的矩形，于是主合成里有七成像素是在跑"提前退出判定"然后丢弃
+        ///（实测这一段占主合成耗时的一半）。拆开后 quad 只覆盖"轮廓 + 8px"，
+        /// 少画的像素本来就输出全透明，画面逐像素不变。
+        ///
+        /// 调试视图（Step ≤ 2）与无史莱姆时两个矩形都退回整屏——SDF/法线图是形状
+        /// 锚定工具，需要看到轮廓外的数值分布（快照逐像素比对也依赖这一点）。
         /// </summary>
         void ComputeRenderRect(int screenW, int screenH)
         {
@@ -469,6 +482,7 @@ namespace TransparentPet.Pet.Glass
             {
                 renderCapW = renderCapH = 0; // 整屏不参与容量/滞回
                 renderRect = new PixelRect(0, 0, screenW, screenH);
+                quadRect = renderRect;
                 return;
             }
 
@@ -481,18 +495,22 @@ namespace TransparentPet.Pet.Glass
                 GlassRenderRect.Accumulate(ref minX, ref minY, ref maxX, ref maxY, s.pos, width,
                                            s.life.ScaleX, s.life.ScaleY, s.life.RotationRad);
 
-            var margin = GlassRenderRect.MarginFor(RefThickness, BlurRadius);
-            minX -= margin;
-            minY -= margin;
-            maxX += margin;
-            maxY += margin;
+            var centerX = (minX + maxX) * 0.5f;
+            var centerY = (minY + maxY) * 0.5f;
 
-            var needW = Mathf.Clamp(Mathf.CeilToInt(maxX) - Mathf.FloorToInt(minX), 1, screenW);
-            var needH = Mathf.Clamp(Mathf.CeilToInt(maxY) - Mathf.FloorToInt(minY), 1, screenH);
+            var margin = GlassRenderRect.MarginFor(RefThickness, BlurRadius);
+            var needW = Mathf.Clamp(Mathf.CeilToInt(maxX + margin) - Mathf.FloorToInt(minX - margin), 1, screenW);
+            var needH = Mathf.Clamp(Mathf.CeilToInt(maxY + margin) - Mathf.FloorToInt(minY - margin), 1, screenH);
             renderCapW = GlassRenderRect.Capacity(needW, renderCapW);
             renderCapH = GlassRenderRect.Capacity(needH, renderCapH);
-            renderRect = GlassRenderRect.Place((minX + maxX) * 0.5f, (minY + maxY) * 0.5f,
-                                               renderCapW, renderCapH, screenW, screenH);
+            renderRect = GlassRenderRect.Place(centerX, centerY, renderCapW, renderCapH, screenW, screenH);
+
+            // quad 不量化/不滞回：它不重建任何资源，尺寸随轮廓逐帧变化零成本，
+            // 反而量化会让"轮廓 + 8px"多出几十像素的无用边
+            var q = GlassRenderRect.EarlyOutPx;
+            var quadW = Mathf.Clamp(Mathf.CeilToInt(maxX + q) - Mathf.FloorToInt(minX - q), 1, screenW);
+            var quadH = Mathf.Clamp(Mathf.CeilToInt(maxY + q) - Mathf.FloorToInt(minY - q), 1, screenH);
+            quadRect = GlassRenderRect.Place(centerX, centerY, quadW, quadH, screenW, screenH);
         }
 
         /// <summary>矩形在屏幕 uv（左下原点）的位置尺寸。</summary>
@@ -669,9 +687,10 @@ namespace TransparentPet.Pet.Glass
 
             UpdateBlurWeights();
 
-            var rectUv = ScreenUvRectOf(renderRect, w, h);
-            // 屏幕 uv → 矩形本地 uv（模糊 RT / 素材 RT 与绘制矩形同像素密度）
-            var rectUvScale = new Vector4(w / (float)renderRect.W, h / (float)renderRect.H, 0f, 0f);
+            var rectUv = ScreenUvRectOf(renderRect, w, h);   // 来源/模糊 RT 的矩形
+            var quadUv = ScreenUvRectOf(quadRect, w, h);     // 主合成 quad 的矩形（更小）
+            // 来源矩形（模糊 RT / 素材 RT / 桌面帧都在这个矩形上）的采样映射：
+            // xy = 左上角在屏幕 uv 的原点，zw = 屏幕 uv → 纹理 uv 的缩放
             var selfRemap = UvRemapOf(renderRect.X, renderRect.Y, renderRect.W, renderRect.H, w, h);
 
             // 1) 折射源：抓屏隐形生效时抓"绘制矩形那一块"桌面（隔帧降频，画面不含自己）；
@@ -716,8 +735,9 @@ namespace TransparentPet.Pet.Glass
 
             // 3) 主合成参数（每帧全量推送，与 Godot update_all_uniforms 同策略）
             mainMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
-            mainMat.SetVector("_ScreenUvRect", rectUv);
-            mainMat.SetVector("_RectUvScale", rectUvScale);
+            mainMat.SetVector("_ScreenUvRect", quadUv);
+            // 被采样的两张纹理各自的范围（比 quad 大一圈），见 shader 里两个 remap 的说明
+            mainMat.SetVector("_BlurRemap", selfRemap);
             mainMat.SetVector("_BgRemap", reflectionRemap);
             // 轮廓外必然全透明的半径（推导见 GlassRenderRect.EarlyOutPx）：超过它的像素
             // 直接输出全透明，与逐像素算完等价
@@ -1022,8 +1042,11 @@ namespace TransparentPet.Pet.Glass
         public RenderTexture VBlurTarget => vBlurRT;
         public RenderTexture HBlurTarget => hBlurRT;
 
-        /// <summary>诊断：本帧绘制矩形（"只画玻璃包围盒"的收敛范围；整屏 = 未收敛）。</summary>
+        /// <summary>诊断：本帧来源矩形（模糊/素材 RT 与抓屏的收敛范围；整屏 = 未收敛）。</summary>
         public PixelRect CurrentRenderRect => renderRect;
+
+        /// <summary>诊断：本帧主合成 quad 矩形（应比来源矩形小 100px 量级）。</summary>
+        public PixelRect CurrentQuadRect => quadRect;
 
         /// <summary>无头快照诊断：quad 上实际生效的材质与 shader 状态。</summary>
         public string DescribeMaterialState()

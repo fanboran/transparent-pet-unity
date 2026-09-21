@@ -58,12 +58,18 @@ namespace TransparentPet.Pet.Glass
         /// </summary>
         public const float EarlyOutPx = 8f;
 
-        /// <summary>边距：覆盖折射采样位移与模糊核两者中的较大值（推导见文件头）。</summary>
+        /// <summary>
+        /// 边距：覆盖折射采样位移与模糊核两者中的较大值（推导见文件头）。
+        ///
+        /// 下界是 `EarlyOutPx`：来源纹理至少要盖住"画得出来的所有像素"（quad 矩形），
+        /// 否则 quad 边上的像素会采到纹理外（拉边）。厚度/模糊都为 0 时上式退化成 2，
+        /// 小于 quad 边距，故显式取 max——参数由 Inspector 暴露，可能被调到极小。
+        /// </summary>
         public static float MarginFor(float refThickness, float blurRadius)
         {
             var refract = refThickness * 1.2f;
             var blur = blurRadius * 3f;
-            return refract + blur + 2f;
+            return Mathf.Max(refract + blur + 2f, EarlyOutPx);
         }
 
         /// <summary>
