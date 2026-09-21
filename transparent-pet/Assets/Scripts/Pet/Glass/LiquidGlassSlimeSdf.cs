@@ -39,6 +39,17 @@ namespace TransparentPet.Pet.Glass
         /// </summary>
         public static float ShaderSpan(float widthPx) => ScaleFromWidthPx(widthPx);
 
+        /// <summary>
+        /// 多只融合半径（px）= 比例 × 轮廓全宽。**不含屏幕尺寸**——这是"动态分辨率"
+        /// 必须守住的性质：分辨率/DPI 缩放/窗口尺寸变了，融合区不该跟着变。
+        /// 旧实现按屏高算（0.05 × 屏高），1080p 上 54px、4K 上就到 108px，同一份配置
+        /// 换个屏就变成另一种手感。shader 端同式：k = _MergeRatio × spanMean / _Resolution.y
+        /// （归一化到屏高只是 shader 内部的单位选择，乘回 _Resolution.y 就是这里的像素值）。
+        /// 两只重合时轮廓每侧外扩 k/4（smin 在 a=b 时退化成 d - k/4）。
+        /// </summary>
+        public static float MergeZonePx(float mergeRatio, float widthPx) =>
+            mergeRatio * ShaderSpan(widthPx);
+
         /// <summary>三次贝塞尔求值（t∈[0,1]）。</summary>
         static void Bezier3(float[] a, float[] b, float[] c, float[] d, float t, out float x, out float y)
         {

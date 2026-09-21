@@ -197,6 +197,9 @@ namespace TransparentPet.Pet.Glass
 
         const float MinUserScale = 0.5f, MaxUserScale = 2.5f;
 
+        /// <summary>上一帧的工作区（宽 × 底边 y）；x ≤ 0 表示还没记录过（首次只记不夹）。</summary>
+        Vector2 lastWorkArea = new Vector2(-1f, -1f);
+
         /// <summary>生效中的史莱姆全宽（px）——含用户缩放。</summary>
         float ScaleValue => SlimeWidthPx * Mathf.Clamp(userScale, MinUserScale, MaxUserScale);
 
@@ -278,6 +281,7 @@ namespace TransparentPet.Pet.Glass
                 return;
 
             HandleInput();
+            ReclampIfWorkAreaChanged(); // 分辨率/DPI/任务栏变化后先把旧坐标拉回工作区
             StepMotions(Time.deltaTime);
             TickLife(Time.deltaTime);
             UpdateSave();
@@ -457,22 +461,47 @@ namespace TransparentPet.Pet.Glass
         }
 
         /// <summary>
-        /// 把位置夹到工作区内，且整只轮廓不出界。半宽 / 顶 / 底随用户缩放变化，
-        /// 不能再用固定 60px 内缩——缩放 2.5 倍时半宽达 400px，旧写法会让玻璃大半挂在屏幕外。
+        /// 把位置夹到工作区内，且整只轮廓不出界（数学见 GlassSlimeMotion.ClampToArea）。
         /// 抛射中的边界由 ThrowPhysics 的墙 / 地面反弹负责（顶边不设墙，允许甩出屏幕再落回，
         /// 与贴图 / PBF 线一致）。
         /// </summary>
-        Vector2 ClampToWorkArea(Vector2 pos)
+        Vector2 ClampToWorkArea(Vector2 pos) =>
+            GlassSlimeMotion.ClampToArea(pos, ScaleValue,
+                new Vector2(NativeScreen.GetWorkAreaWidth(), NativeScreen.GetWorkAreaBottomY()));
+
+        /// <summary>
+        /// 环境变化（分辨率 / DPI 缩放 / 任务栏位置或自动隐藏 / 多屏切换）后，工作区会变。
+        /// 静置的玻璃既不受重力、也不走 <see cref="GlassSlimeMotion.Step"/>（Settled 直接返回
+        /// 原位置），于是旧坐标可能落到屏幕外、或压进新的任务栏区域——表现为"两只史莱姆
+        /// 突然看不见/点不到"。故每帧比一次工作区，变了就把所有只夹回新工作区；**已经在里面
+        /// 的不动**（保持桌面构图，落定悬浮的语义不变）。首次只记录不打扰（启动构图照旧）。
+        /// </summary>
+        void ReclampIfWorkAreaChanged()
         {
-            var width = ScaleValue;
-            var halfW = GlassSlimeMotion.HalfWidthOf(width);
-            var topH = GlassSlimeMotion.TopOf(width);
-            var bottomH = GlassSlimeMotion.BottomOf(width);
-            var w = NativeScreen.GetWorkAreaWidth();
-            var h = NativeScreen.GetWorkAreaBottomY();
-            return new Vector2(
-                Mathf.Clamp(pos.x, halfW, Mathf.Max(halfW, w - halfW)),
-                Mathf.Clamp(pos.y, topH, Mathf.Max(topH, h - bottomH)));
+            var area = new Vector2(NativeScreen.GetWorkAreaWidth(), NativeScreen.GetWorkAreaBottomY());
+            if (lastWorkArea.x > 0f
+                && Mathf.Abs(area.x - lastWorkArea.x) < 0.5f
+                && Mathf.Abs(area.y - lastWorkArea.y) < 0.5f)
+                return;
+
+            var first = lastWorkArea.x <= 0f;
+            lastWorkArea = area;
+            if (first)
+                return;
+
+            var moved = 0;
+            for (var i = 0; i < slimes.Count; i++)
+            {
+                var clamped = ClampToWorkArea(slimes[i].pos);
+                if ((clamped - slimes[i].pos).sqrMagnitude <= 0.25f)
+                    continue;
+                slimes[i].pos = clamped;
+                slimes[i].lastSaved = clamped; // 视作已落盘，避免顺带触发节流写
+                moved++;
+            }
+            Debug.Log($"[LiquidGlass] 工作区变化 → {area.x:0}x{area.y:0}，夹回 {moved}/{slimes.Count} 只");
+            if (moved > 0)
+                PersistSlimes();
         }
 
         // ── 相机 / 网格 ──

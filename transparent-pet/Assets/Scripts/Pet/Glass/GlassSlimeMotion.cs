@@ -59,6 +59,23 @@ namespace TransparentPet.Pet.Glass
         public static float TopOf(float widthPx) =>
             -LiquidGlassSlimeSdf.SvgCeiling * LiquidGlassSlimeSdf.ScaleFromWidthPx(widthPx);
 
+        /// <summary>
+        /// 把位置夹进工作区，且整只轮廓不出界（顶边不设墙：允许甩出屏幕再落回）。
+        /// 纯函数，工作区尺寸当参数传——"动态分辨率/任务栏移动"要按新工作区重夹时，
+        /// 同一套数学既给抛射用也给环境变化用（见 LiquidGlassController 的工作区变化检测）。
+        /// 半宽 / 顶 / 底随缩放变化，不能当成固定内缩量（缩放到 2.5 倍时半宽可达 400px）。
+        /// workArea = (工作区宽, 工作区底边 y)，左上原点、y 向下。
+        /// </summary>
+        public static Vector2 ClampToArea(Vector2 pos, float widthPx, Vector2 workArea)
+        {
+            var halfW = HalfWidthOf(widthPx);
+            var topH = TopOf(widthPx);
+            var bottomH = BottomOf(widthPx);
+            return new Vector2(
+                Mathf.Clamp(pos.x, halfW, Mathf.Max(halfW, workArea.x - halfW)),
+                Mathf.Clamp(pos.y, topH, Mathf.Max(topH, workArea.y - bottomH)));
+        }
+
         /// <summary>抓住：记录抓取偏移、清空速度样本（抛速只来自本次拖拽），并退出落定态。</summary>
         public void BeginDrag(Vector2 mouseTop, Vector2 pos, double timeMs)
         {
