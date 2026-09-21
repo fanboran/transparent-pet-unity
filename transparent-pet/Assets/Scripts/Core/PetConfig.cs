@@ -57,6 +57,18 @@ namespace TransparentPet.Core
         /// WDA_EXCLUDEFROMCAPTURE，代价是录屏/直播/截图里桌宠消失</summary>
         public bool captureInvisible = false;
 
+        /// <summary>
+        /// 强制桌面抓屏走 BitBlt 回退路径、跳过 Desktop Duplication（默认 false = 仍优先 duplication）。
+        ///
+        /// 逃生阀，为 2026-09-21 实机崩溃而加：本机 DXGI 枚举在被虚拟显示器驱动污染时，
+        /// `DuplicateOutput` 会**假成功**，随后第一次 `AcquireNextFrame` 在 dxgi 内部原生崩溃
+        /// （进程级异常，托管层 try/catch 接不住，崩溃处理器又已按约定移除 → 应用直接消失）。
+        /// 本机历史上 duplication 一直不可用（走 BitBlt），这次环境变化后才暴露。
+        /// 置 true 可稳定回到 BitBlt（代价：全屏抓屏约每帧百毫秒级，折射刷新率降低）。
+        /// 根治需先修 duplication 路径的适配器选择，见 docs/项目/待办事项.md。
+        /// </summary>
+        public bool captureForceBitBlt = false;
+
         /// <summary>液态玻璃各只史莱姆的屏幕位置（左上原点，成对使用）。
         /// 空数组 = 从未保存过（回退单只居中）；上限与 LiquidGlassController.MaxSlimes /
         /// LiquidGlass.shader 的 MAX_ITEMS 对齐（16）。</summary>

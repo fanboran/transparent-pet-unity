@@ -147,6 +147,7 @@ namespace TransparentPet.Pet.Glass
         float lastBlurRadius = -1f;
         float userScale = 1f;
         bool captureInvisibleActive; // affinity 当前生效中
+        bool forceBitBltCapture;     // config.captureForceBitBlt：跳过 duplication 的逃生阀
         bool lastDesktopCaptureOk;   // 最近一次桌面抓屏是否成功（失败回退程序化素材）
 
         // 物品槽位推送缓冲（只读复用）：RenderPipeline 每帧 new 4 个数组会产 ~400B
@@ -225,6 +226,7 @@ namespace TransparentPet.Pet.Glass
             hwnd = NativeWindowStyles.FindCurrentProcessTopLevelWindow(requireVisible: false);
 
             userScale = Mathf.Clamp(config.petScale, MinUserScale, MaxUserScale);
+            forceBitBltCapture = config.captureForceBitBlt;
             LoadSlimes(config);
 
             if (CaptureInvisible || config.captureInvisible)
@@ -765,7 +767,11 @@ namespace TransparentPet.Pet.Glass
         {
             var slowLogAt = 0;
             var failLogAt = 0;
-            var dup = DesktopDuplicator.TryCreatePrimary();
+            // 逃生阀：本机 duplication 可能"假成功"后在 dxgi 内部原生崩溃（进程级，接不住），
+            // 见 PetConfig.captureForceBitBlt 的说明
+            var dup = forceBitBltCapture ? null : DesktopDuplicator.TryCreatePrimary();
+            if (forceBitBltCapture)
+                Debug.Log("[LiquidGlass] config.captureForceBitBlt=true → 跳过 Desktop Duplication，直接用 BitBlt 抓屏");
 
             while (captureRunning)
             {
