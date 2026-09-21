@@ -65,9 +65,6 @@ Shader "TransparentPet/LiquidGlass"
         _MergeRate ("融合宽度(SDF空间)", Range(0.001, 0.5)) = 0.05
         _Tint ("色调(RGBA, A=强度)", Color) = (1, 1, 1, 0.08)
         _BlurEdge ("边缘模糊(0=渐进 1=全模糊)", Float) = 1
-        [Header(Shadow)]
-        _ShadowExpand ("阴影扩散(px)", Float) = 26
-        _ShadowFactor ("阴影强度", Range(0, 1)) = 0.5
     }
 
     SubShader
@@ -118,8 +115,6 @@ Shader "TransparentPet/LiquidGlass"
             float _MergeRate;
             float4 _Tint;
             float _BlurEdge;
-            float _ShadowExpand;
-            float _ShadowFactor;
 
             // 物品数组（与 CPU 端 LiquidGlassController 一一对应）：
             // xy = 中心（GL 像素，左下原点）；目前只装配史莱姆形状一种，
@@ -613,9 +608,9 @@ Shader "TransparentPet/LiquidGlass"
                     }
                     else
                     {
-                        // 轮廓外：淡阴影环带（alpha 低于穿透阈值 0.35，不挡点击）+ 全透明
-                        float shadow = exp(-merged * resolution.y / max(_ShadowExpand, 1.0)) * 0.5 * _ShadowFactor;
-                        outColor = float4(0, 0, 0, shadow);
+                        // 轮廓外：全透明（桌宠只是覆盖层，不画落地阴影——见
+                        // docs/项目/待办事项.md 2026-09-22 条目）
+                        outColor = float4(0, 0, 0, 0);
                     }
 
                     // 抗锯齿：SDF 屏幕梯度自适应带宽，边缘平滑归零

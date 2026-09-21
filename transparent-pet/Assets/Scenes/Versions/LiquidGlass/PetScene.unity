@@ -310,8 +310,6 @@ MonoBehaviour:
   BlurRadius: 6
   BlurEdge: 0
   Tint: {r: 1, g: 1, b: 1, a: 0.08}
-  ShadowExpand: 26
-  ShadowFactor: 0.5
   Step: 9
   CaptureInvisible: 0
   DesktopReflection: 1

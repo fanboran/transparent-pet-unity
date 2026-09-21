@@ -2,9 +2,9 @@
 // GlassRenderRect.cs — 「只画玻璃包围盒」的绘制矩形计算（纯逻辑，可 NUnit）
 // ============================================================================
 // 性能背景：主合成着色器（LiquidGlass.shader）是逐像素的重活——每个像素要跑
-// 一遍 16 槽贝塞尔 SDF（含 20 次迭代的二分反解），法线还要再跑 4 遍；2560×1440
+// 一遍贝塞尔 SDF（含 20 次迭代的二分反解），法线还要再跑 2 遍；2560×1440
 // 全屏在核显上要几十毫秒。但玻璃本体只占屏幕一小块，其余像素算完 alpha≈0
-//（全屏透明覆盖层里等于什么都没画）——把绘制范围收敛到"轮廓 + 阴影可见半径"
+//（全屏透明覆盖层里等于什么都没画）——把绘制范围收敛到"轮廓 + 采样所需的边距"
 // 即可，画面逐像素不变（收敛的等价性由 LiquidGlassSnapshot 的定点图锚定）。
 //
 // 本类只做数学（可 NUnit 直接实例化，同 PetLifeMath / PointerHover 的做法）：
@@ -13,13 +13,9 @@
 //
 // 边距为什么取这些值（少一个都会在玻璃边缘露出被裁掉的接缝）：
 //   · 折射采样：边缘折射位移 |tan(θT-θI)|·_RefThickness ≤ ~1.05·厚度；
-//   · 模糊核：半径为 BlurRadius 的分离式高斯，取 3 倍余量；
-//   · 阴影尾巴：轮廓外淡阴影 alpha = 0.5·Factor·exp(-d/Expand)，降到 8bit 半级
-//     （0.5/255）就与"什么都没画"不可区分 → 默认 26px/0.5 时约 126px。
-//     其实主渲染里 alpha 会被抗锯齿项 `(1-aa)` 整段乘成 0（见 EarlyOutPx），
-//     这一项对"画面"是多余的；保留它是因为它还约束着**来源纹理/抓屏区域**，
-//     且万一将来阴影重新可见不必回头改矩形。真正决定 shader 提前退出半径的是
-//     EarlyOutPx（8px），两者别再混用。
+//   · 模糊核：半径为 BlurRadius 的分离式高斯，取 3 倍余量。
+// 两项都是"**被采样**"用的——轮廓外本身没有输出（alpha 在一两个像素内就被
+// 抗锯齿项乘成 0，见 EarlyOutPx），所以边距只需够采样点落进纹理里。
 // ============================================================================
 using UnityEngine;
 
@@ -51,12 +47,10 @@ namespace TransparentPet.Pet.Glass
         /// <summary>
         /// 主渲染里"轮廓外多远就必然全透明"的半径（px），直接作为 shader 的 `_EarlyOutPx`。
         ///
-        /// 推导：frag 最后一步是 `outColor.a *= 1.0 - aa`，`aa = smoothstep(-w, w, merged)`。
-        /// merged ≥ w 时 aa 恒等于 1 → alpha 恒为 0——**决定这个半径的是抗锯齿带宽，
-        /// 不是阴影尾巴**：阴影项 `exp(-merged·H/Expand)·0.5·Factor` 被同一个 `(1-aa)`
-        /// 乘掉了，轮廓外一两个像素就已经没有输出。
-        /// （定点图逐像素取证：把本阈值从"阴影尾巴"压到 8px，整图输出不变——见
-        /// `docs/项目/待办事项.md` 的性能改造条目。）
+        /// 推导：frag 最后一步是 `outColor.a *= 1.0 - aa`，`aa = smoothstep(-w, w, merged)`；
+        /// 轮廓外的 outColor 是全透明，merged ≥ w 时 aa 又恒等于 1，所以这个半径完全由
+        /// **抗锯齿带宽**决定。（定点图逐像素取证：把本阈值从旧值 126px 压到 8px，
+        /// 整图输出不变——见 `docs/项目/待办事项.md` 的性能改造条目。）
         ///
         /// 换算：w = 2·|∇merged|，而 merged 是"像素距离 ÷ 屏高"，各向异性缩放（生命感的
         /// 呼吸/挤压）对各分量同乘一个因子、不改变 merged = w 的交点位置，所以换算回
@@ -64,24 +58,12 @@ namespace TransparentPet.Pet.Glass
         /// </summary>
         public const float EarlyOutPx = 8f;
 
-        /// <summary>
-        /// 阴影尾巴可见半径（px）：alpha 低于 8bit 量化半级即不可见（判据见文件头）。
-        /// 注意这只用于**绘制矩形的保守外包**——主渲染的提前退出半径由 EarlyOutPx 决定，
-        /// 因为轮廓外的输出会被抗锯齿项整段乘成 0（见 EarlyOutPx 的推导）。
-        /// </summary>
-        public static float ShadowTailPx(float shadowExpand, float shadowFactor)
-        {
-            if (shadowExpand <= 0f || shadowFactor <= 0f)
-                return 0f;
-            return Mathf.Max(0f, shadowExpand * Mathf.Log(255f * shadowFactor));
-        }
-
-        /// <summary>边距：覆盖阴影可见半径 / 折射采样位移 / 模糊核三者中的最大值（推导见文件头）。</summary>
-        public static float MarginFor(float refThickness, float blurRadius, float shadowExpand, float shadowFactor)
+        /// <summary>边距：覆盖折射采样位移与模糊核两者中的较大值（推导见文件头）。</summary>
+        public static float MarginFor(float refThickness, float blurRadius)
         {
             var refract = refThickness * 1.2f;
             var blur = blurRadius * 3f;
-            return Mathf.Max(ShadowTailPx(shadowExpand, shadowFactor), refract) + blur + 2f;
+            return refract + blur + 2f;
         }
 
         /// <summary>

@@ -95,10 +95,6 @@ namespace TransparentPet.Pet.Glass
         [Header("色调（A = 着色强度）")]
         public Color Tint = new(1f, 1f, 1f, 0.08f);
 
-        [Header("投影（轮廓外环带，alpha 恒低于穿透阈值 0.35）")]
-        public float ShadowExpand = 26f;
-        [Range(0f, 1f)] public float ShadowFactor = 0.5f;
-
         [Header("调试视图（0=SDF 1=等高线 2=法线 9=主渲染）")]
         public int Step = 9;
 
@@ -485,7 +481,7 @@ namespace TransparentPet.Pet.Glass
                 GlassRenderRect.Accumulate(ref minX, ref minY, ref maxX, ref maxY, s.pos, width,
                                            s.life.ScaleX, s.life.ScaleY, s.life.RotationRad);
 
-            var margin = GlassRenderRect.MarginFor(RefThickness, BlurRadius, ShadowExpand, ShadowFactor);
+            var margin = GlassRenderRect.MarginFor(RefThickness, BlurRadius);
             minX -= margin;
             minY -= margin;
             maxX += margin;
@@ -743,8 +739,6 @@ namespace TransparentPet.Pet.Glass
             mainMat.SetFloat("_MergeRate", 0.05f);
             mainMat.SetColor("_Tint", Tint);
             mainMat.SetFloat("_BlurEdge", BlurEdge ? 1f : 0f);
-            mainMat.SetFloat("_ShadowExpand", ShadowExpand);
-            mainMat.SetFloat("_ShadowFactor", ShadowFactor);
             mainMat.SetInt("_Step", Step);
 
             // 物品槽位打包：shader 端 SDF 坐标系为 y 向下（top-origin），与逻辑坐标同系；

@@ -20,34 +20,14 @@ namespace TransparentPet.Pet.Tests
         // ── 边距 ──
 
         [Test]
-        public void ShadowTail_DefaultParams_MatchesAlphaQuantizationBoundary()
-        {
-            // alpha = 0.5·0.5·exp(-d/26) 降到 8bit 半级(0.5/255) 处的距离：
-            // 26·ln(255·0.5) = 26·ln(127.5) ≈ 126px
-            Assert.AreEqual(126f, GlassRenderRect.ShadowTailPx(26f, 0.5f), 0.5f);
-        }
-
-        [Test]
-        public void ShadowTail_ZeroFactorOrExpand_IsZero()
-        {
-            Assert.AreEqual(0f, GlassRenderRect.ShadowTailPx(26f, 0f));
-            Assert.AreEqual(0f, GlassRenderRect.ShadowTailPx(0f, 0.5f));
-        }
-
-        [Test]
-        public void ShadowTail_StrongerShadow_ReachesFarther()
-        {
-            // 阴影越浓，更远处仍高于量化阈值 → 尾巴更长（边距必须跟着变）
-            Assert.Greater(GlassRenderRect.ShadowTailPx(26f, 1f), GlassRenderRect.ShadowTailPx(26f, 0.5f));
-        }
-
-        [Test]
         public void Margin_CoversEveryContributor()
         {
-            const float refThickness = 80f, blurRadius = 6f, expand = 26f, factor = 0.5f;
-            var margin = GlassRenderRect.MarginFor(refThickness, blurRadius, expand, factor);
+            // 边距只需覆盖"被采样"的两个来源：边缘折射位移与模糊核。
+            // 轮廓外本身没有输出（alpha 在一两个像素内就被抗锯齿乘成 0），所以
+            // 不再需要为落地阴影预留——那条环带已按用户 2026-09-22 拍板整体删除。
+            const float refThickness = 80f, blurRadius = 6f;
+            var margin = GlassRenderRect.MarginFor(refThickness, blurRadius);
 
-            Assert.GreaterOrEqual(margin, GlassRenderRect.ShadowTailPx(expand, factor));
             Assert.GreaterOrEqual(margin, refThickness);      // 折射位移上界 ≈ 1.05·厚度
             Assert.GreaterOrEqual(margin, blurRadius * 3f);   // 模糊核半径 × 余量
         }
@@ -55,8 +35,8 @@ namespace TransparentPet.Pet.Tests
         [Test]
         public void Margin_ThickerGlass_GrowsToCoverRefraction()
         {
-            var thin = GlassRenderRect.MarginFor(40f, 6f, 26f, 0.5f);
-            var thick = GlassRenderRect.MarginFor(400f, 6f, 26f, 0.5f);
+            var thin = GlassRenderRect.MarginFor(40f, 6f);
+            var thick = GlassRenderRect.MarginFor(400f, 6f);
             Assert.Greater(thick, thin);
             Assert.GreaterOrEqual(thick, 400f);
         }
@@ -204,18 +184,14 @@ namespace TransparentPet.Pet.Tests
         // ── 主渲染提前退出半径 ──
 
         [Test]
-        public void EarlyOutPx_IsAaBandNotShadowTail()
+        public void EarlyOutPx_IsAaBandSized()
         {
-            // 轮廓外一两个像素（AA 带宽）之后 alpha 就恒为 0——提前退出半径由它决定，
-            // 与阴影尾巴无关（推导见 GlassRenderRect.EarlyOutPx）。这条是回归护栏：
-            // 上一版把它误当成"阴影尾巴长度"（默认参数下 126px），白白多画一大圈。
+            // 轮廓外一两个像素（AA 带宽）之后 alpha 就恒为 0，提前退出半径由它决定
+            //（推导见 GlassRenderRect.EarlyOutPx）。这条是回归护栏：早先版本把它误当成
+            // "阴影尾巴可见半径"（当时算出来 126px），白白多画一大圈；后来阴影已整体删除。
             Assert.GreaterOrEqual(GlassRenderRect.EarlyOutPx, 2f + Mathf.Sqrt(2f), // AA 带 + quad 吸附余量
                 "不能小于 AA 带宽加判定点吸附余量，否则会裁掉抗锯齿边缘");
-            Assert.Less(GlassRenderRect.EarlyOutPx, 16f, "远小于阴影尾巴，说明用的是 AA 带宽口径");
-
-            var shadowTail = GlassRenderRect.ShadowTailPx(26f, 0.5f);
-            Assert.Greater(shadowTail, GlassRenderRect.EarlyOutPx * 10f,
-                "阴影尾巴只用于绘制矩形的保守外包，与提前退出半径是两个量，别再混用");
+            Assert.Less(GlassRenderRect.EarlyOutPx, 16f, "量级应是个位数，否则又混进了别的口径");
         }
     }
 }
