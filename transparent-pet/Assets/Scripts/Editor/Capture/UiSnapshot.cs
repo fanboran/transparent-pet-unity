@@ -13,6 +13,14 @@
 // 用途：设置面板这类"没有定点图工具"的观感改动，改前改后各截一张，人工看图对比
 //（与 LiquidGlassSnapshot 同一套验收纪律，见 AGENTS.md 的视觉锚定约定）。
 //
+// 史莱姆侧的两条纪律（2026-09-22 排查"史莱姆两边像被裁"时加的）：
+//   ① 生命感变换锁 (1,1,0)、位置按固定表摆开——不锁不摆的话，两次运行/相隔 20 帧
+//      的形状宽高能差 6%，任何逐像素对比都作废（LiquidGlassSnapshot 早就是这么做的）；
+//   ② 每次截图前打印材质里**真正交给 shader** 的槽位表（位置 / span / 各向缩放），
+//      并把"期望轮廓尺寸"一起算出来。凑巧的是那次排查的元凶正是这张表：
+//      槽 0 与槽 1 位置完全相同 → smin 融合退化成 d - k/4 → 轮廓每侧外扩 16.75px。
+//      没有这张表，光看图只会一直怀疑绘制矩形/提前退出。
+//
 // 运行：-batchmode -projectPath ... -executeMethod TransparentPet.EditorTools.UiSnapshot.CaptureHeadless
 // 输出：%TEMP%/pet-ui/settings.png（Path.GetTempPath() 派生，不写死个人路径）
 // ============================================================================
@@ -104,8 +112,19 @@ namespace TransparentPet.EditorTools
                 // 锁死生命感变换：呼吸相位取自 Time.time，不锁则每帧形变都不同、两张图没得比
                 //（与 LiquidGlassSnapshot 同一条纪律；它同时把 OffsetY 归零——见 GlassSlimeLife）
                 if (LiquidGlassPresence.Active is LiquidGlassController glass)
+                {
+                    Debug.Log($"[UiSnapshot] 锁定生命感变换：SlimeCount={glass.SlimeCount}");
                     for (var i = 0; i < glass.SlimeCount; i++)
                         glass.SetLifeTransformForCapture(i, 1f, 1f, 0f);
+                    // 多只摆开：贴在一起的两只会被 shader 的 smin 融合成一个并集轮廓
+                    // （重合时恒等退化成 d-k/4，轮廓整体外扩 k/4×分辨率 ≈ 17px），
+                    // 单只轮廓量不出来。量形状时必须分开摆。
+                    var spread = new[] { 400f, 1600f, 2200f };
+                    for (var i = 0; i < glass.SlimeCount && i < spread.Length; i++)
+                        glass.SetLogicPositionForCapture(i, new Vector2(spread[i], 1000f));
+                }
+                else
+                    Debug.LogWarning("[UiSnapshot] LiquidGlassPresence.Active 不是 LiquidGlassController，生命感未锁定");
                 return;
             }
             if (frames == FramesBeforeOpen)
@@ -124,24 +143,40 @@ namespace TransparentPet.EditorTools
             var page = step / FramesPerPage;
             var dir = SessionState.GetString(PathKey, ".");
 
-            // 四页截完后再截一张 **SDF 调试视图**：那是"形状本身"，与内容无关。
-            // 用途（2026-09-22 排查"史莱姆两边像被裁"时靠它定案）：主渲染里玻璃内是
-            // 折射来的桌面，颜色会伪装成边界——量主渲染的轮廓不可靠，得跟这张比
-            if (page == SettingsPanel.PageCount)
+            // 四页截完后再截两张"形状核对"用图（2026-09-22 排查"史莱姆两边像被裁"时加的）：
+            //   ①SDF 调试视图 = 形状真值，与内容无关；
+            //   ②换程序化渐变底（关掉桌面折射）= 玻璃内是均匀亮色，轮廓不再被暗内容伪装。
+            // 只截主渲染是判不了的：玻璃里折射的是桌面，暗区会让柔和轮廓看起来像被切平。
+            // 那次排查的结论：单只形状与设计逐像素吻合（实测 259×165 对设计 256×162.6），
+            // "被裁"来自两只重合被 smin 融合外扩——看本次打印的槽位表即可判。
+            if (page >= SettingsPanel.PageCount)
             {
                 if (LiquidGlassPresence.Active is LiquidGlassController glass)
                 {
-                    glass.Step = 0;
-                    var sdfPath = Path.Combine(dir, "sdf_shape.png");
-                    ScreenCapture.CaptureScreenshot(sdfPath);
-                    Debug.Log($"[UiSnapshot] SDF 形状视图 → {sdfPath}");
-                    return;
+                    if (page == SettingsPanel.PageCount)
+                    {
+                        glass.Step = 0;
+                        LogShaderParams("SDF");
+                        var sdfPath = Path.Combine(dir, "sdf_shape.png");
+                        ScreenCapture.CaptureScreenshot(sdfPath);
+                        Debug.Log($"[UiSnapshot] SDF 形状视图 → {sdfPath}");
+                        return;
+                    }
+                    if (page == SettingsPanel.PageCount + 1)
+                    {
+                        glass.Step = 9;
+                        glass.DesktopReflection = false; // 换均匀渐变底，轮廓可量
+                        glass.BgType = 1;
+                        LogShaderParams("均匀底");
+                        // 同时把两个矩形与提前退出阈值打出来：轮廓被裁时先看这三个数
+                        Debug.Log($"[UiSnapshot] 来源矩形={glass.CurrentRenderRect} " +
+                                  $"quad矩形={glass.CurrentQuadRect}");
+                        var flatPath = Path.Combine(dir, "flat_bg.png");
+                        ScreenCapture.CaptureScreenshot(flatPath);
+                        Debug.Log($"[UiSnapshot] 均匀渐变底主渲染 → {flatPath}");
+                        return;
+                    }
                 }
-                Finish(0);
-                return;
-            }
-            if (page > SettingsPanel.PageCount)
-            {
                 Finish(0);
                 return;
             }
@@ -158,6 +193,72 @@ namespace TransparentPet.EditorTools
             var path = Path.Combine(dir, $"settings_p{page}.png");
             ScreenCapture.CaptureScreenshot(path); // 落盘发生在帧末
             Debug.Log($"[UiSnapshot] 第 {page} 页（{panel.CurrentPageForCapture}）截图 → {path}");
+        }
+
+        /// <summary>
+        /// 诊断：把材质里真正交给 shader 的槽位/分辨率参数打出来。
+        /// 2026-09-22 排查"史莱姆两边像被裁"时加的——形状宽高比算不平，
+        /// 只能看 shader 实际收到的数（_ItemShape 的非等比缩放直接改轮廓比例）。
+        /// </summary>
+        static void LogShaderParams(string tag)
+        {
+            var mr = Object.FindObjectOfType<MeshRenderer>();
+            var mat = mr != null ? mr.sharedMaterial : null;
+            if (mat == null)
+            {
+                Debug.LogWarning($"[UiSnapshot] {tag}：找不到 MeshRenderer/材质，参数未打印");
+                return;
+            }
+            var shapes = mat.GetVectorArray("_ItemShape");
+            var widths = mat.GetFloatArray("_ItemWidths");
+            var scales = mat.GetFloatArray("_ItemScales");
+            var enabled = mat.GetFloatArray("_ItemEnabled");
+            var positions = mat.GetVectorArray("_ItemPositions");
+            var res = mat.GetVector("_Resolution");
+            var quadUv = mat.GetVector("_ScreenUvRect");
+            var mergeRate = mat.GetFloat("_MergeRate");
+            var liveCount = 0;
+            for (var i = 0; i < (shapes?.Length ?? 0); i++)
+            {
+                if (enabled != null && enabled[i] < 0.5f)
+                    continue;
+                liveCount++;
+                var span = widths[i] * scales[i];
+                var shape = shapes[i];
+                Debug.Log($"[UiSnapshot] {tag} 槽{i}: 位置=({positions[i].x:F0},{positions[i].y:F0}) " +
+                          $"宽{widths[i]:F1} 缩放{scales[i]:F3} span={span:F1} " +
+                          $"形状缩放=({shape.x:F4},{shape.y:F4}) 旋转{shape.z * Mathf.Rad2Deg:F2}°");
+                // 期望轮廓尺寸：SVG 全宽 0.8 / 全高 0.508 × span × 各向缩放
+                Debug.Log($"[UiSnapshot] {tag} 槽{i}: 期望轮廓 {0.8f * span * Mathf.Abs(shape.x):F1}" +
+                          $"x{0.508f * span * Mathf.Abs(shape.y):F1}px");
+            }
+
+            // 融合半径（shader 的 smin：|d0-d1| < k 才互相影响，k 是归一化量 → k×屏高 px）。
+            // 两只落进这个半径，轮廓就不再是单只的形状：重合时 smin 退化成 d-k/4，
+            // 整圈外扩 k/4×屏高（0.05×1340 ≈ 16.75px/侧），侧壁被推平，看着像"两边被裁"。
+            if (mergeRate > 0f && liveCount > 1)
+            {
+                var zonePx = mergeRate * res.y;
+                var bulgePx = mergeRate * 0.25f * res.y;
+                for (var i = 0; i < (positions?.Length ?? 0); i++)
+                {
+                    if (enabled == null || enabled[i] < 0.5f)
+                        continue;
+                    for (var j = i + 1; j < positions.Length; j++)
+                    {
+                        if (enabled[j] < 0.5f)
+                            continue;
+                        var dx = positions[i].x - positions[j].x;
+                        var dy = positions[i].y - positions[j].y;
+                        var dist = Mathf.Sqrt(dx * dx + dy * dy);
+                        if (dist < zonePx)
+                            Debug.LogWarning($"[UiSnapshot] {tag} 槽{i}/槽{j} 相距 {dist:F0}px " +
+                                             $"< 融合半径 {zonePx:F0}px → 轮廓是并集，最大外扩 " +
+                                             $"{bulgePx:F1}px/侧；量单只形状请先摆开");
+                    }
+                }
+            }
+            Debug.Log($"[UiSnapshot] {tag} _Resolution=({res.x},{res.y}) quadUv={quadUv}");
         }
 
         static void Finish(int exitCode)
