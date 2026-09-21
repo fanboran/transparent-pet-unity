@@ -116,6 +116,8 @@ namespace TransparentPet.Pet.Glass
             public bool dragging;
             /// <summary>抛射 / 落定悬浮状态（拖拽偏移与速度样本都在其中）</summary>
             public readonly GlassSlimeMotion motion = new();
+            /// <summary>变换级生命感（呼吸 / 倾斜 / 挤压 / 戳回弹）</summary>
+            public readonly GlassSlimeLife life = new();
         }
 
         // ── 运行时状态 ──
@@ -154,9 +156,17 @@ namespace TransparentPet.Pet.Glass
         readonly float[] itemWidths = new float[MaxSlimes];
         readonly float[] itemScales = new float[MaxSlimes];
         readonly float[] itemEnabled = new float[MaxSlimes];
+        // xy = 变换级生命感的非等比缩放，z = 旋转弧度（见 GlassSlimeLife）
+        readonly Vector4[] itemShapes = new Vector4[MaxSlimes];
 
         readonly List<Slime> slimes = new();
         float nextSaveTime;
+
+        // 戳击判定（阈值同贴图线 SvgPetController）
+        const float TapMaxMovePx = 6f;
+        const float TapMaxSeconds = 0.35f;
+        Vector2 dragStartMouse;
+        float dragStartTime;
 
         const float MinUserScale = 0.5f, MaxUserScale = 2.5f;
 
@@ -237,6 +247,7 @@ namespace TransparentPet.Pet.Glass
             SyncQuadToCamera();
             HandleInput();
             StepMotions(Time.deltaTime);
+            TickLife(Time.deltaTime);
             UpdateSave();
 
             RenderPipeline();
@@ -318,6 +329,13 @@ namespace TransparentPet.Pet.Glass
 
         /// <summary>抓屏隐形当前是否生效（面板显示用）。</summary>
         public bool IsCaptureInvisible => captureInvisibleActive;
+
+        /// <summary>无头快照用：锁定第 index 只的生命感变换（见 GlassSlimeLife.SetFixedTransformForCapture）。</summary>
+        public void SetLifeTransformForCapture(int index, float scaleX, float scaleY, float rotationRad)
+        {
+            if (index >= 0 && index < slimes.Count)
+                slimes[index].life.SetFixedTransformForCapture(scaleX, scaleY, rotationRad);
+        }
 
         void OnScaleChanged(float scale) => userScale = Mathf.Clamp(scale, MinUserScale, MaxUserScale);
 
@@ -475,6 +493,8 @@ namespace TransparentPet.Pet.Glass
             {
                 hit.dragging = true;
                 hit.motion.BeginDrag(mouseTop, hit.pos, NowMs());
+                dragStartMouse = mouseTop;
+                dragStartTime = Time.time;
             }
 
             // 守卫同贴图 / PBF 两条线：Input.GetMouseButtonUp 是进程级输入，
@@ -487,6 +507,12 @@ namespace TransparentPet.Pet.Glass
                         continue;
                     s.dragging = false;
                     s.motion.EndDrag(); // 够快则起抛，否则原地落定
+
+                    // 戳 = 按下后未拖动（未抛出 + 位移与时长都在阈值内，同贴图线）
+                    if (!s.motion.IsThrowing
+                        && (mouseTop - dragStartMouse).magnitude <= TapMaxMovePx
+                        && Time.time - dragStartTime <= TapMaxSeconds)
+                        s.life.InjectTap();
                 }
             }
 
@@ -519,6 +545,31 @@ namespace TransparentPet.Pet.Glass
                 if (s.dragging || s.motion.Settled)
                     continue;
                 s.pos = s.motion.Step(s.pos, deltaTime, workArea, halfW, bottomH);
+
+                // 落地冲击当场注入（JustLanded 只在这一步有效；落定后不再 Step，
+                // 若留到 TickLife 里读就会反复注入）
+                if (s.motion.JustLanded)
+                    s.life.InjectLanding(s.motion.LandingImpact);
+            }
+        }
+
+        /// <summary>
+        /// 变换级生命感：每只推进一步（呼吸 / 拖拽倾斜 / 挤压回弹）。
+        /// 结果只在推槽位时叠加到渲染上——位置与命中判定用的仍是未变形的逻辑位置与静息轮廓；
+        /// phase01 按槽位序号错开，避免多只同步呼吸（像坏掉的 GIF）。
+        /// </summary>
+        void TickLife(float deltaTime)
+        {
+            var width = ScaleValue;
+            var shapeHeightPx = GlassSlimeMotion.TopOf(width) + GlassSlimeMotion.BottomOf(width);
+            var phaseStep = slimes.Count > 0 ? 1f / slimes.Count : 0f;
+
+            for (var i = 0; i < slimes.Count; i++)
+            {
+                var s = slimes[i];
+                var active = s.dragging || s.motion.IsThrowing;
+                s.life.Tick(deltaTime, Time.time, i * phaseStep, active, s.dragging,
+                            s.motion.Physics.LastFrameVelocity.x, shapeHeightPx);
             }
         }
 
@@ -596,15 +647,22 @@ namespace TransparentPet.Pet.Glass
             for (var i = 0; i < MaxSlimes; i++)
             {
                 var live = i < slimes.Count;
-                itemPositions[i] = live ? new Vector4(slimes[i].pos.x, slimes[i].pos.y, 0, 0) : Vector4.zero;
+                // 生命感的位移偏移只作用于渲染（逻辑位置不动，见 TickLife）
+                itemPositions[i] = live
+                    ? new Vector4(slimes[i].pos.x, slimes[i].pos.y + slimes[i].life.OffsetY, 0, 0)
+                    : Vector4.zero;
                 itemWidths[i] = live ? SlimeWidthPx : 0f;
                 itemScales[i] = live ? Mathf.Clamp(userScale, MinUserScale, MaxUserScale) : 0f;
                 itemEnabled[i] = live ? 1f : 0f;
+                itemShapes[i] = live
+                    ? new Vector4(slimes[i].life.ScaleX, slimes[i].life.ScaleY, slimes[i].life.RotationRad, 0f)
+                    : new Vector4(1f, 1f, 0f, 0f);
             }
             mainMat.SetVectorArray("_ItemPositions", itemPositions);
             mainMat.SetFloatArray("_ItemWidths", itemWidths);
             mainMat.SetFloatArray("_ItemScales", itemScales);
             mainMat.SetFloatArray("_ItemEnabled", itemEnabled);
+            mainMat.SetVectorArray("_ItemShape", itemShapes);
         }
 
         void EnsureTargets(int w, int h)

@@ -103,6 +103,10 @@ Shader "TransparentPet/LiquidGlass"
             float _ItemWidths[MAX_ITEMS];
             float _ItemScales[MAX_ITEMS];
             float _ItemEnabled[MAX_ITEMS];
+            // 变换级生命感（每槽）：xy = 非等比缩放（呼吸/挤压），z = 绕中心的旋转弧度。
+            // 全 1 / 0 时与旧行为逐像素一致（见 getItemSDF 的归一化因子）。
+            // 只影响渲染；CPU 命中判定与物理边界仍用未变形的静息轮廓（视觉装饰不污染模拟）
+            float4 _ItemShape[MAX_ITEMS];
 
             #define PI 3.14159265359
 
@@ -230,10 +234,26 @@ Shader "TransparentPet/LiquidGlass"
                 if (_ItemEnabled[index] < 0.5)
                     return 1.0; // 禁用槽位 = 一个屏高之外
 
-                float2 pn = (pixelTopDown - _ItemPositions[index].xy) / _Resolution.y;
+                float2 d = pixelTopDown - _ItemPositions[index].xy;
+
+                // 变换级生命感：绕中心旋转（倾斜）→ 各轴独立缩放（呼吸/挤压）。
+                // 形状 = {pos + R(-rot)·shape_rest}，即旋转采样点等价于反向旋转形状。
+                float rot = _ItemShape[index].z;
+                if (rot != 0.0)
+                {
+                    float cr = cos(rot);
+                    float sr = sin(rot);
+                    d = float2(cr * d.x - sr * d.y, sr * d.x + cr * d.y);
+                }
+
                 float span = _ItemWidths[index] * _ItemScales[index];
-                float slimeD = sdSlime(pn * _Resolution.y / span);
-                return slimeD * span / _Resolution.y;
+                float2 span2 = span * _ItemShape[index].xy;
+                float slimeD = sdSlime(float2(d.x / span2.x, d.y / span2.y));
+
+                // 距离还原回归一化单位（与旧写法等价：shape=(1,1) 时均值因子恒为 1）。
+                // 非等比缩放会让距离度量失真，smin 融合半径取两轴均值即可（软参数）
+                float spanMean = span * 0.5 * (_ItemShape[index].x + _ItemShape[index].y);
+                return slimeD * spanMean / _Resolution.y;
             }
 
             // smin 平滑融合（多物品 metaball 式合并；单物品时退化为 min）

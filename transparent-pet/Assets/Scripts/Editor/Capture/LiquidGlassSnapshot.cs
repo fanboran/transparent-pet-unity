@@ -7,6 +7,9 @@
 //   liquidglass_gradient.png   主渲染（垂直渐变素材，观察折射形变更直观）
 //   liquidglass_sdf.png        STEP 0：SDF 梯度（核对轮廓形状/比例）
 //   liquidglass_normal.png     STEP 2：法线彩虹图（核对法线连续性）
+//   liquidglass_life_{identity,squash,tilt}.png
+//                              变换级生命感定点图（渐变底，三者同底可 A/B）：
+//                              identity = 无变形、squash = 挤压、tilt = 向右拖的倾角
 // 运行：-executeMethod TransparentPet.EditorTools.LiquidGlassSnapshot.CaptureHeadless
 // 输出：%TEMP%/pet-snapshot/（Path.GetTempPath() 派生，不写死个人路径）
 // ============================================================================
@@ -80,6 +83,21 @@ namespace TransparentPet.EditorTools
 
             controller.Step = 2;
             Snap("liquidglass_normal.png");
+
+            // ── 变换级生命感的定点图：人工确认形变方向与幅度 ──
+            // 同用渐变素材（形变最直观），与上面的 liquidglass_gradient.png 同底可 A/B：
+            //   identity = 无变形（等同于本次改造前的渲染路径）
+            //   squash   = 挤压（落地/戳：横向涨、纵向扁）
+            //   tilt     = 倾角（向右拖拽 → 顶部朝运动方向倾倒）
+            controller.BgType = 1;
+            controller.Step = 9;
+            controller.SetLifeTransformForCapture(0, 1f, 1f, 0f);
+            Snap("liquidglass_life_identity.png");
+            controller.SetLifeTransformForCapture(0, 1.15f, 0.85f, 0f);
+            Snap("liquidglass_life_squash.png");
+            controller.SetLifeTransformForCapture(0, 1f, 1f, -10f * Mathf.Deg2Rad);
+            Snap("liquidglass_life_tilt.png");
+            controller.SetLifeTransformForCapture(0, 1f, 1f, 0f); // 复原，避免影响后续/重复运行
 
             cam.targetTexture = null;
 

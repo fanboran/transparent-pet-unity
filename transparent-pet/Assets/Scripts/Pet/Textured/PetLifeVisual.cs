@@ -1,3 +1,4 @@
+using TransparentPet.Pet.Common;
 using UnityEngine;
 
 namespace TransparentPet.Pet.Textured

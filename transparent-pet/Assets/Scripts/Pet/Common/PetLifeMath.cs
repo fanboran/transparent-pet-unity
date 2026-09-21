@@ -1,15 +1,16 @@
 using UnityEngine;
 
-namespace TransparentPet.Pet.Textured
+namespace TransparentPet.Pet.Common
 {
     /// <summary>
     /// 生命感表现层的纯数学：呼吸脉动、浮沉、挤压弹簧、落地冲击、拖拽倾角。
-    /// 不依赖任何场景对象——运行时（PetLifeVisual）与离线快照工具（ProductShots）
-    /// 共用同一套函数，保证"演示图 = 真实运行行为"；NUnit 可直接实例化验证。
+    /// 不依赖任何场景对象——运行时（贴图线 PetLifeVisual / 玻璃线 GlassSlimeLife）
+    /// 与离线快照工具（ProductShots）共用同一套函数，保证"演示图 = 真实运行行为"；
+    /// NUnit 可直接实例化验证。
     /// </summary>
     /// <summary>
-    /// 生命感调参默认值（单一来源）：运行时表现层（PetLifeVisual）的字段默认值与
-    /// 离线快照工具（ProductShots）共用同一组常量，保证"演示图 = 真实运行行为"。
+    /// 生命感调参默认值（单一来源）：各物种线表现层的字段默认值与离线快照工具
+    /// （ProductShots）共用同一组常量，保证"演示图 = 真实运行行为"。
     /// </summary>
     public static class LifeTuning
     {

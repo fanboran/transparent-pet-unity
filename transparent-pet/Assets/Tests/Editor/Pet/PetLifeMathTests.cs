@@ -1,7 +1,6 @@
 using NUnit.Framework;
 using UnityEngine;
-using TransparentPet.Pet;
-using TransparentPet.Pet.Textured;
+using TransparentPet.Pet.Common;
 
 namespace TransparentPet.Tests
 {
