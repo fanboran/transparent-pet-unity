@@ -291,13 +291,15 @@ namespace TransparentPet.Pet.Textured
                 dragStartTime = Time.time;
             }
 
-            if (Input.GetMouseButtonUp(0))
+            // 必须带 IsDragging 守卫：Input.GetMouseButtonUp 是进程级输入，同屏每只贴图史莱姆
+            // 都会在同一帧进入这里——没有守卫时，松手会广播给所有只，曾被动过的会拿残留速度复飞。
+            // PetController / MeshPetController 走的是同一个写法（&& sim.IsGrabbed）。
+            if (Input.GetMouseButtonUp(0) && physics.IsDragging)
             {
-                var wasDragging = physics.IsDragging;
                 physics.DragEnd();
 
                 // 戳 = 按下后未拖动（未抛出 + 位移与时长都在阈值内）
-                if (wasDragging && !physics.IsThrowing
+                if (!physics.IsThrowing
                     && (MouseScreenPos() - dragStartMouse).magnitude <= TapMaxMovePx
                     && Time.time - dragStartTime <= TapMaxSeconds)
                     Tapped = true;

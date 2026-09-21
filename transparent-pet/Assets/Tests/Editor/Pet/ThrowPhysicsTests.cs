@@ -65,6 +65,54 @@ namespace TransparentPet.Tests
         }
 
         [Test]
+        public void DragEnd_WithoutDragBegin_IsIgnored()
+        {
+            var p = NewPhysics();
+            p.DragEnd();
+            Assert.IsFalse(p.IsDragging);
+            Assert.IsFalse(p.IsThrowing);
+            Assert.AreEqual(Vector2.zero, p.ThrowVelocity);
+        }
+
+        [Test]
+        public void DragEnd_ClearsVelocityBuffer()
+        {
+            var p = NewPhysics();
+            p.DragBegin(Vector2.zero, Vector2.zero, 0);
+            p.DragMove(new Vector2(20f, 0f), 100);
+            p.DragEnd();
+
+            Assert.AreEqual(0, p.VelocitySampleCount,
+                "松手后速度样本必须清空——残留会让本实例在此后每一次松手时用旧速度复飞");
+        }
+
+        [Test]
+        public void DragEnd_WhenNotDragging_DoesNotRelaunchWithStaleBuffer()
+        {
+            // 复现"投掷串扰"（2026-09-21）：A 被甩出一次后，同屏任何一只的松手都会
+            // 广播到 A 的实例上——没有守卫时 A 会拿残留的速度样本再次起飞。
+            var a = NewPhysics();
+            a.DragBegin(Vector2.zero, Vector2.zero, 0);
+            a.DragMove(new Vector2(20f, 0f), 100); // 样本 200 px/s → 起抛 400
+            a.DragEnd();
+            Assert.IsTrue(a.IsThrowing);
+
+            // 让它自然抛落并被地面摩擦磨到接近静止（与运行时一样仍处于抛射态）
+            var pos = new Vector2(500f, 500f);
+            var env = new Vector2(1920f, 1080f);
+            var size = new Vector2(200f, 132f);
+            for (var i = 0; i < 300; i++)
+                pos = a.Step(pos, 1f / 60f, env, size, 1f).Position;
+
+            var settled = a.ThrowVelocity;
+            Assert.Less(settled.magnitude, 400f, "前置条件：抛速应已衰减，否则本用例区分不出新旧行为");
+
+            a.DragEnd(); // 同屏另一只被操作：这次进程级松手事件也落到了本实例上
+            Assert.AreEqual(settled.x, a.ThrowVelocity.x, 0.01f, "游离的松手不得改写已有抛速");
+            Assert.AreEqual(settled.y, a.ThrowVelocity.y, 0.01f, "游离的松手不得改写已有抛速");
+        }
+
+        [Test]
         public void Step_AppliesGravity()
         {
             var p = NewPhysics();

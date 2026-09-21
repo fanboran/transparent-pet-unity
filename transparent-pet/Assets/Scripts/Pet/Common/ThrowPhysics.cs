@@ -81,17 +81,29 @@ namespace TransparentPet.Pet.Common
             return newPos;
         }
 
-        /// <summary>松手：按缓冲均值×倍率起抛，夹到上限，不足下限则静止（对应 handle_area_input_event 松开分支）</summary>
+        /// <summary>
+        /// 松手：按缓冲均值×倍率起抛，夹到上限，不足下限则静止（对应 handle_area_input_event 松开分支）。
+        /// 未在拖拽时整段忽略——松手是进程级输入（Input.GetMouseButtonUp），同屏每只都会各收到一次，
+        /// 不设这道门，旁观者就会拿自己残留的速度样本起抛。
+        /// </summary>
         public void DragEnd()
         {
+            if (!IsDragging)
+                return;
+
             IsDragging = false;
-            if (!ThrowEnabled) return;
 
             var average = Vector2.zero;
             foreach (var v in velocityBuffer)
                 average += v;
             if (velocityBuffer.Count > 0)
                 average /= velocityBuffer.Count;
+
+            // 结算即清：样本只在一次拖拽内有效。DragBegin 虽也清，但清在这里才堵得住
+            // "不经过 DragBegin 的松手也会结算"这条路径（SlimePbf/SlimePbfMesh 的 Release 同款处理）
+            velocityBuffer.Clear();
+
+            if (!ThrowEnabled) return;
 
             StartThrow(average * Multiplier);
 
