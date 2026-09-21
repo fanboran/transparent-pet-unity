@@ -13,6 +13,10 @@
 // Godot 版在此 pass 里按形状纹理画阴影——其接线（读主 pass 输出当 SDF）
 // 在原项目中本就存疑；Unity 版阴影改由主着色器在轮廓外环带直接绘制，
 // 本 pass 保持纯素材，避免与主 pass 形成 RT 依赖。
+//
+// 【绘制范围收敛（性能）】本 pass 与主合成同矩形（见 GlassRenderRect）：
+// _ScreenUvRect 把 quad 本地 uv 换算回屏幕 uv，素材图案仍是"整屏坐标系"里的
+// 图案——矩形只决定"渲染哪一块"，不改变图案本身，逐像素与全屏绘制等价。
 // ================================================================
 
 Shader "TransparentPet/LiquidGlassBg"
@@ -46,6 +50,9 @@ Shader "TransparentPet/LiquidGlassBg"
             float _BgTextureRatio;
             float _BgTextureReady;
             float4 _Resolution;
+            // 绘制矩形在屏幕 uv（xy = 原点，zw = 尺寸）；_Resolution 仍是整屏尺寸，
+            // 故图案坐标（uvpx = 屏幕 uv × _Resolution）与全屏绘制逐像素一致
+            float4 _ScreenUvRect;
 
             struct v2f
             {
@@ -57,7 +64,7 @@ Shader "TransparentPet/LiquidGlassBg"
             {
                 v2f o;
                 o.pos = UnityObjectToClipPos(v.vertex);
-                o.uv = v.texcoord.xy;
+                o.uv = _ScreenUvRect.xy + v.texcoord.xy * _ScreenUvRect.zw;
                 return o;
             }
 

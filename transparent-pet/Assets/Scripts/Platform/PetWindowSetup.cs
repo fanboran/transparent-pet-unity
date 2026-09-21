@@ -155,6 +155,10 @@ namespace TransparentPet.Platform
 
             tray?.Pump(); // 托盘消息 + 菜单动作（动作在 Pump 顶层执行，见 NativeTray）
             UpdateClickThrough();
+
+            // 空闲降帧：悬停 / 设置面板在场算活动；拖拽等活动由各宠物控制器自行上报
+            //（见 Core/FramePacing）。两进程都跑这一处，两个窗口的节奏一致。
+            FramePacing.Tick(PointerHover.IsHovering(Time.frameCount) || OverlayState.SettingsVisible);
         }
 
         /// <summary>

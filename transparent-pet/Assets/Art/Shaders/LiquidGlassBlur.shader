@@ -9,6 +9,12 @@
 // 高斯权重由 CPU 端（LiquidGlassController）按 σ = radius/3 预计算并
 // 归一化后经 SetFloatArray 推入（避免逐像素算 exp），shader 内只做
 // 保护性归一化。数组上限 64 = radius 上限 31，超出部分截断。
+//
+// 【绘制范围收敛（性能）】本 pass 也只覆盖绘制矩形（见 GlassRenderRect）：
+//   · _ScreenUvRect：目标矩形的屏幕 uv 位置尺寸（quad 本地 uv → 屏幕 uv）；
+//   · _SrcRemap：源纹理的屏幕 uv 映射（xy = 原点，zw = 屏幕 uv → 源 uv 缩放）。
+// 采样步长仍以"屏幕像素"为单位（_Resolution = 整屏尺寸），而矩形与屏幕同像素
+// 密度 ⇒ 偏移的像素语义与全屏绘制时完全相同，模糊结果逐像素不变。
 // ================================================================
 
 Shader "TransparentPet/LiquidGlassBlur"
@@ -40,6 +46,8 @@ Shader "TransparentPet/LiquidGlassBlur"
             float _BlurRadius;
             float _Vertical;
             float4 _Resolution;
+            float4 _ScreenUvRect; // 目标矩形在屏幕 uv（xy = 原点，zw = 尺寸）
+            float4 _SrcRemap;     // 源纹理：xy = 屏幕 uv 原点，zw = 屏幕 uv → 源 uv 的缩放
 
             #define MAX_KERNEL_SIZE 64
             float _BlurWeights[MAX_KERNEL_SIZE];
@@ -54,13 +62,13 @@ Shader "TransparentPet/LiquidGlassBlur"
             {
                 v2f o;
                 o.pos = UnityObjectToClipPos(v.vertex);
-                o.uv = v.texcoord.xy;
+                o.uv = _ScreenUvRect.xy + v.texcoord.xy * _ScreenUvRect.zw;
                 return o;
             }
 
             float4 frag(v2f i) : SV_Target
             {
-                float2 texelSize = 1.0 / _Resolution.xy;
+                float2 texelSize = 1.0 / _Resolution.xy; // 屏幕像素（矩形与屏幕同密度）
 
                 int kernelSize = min(int(_BlurRadius * 2.0 + 1.0), MAX_KERNEL_SIZE);
                 int halfKernel = kernelSize / 2;
@@ -73,7 +81,7 @@ Shader "TransparentPet/LiquidGlassBlur"
                     int offset = k - halfKernel;
                     float2 uvOffset = (_Vertical > 0.5 ? float2(0.0, offset) : float2(offset, 0.0)) * texelSize;
                     float weight = _BlurWeights[k];
-                    color += tex2D(_MainTex, i.uv + uvOffset) * weight;
+                    color += tex2D(_MainTex, (i.uv + uvOffset - _SrcRemap.xy) * _SrcRemap.zw) * weight;
                     totalWeight += weight;
                 }
 

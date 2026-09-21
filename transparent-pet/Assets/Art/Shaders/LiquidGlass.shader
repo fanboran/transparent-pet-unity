@@ -21,6 +21,20 @@
 // 贝塞尔控制点两处共用同一组常量，改形状必须两处同步改。
 //
 // 调试视图：_Step 0=SDF 白色梯度 1=SDF 等高线 2=法线彩虹图 9=主渲染。
+//
+// 【绘制范围收敛（性能）】
+// 本 shader 逐像素很重（每像素 16 槽贝塞尔 SDF，法线再×4），全屏绘制在核显上要
+// 几十毫秒。玻璃本体只占屏幕一小块，其余像素算完 alpha≈0——于是 CPU 端
+// （GlassRenderRect）只让 quad 覆盖"轮廓 + 阴影可见半径"，并用 _ScreenUvRect 把
+// quad 的本地 uv 换算回屏幕 uv：片元里的 uv / pixel 与全屏绘制逐像素等价，
+// 画面（含轮廓外那圈淡阴影）逐字节不变。
+// 多只分散时并集矩形可能覆盖大半个屏幕，故主渲染路径再加两级跳过（均为
+// 「本来就不改变结果」的剪枝，见 allItemsFar / mainSDF）：
+//   · 整屏提前退出：离所有物品都远到阴影已不可见 → 直接输出全透明；
+//   · 逐项跳过：某物品的下界距离已超过当前 smin 结果 + 融合宽度 → 该项对结果
+//     无影响（smin 在 |a-b|≥k 时恒等于 min，逐位等价）。
+// 调试视图（_Step ≤ 2）保持全屏 + 不剪枝：SDF/法线图是形状锚定工具，需要看到
+// 轮廓外的数值分布。
 // ================================================================
 
 Shader "TransparentPet/LiquidGlass"
@@ -77,6 +91,18 @@ Shader "TransparentPet/LiquidGlass"
             float4 _Resolution;
             int _Step;
 
+            // 绘制矩形（左上原点像素 → 见 CPU 端 GlassRenderRect）。
+            // _ScreenUvRect：矩形在屏幕 uv（左下原点）的位置尺寸；_RectUvScale：
+            // 屏幕 uv → 矩形本地 uv 的缩放（= 屏幕尺寸 / 矩形尺寸，矩形与屏幕同像素密度）。
+            float4 _ScreenUvRect;
+            float4 _RectUvScale;
+            // 清晰背景 _Bg 的采样映射：xy = 该纹理左上角在屏幕 uv 的原点，
+            // zw = 屏幕 uv → 纹理 uv 的缩放。用于「桌面帧（区域随绘制矩形变化）」
+            // 与「素材 RT（与绘制矩形同尺寸）」两种来源，两者只是参数不同。
+            float4 _BgRemap;
+            // 主渲染的整体提前退出阈值（px，已含安全余量）——超过它就没有任何可见输出
+            float _EarlyOutPx;
+
             float _RefThickness;
             float _RefFactor;
             float _RefDispersion;
@@ -113,14 +139,18 @@ Shader "TransparentPet/LiquidGlass"
             struct v2f
             {
                 float4 pos : SV_POSITION;
-                float2 uv : TEXCOORD0;
+                float2 uv : TEXCOORD0;      // 屏幕 uv（与全屏绘制逐像素等价）
+                float2 uvLocal : TEXCOORD1; // 矩形本地 uv（模糊 RT / 素材 RT 用）
             };
 
             v2f vert(appdata_base v)
             {
                 v2f o;
                 o.pos = UnityObjectToClipPos(v.vertex);
-                o.uv = v.texcoord.xy;
+                // quad 本地 uv → 屏幕 uv：绘制矩形只覆盖画面一角时，片元拿到的
+                // uv 仍是"整屏坐标系"里的位置，SDF/阴影/折射的量纲全部不变
+                o.uv = _ScreenUvRect.xy + v.texcoord.xy * _ScreenUvRect.zw;
+                o.uvLocal = v.texcoord.xy;
                 return o;
             }
 
@@ -156,7 +186,7 @@ Shader "TransparentPet/LiquidGlass"
                 }
 
                 float t = clamp(best_t, 0.0, 1.0);
-                for (int i = 0; i < 6; i++)
+                for (int iter = 0; iter < 6; iter++)
                 {
                     float2 B = bezier3(a, b, c, d, t);
                     float u = 1.0 - t;
@@ -194,14 +224,14 @@ Shader "TransparentPet/LiquidGlass"
                 float lo = 0.0, hi = 1.0;
                 if (y <= 0.11)
                 {
-                    for (int i = 0; i < 20; i++)
+                    for (int step = 0; step < 20; step++)
                     {
                         float mid = (lo + hi) * 0.5;
                         if (bezier3(RU_A, RU_B, RU_C, RU_D, mid).y < y) lo = mid; else hi = mid;
                     }
                     return bezier3(RU_A, RU_B, RU_C, RU_D, (lo + hi) * 0.5).x;
                 }
-                for (int i = 0; i < 20; i++)
+                for (int step = 0; step < 20; step++)
                 {
                     float mid = (lo + hi) * 0.5;
                     if (bezier3(RL_A, RL_B, RL_C, RL_D, mid).y < y) lo = mid; else hi = mid;
@@ -263,22 +293,65 @@ Shader "TransparentPet/LiquidGlass"
                 return lerp(b, a, h) - k * h * (1.0 - h);
             }
 
-            float mainSDF(float2 pixelTopDown)
+            // 物品保守 AABB 的像素距离下界（点在 AABB 内为 0）。
+            // 形状 ⊂ AABB ⇒ 返回值 ≤ 真实 SDF 像素距离，但注意本 shader 的 SDF 是
+            // 「归一化距离 × spanMean / 分辨率」，非等比缩放（生命感的呼吸/挤压）会
+            // 让两者差一个 ≤ max(sx,sy)/mean 的因子；调用方按 2 倍安全系数折算。
+            float itemAabbDistPx(int index, float2 pixelTopDown)
+            {
+                float2 d = pixelTopDown - _ItemPositions[index].xy;
+                float rot = _ItemShape[index].z;
+                if (rot != 0.0)
+                {
+                    float cr = cos(rot);
+                    float sr = sin(rot);
+                    d = float2(cr * d.x - sr * d.y, sr * d.x + cr * d.y);
+                }
+                float span = _ItemWidths[index] * _ItemScales[index];
+                // y 取上下界中绝对值较大者（-0.231 / +0.275），对称外包属安全侧
+                float2 halfExt = float2(0.4, 0.275) * span * abs(_ItemShape[index].xy);
+                float2 q = max(abs(d) - halfExt, 0.0);
+                return length(q);
+            }
+
+            // 是否所有物品都远到"阴影已不可见"。阈值由 CPU 端按阴影可量化尾巴长度
+            // 给出（GlassRenderRect.ShadowTailPx），这里再乘 2 抵掉上面那个形状因子。
+            bool allItemsFar(float2 pixelTopDown)
+            {
+                for (int i = 0; i < MAX_ITEMS; i++)
+                {
+                    if (_ItemEnabled[i] < 0.5)
+                        continue;
+                    if (itemAabbDistPx(i, pixelTopDown) <= _EarlyOutPx * 2.0)
+                        return false;
+                }
+                return true;
+            }
+
+            float mainSDF(float2 pixelTopDown, bool allowSkip)
             {
                 float result = 1.0;
                 for (int i = 0; i < MAX_ITEMS; i++)
+                {
+                    if (_ItemEnabled[i] < 0.5)
+                        continue;
+                    // 剪枝（仅在主渲染路径开启）：|d - result| ≥ k 时 smin 恒等于
+                    // min(result, d)，该项对 result 无影响，跳过与不跳过逐位等价
+                    if (allowSkip && itemAabbDistPx(i, pixelTopDown) / _Resolution.y * 0.5 - result >= _MergeRate)
+                        continue;
                     result = smin(result, getItemSDF(i, pixelTopDown), _MergeRate);
+                }
                 return result;
             }
 
             // SDF 数值梯度 = 表面法线。返回像素空间单位梯度（merged 是归一化距离，
             // 乘回分辨率）；Godot 原版此处乘 1414 的放大系数只为可视化，这里语义化
-            float2 getNormal(float2 pixelTopDown)
+            float2 getNormal(float2 pixelTopDown, bool allowSkip)
             {
                 float2 h = float2(max(abs(ddx(pixelTopDown.x)), 0.0001), max(abs(ddy(pixelTopDown.y)), 0.0001));
                 float2 grad = float2(
-                    mainSDF(pixelTopDown + float2(h.x, 0.0)) - mainSDF(pixelTopDown - float2(h.x, 0.0)),
-                    mainSDF(pixelTopDown + float2(0.0, h.y)) - mainSDF(pixelTopDown - float2(0.0, h.y))
+                    mainSDF(pixelTopDown + float2(h.x, 0.0), allowSkip) - mainSDF(pixelTopDown - float2(h.x, 0.0), allowSkip),
+                    mainSDF(pixelTopDown + float2(0.0, h.y), allowSkip) - mainSDF(pixelTopDown - float2(0.0, h.y), allowSkip)
                 ) / (2.0 * h);
                 return grad * _Resolution.y;
             }
@@ -371,16 +444,29 @@ Shader "TransparentPet/LiquidGlass"
                 return angle < 0.0 ? angle + 2.0 * PI : angle;
             }
 
-            // RGB 三通道按各自折射率分别偏移采样，再与模糊版逐通道混合
-            float4 getTextureDispersion(float mixRate, float2 offset, float factor, float2 uv)
+            // 清晰背景 _Bg 的采样映射：屏幕 uv → 该纹理自己的 uv。
+            // 桌面帧的矩形随绘制矩形移动、素材 RT 与绘制矩形同尺寸，两者只是参数不同。
+            float2 bgUV(float2 screenUv)
             {
-                float bgR = tex2D(_Bg, uv + offset * (1.0 - (N_R - 1.0) * factor)).r;
-                float bgG = tex2D(_Bg, uv + offset * (1.0 - (N_G - 1.0) * factor)).g;
-                float bgB = tex2D(_Bg, uv + offset * (1.0 - (N_B - 1.0) * factor)).b;
+                return (screenUv - _BgRemap.xy) * _BgRemap.zw;
+            }
 
-                float blurR = tex2D(_BlurredBg, uv + offset * (1.0 - (N_R - 1.0) * factor)).r;
-                float blurG = tex2D(_BlurredBg, uv + offset * (1.0 - (N_G - 1.0) * factor)).g;
-                float blurB = tex2D(_BlurredBg, uv + offset * (1.0 - (N_B - 1.0) * factor)).b;
+            // RGB 三通道按各自折射率分别偏移采样，再与模糊版逐通道混合。
+            // uv = 屏幕 uv；uvLocal = 矩形本地 uv（模糊 RT 的坐标系）——
+            // 同一个像素位移在两者间的换算就是 _RectUvScale
+            float4 getTextureDispersion(float mixRate, float2 offset, float factor, float2 uv, float2 uvLocal)
+            {
+                float2 offR = offset * (1.0 - (N_R - 1.0) * factor);
+                float2 offG = offset * (1.0 - (N_G - 1.0) * factor);
+                float2 offB = offset * (1.0 - (N_B - 1.0) * factor);
+
+                float bgR = tex2D(_Bg, bgUV(uv + offR)).r;
+                float bgG = tex2D(_Bg, bgUV(uv + offG)).g;
+                float bgB = tex2D(_Bg, bgUV(uv + offB)).b;
+
+                float blurR = tex2D(_BlurredBg, uvLocal + offR * _RectUvScale.xy).r;
+                float blurG = tex2D(_BlurredBg, uvLocal + offG * _RectUvScale.xy).g;
+                float blurB = tex2D(_BlurredBg, uvLocal + offB * _RectUvScale.xy).b;
 
                 return float4(lerp(bgR, blurR, mixRate), lerp(bgG, blurG, mixRate), lerp(bgB, blurB, mixRate), 1.0);
             }
@@ -391,7 +477,14 @@ Shader "TransparentPet/LiquidGlass"
                 float2 pixel = i.uv * resolution;              // GL 语义（左下原点），用于 UV 采样换算
                 float2 pixelTD = float2(pixel.x, resolution.y - pixel.y); // y 向下（top-origin），SDF/法线/眩光统一在此空间计算
 
-                float merged = mainSDF(pixelTD);
+                // 剪枝只在主渲染路径开启（调试视图要全屏数值）
+                bool skip = _Step > 2;
+
+                // 离所有物品都远到阴影已不可见 → 输出与"逐像素算完得到 alpha=0"完全一致
+                if (skip && allItemsFar(pixelTD))
+                    return float4(0, 0, 0, 0);
+
+                float merged = mainSDF(pixelTD, skip);
 
                 float4 outColor;
 
@@ -418,7 +511,7 @@ Shader "TransparentPet/LiquidGlass"
                     // 调试：法线彩虹图（平滑过渡 = 法线连续；角度在 y 向下空间，hue 与 GL 惯例差 180°，仅诊断用）
                     if (merged < 0.0)
                     {
-                        float2 normal = getNormal(pixelTD);
+                        float2 normal = getNormal(pixelTD, skip);
                         float angle = atan2(normal.y, normal.x);
                         float hue = (angle < 0.0 ? angle + 2.0 * PI : angle) / (2.0 * PI);
                         outColor = float4(hsv2rgb(float3(hue, 1.0, 1.0)), length(normal));
@@ -432,7 +525,7 @@ Shader "TransparentPet/LiquidGlass"
                     if (merged < 0.005)
                     {
                         float nmerged = -merged * resolution.y; // 到边缘的深度（px）
-                        float2 normal = normalize(getNormal(pixelTD) + float2(1e-6, 1e-6));
+                        float2 normal = normalize(getNormal(pixelTD, skip) + float2(1e-6, 1e-6));
 
                         // 简化斯涅尔模型：深度越深入射角越平，edgeFactor = -tan(θT-θI)
                         // 在轮廓边缘→接近 1（透镜边缘折得最狠）、内部→0
@@ -450,7 +543,7 @@ Shader "TransparentPet/LiquidGlass"
                         if (edgeFactor <= 0.0)
                         {
                             // 无偏移 → 直接模糊底 + 色调
-                            outColor = tex2D(_BlurredBg, i.uv);
+                            outColor = tex2D(_BlurredBg, i.uvLocal);
                             outColor.rgb = lerp(outColor.rgb, _Tint.rgb, _Tint.a * 0.8);
                         }
                         else
@@ -464,7 +557,8 @@ Shader "TransparentPet/LiquidGlass"
                                 _BlurEdge > 0.5 ? 1.0 : edgeH,
                                 offsetUV,
                                 _RefDispersion,
-                                i.uv);
+                                i.uv,
+                                i.uvLocal);
 
                             outColor = float4(lerp(refracted.rgb, _Tint.rgb, _Tint.a * 0.8), 1.0);
 

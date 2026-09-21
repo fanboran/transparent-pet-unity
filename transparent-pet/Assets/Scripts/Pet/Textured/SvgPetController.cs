@@ -310,6 +310,7 @@ namespace TransparentPet.Pet.Textured
         {
             if (physics.IsDragging)
             {
+                FramePacing.MarkActive(); // 空闲降帧：拖拽期要全速（见 Core/FramePacing）
                 logicScreenPos = physics.DragMove(MouseScreenPos(), NowMs());
                 prevVerticalVelocity = 0f;
             }

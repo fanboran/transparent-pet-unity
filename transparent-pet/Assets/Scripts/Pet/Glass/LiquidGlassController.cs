@@ -11,6 +11,11 @@
 //        └→ LiquidGlass(主合成: 桌面纹理 + hRT) → 全屏 quad
 //   抓屏失败/未开隐形时回退 LiquidGlassBg 程序化素材。
 //
+// 绘制范围（性能）：主合成是逐像素的重活，而玻璃本体只占屏幕一小块——本控制器
+// 每帧算出"轮廓 + 阴影可见半径"的绘制矩形（GlassRenderRect），让 quad、三张
+// RenderTexture 与抓屏区域全部收敛到它；shader 端用 _ScreenUvRect 把 uv 换算回
+// 屏幕坐标，画面逐像素不变（等价性由 LiquidGlassSnapshot 的定点图锚定）。
+//
 // 多只：shader 端保留 16 个物品槽位（LiquidGlass.shader 的 MAX_ITEMS=16，与
 // 本类 MaxSlimes 对齐）+ smin 融合（相邻史莱姆会像液滴一样合并），本控制器
 // 在 CPU 侧管理至多 16 只的位置/拖拽/持久化。
@@ -133,14 +138,19 @@ namespace TransparentPet.Pet.Glass
         // 数秒级阻塞（事件日志 4 次 AppHang 的头号嫌疑）。放主线程等于每秒 30 次
         // "抽奖"，抽中即整窗挂死被 Windows 幽灵化。挪到后台线程：卡也只卡它，
         // 主循环/心跳/托盘/退出全部照常；主线程只消费最新完成帧（SetPixelData
-        // 必须主线程，Unity 限制）。帧与尺寸成对发布，杜绝"旧尺寸帧喂新目标"。
+        // 必须主线程，Unity 限制）。帧与"它对应哪块矩形"成对发布，杜绝错位折射。
+        //
+        // 抓屏区域 = 绘制矩形（不再整屏）：全屏 BitBlt 在本机实测稳定 ~100ms/次
+        //（2560×1440 约 14.7MB），收敛到矩形后降到个位数毫秒、主线程上传量同步缩小。
         Thread captureThread;
         volatile bool captureRunning;
         readonly object captureGate = new object();
         byte[] captureWrite;   // 工作线程独占写
         byte[] captureLatest;  // 最新完成帧（gate 下交换）
+        int captureLatestX, captureLatestY; // 该帧对应的绘制矩形原点（窗口内像素，gate 下）
         int captureLatestW, captureLatestH;
-        int captureWantW, captureWantH; // 主线程期望尺寸（gate 下写）
+        int captureWantX, captureWantY;     // 主线程期望矩形（gate 下写）
+        int captureWantW, captureWantH;
         long captureHwnd;      // IntPtr 不能 volatile，按 long 传递
         Mesh quadMesh;
         readonly float[] blurWeights = new float[64];
@@ -149,6 +159,11 @@ namespace TransparentPet.Pet.Glass
         bool captureInvisibleActive; // affinity 当前生效中
         bool forceBitBltCapture;     // config.captureForceBitBlt：跳过 duplication 的逃生阀
         bool lastDesktopCaptureOk;   // 最近一次桌面抓屏是否成功（失败回退程序化素材）
+        Vector4 desktopRemap;        // 桌面帧纹理的屏幕 uv 映射（xy=原点，zw=屏幕uv→帧uv缩放）
+
+        // ── 绘制范围（"只画玻璃包围盒"；见 GlassRenderRect 的文件头）──
+        PixelRect renderRect;        // 本帧绘制矩形（窗口内像素、左上原点）
+        int renderCapW, renderCapH;  // 容量（量化 + 收缩滞回，拖拽时不重建 RT）
 
         // 物品槽位推送缓冲（只读复用）：RenderPipeline 每帧 new 4 个数组会产 ~400B
         // 垃圾，常驻进程累积成 GC 尖峰——与 DensitySurface 的缓冲复用同策略。
@@ -174,7 +189,10 @@ namespace TransparentPet.Pet.Glass
         /// <summary>生效中的史莱姆全宽（px）——含用户缩放。</summary>
         float ScaleValue => SlimeWidthPx * Mathf.Clamp(userScale, MinUserScale, MaxUserScale);
 
-        /// <summary>桌宠折射的抓屏降频：每 N 帧抓一次（全屏 BitBlt 有毫秒级成本）。</summary>
+        /// <summary>
+        /// 桌面折射的抓屏/上传降频：每 N 帧消费一次抓屏线程的最新帧。
+        /// （抓屏本体在工作线程自跑；这里只决定主线程上传纹理的频率。）
+        /// </summary>
         const int DesktopCaptureInterval = 2;
 
         void Awake() => EnsureInitialized();
@@ -236,7 +254,7 @@ namespace TransparentPet.Pet.Glass
         void Update() => Tick();
 
         /// <summary>
-        /// 每帧完整一步：相机/网格同步 → 输入与命中 → Blit 管线。
+        /// 每帧完整一步：输入与命中 → 物理/生命感 → 绘制范围 → Blit 管线。
         /// 抽成公共方法供无头快照在非 Play 环境手动驱动。
         /// </summary>
         public void Tick()
@@ -246,7 +264,6 @@ namespace TransparentPet.Pet.Glass
             if (mainCamera == null || mainMat == null || bgMat == null || blurMat == null)
                 return;
 
-            SyncQuadToCamera();
             HandleInput();
             StepMotions(Time.deltaTime);
             TickLife(Time.deltaTime);
@@ -430,14 +447,74 @@ namespace TransparentPet.Pet.Glass
                 mainCamera.orthographicSize = mainCamera.pixelHeight * 0.5f / PixelsPerUnit;
         }
 
-        void SyncQuadToCamera()
+        /// <summary>
+        /// 把 quad 摆到本帧的绘制矩形上（相机固定在原点正前方、视野中心 = 世界原点，
+        /// 故矩形中心的世界坐标 = (像素中心 - 屏幕中心) / PPU，y 轴向上取反）。
+        /// 片元里的 uv 由 shader 端经 _ScreenUvRect 换算回屏幕 uv，与全屏绘制逐像素等价。
+        /// </summary>
+        void SyncQuadToCamera(int screenW, int screenH)
         {
-            // 相机固定在原点正前方，视野中心 = 世界原点；quad 撑满视野即铺满渲染目标
-            transform.localScale = new Vector3(
-                mainCamera.pixelWidth / PixelsPerUnit,
-                mainCamera.pixelHeight / PixelsPerUnit, 1f);
-            transform.position = Vector3.zero;
+            var r = renderRect;
+            transform.localScale = new Vector3(r.W / PixelsPerUnit, r.H / PixelsPerUnit, 1f);
+            transform.position = new Vector3(
+                (r.X + r.W * 0.5f - screenW * 0.5f) / PixelsPerUnit,
+                (screenH * 0.5f - (r.Y + r.H * 0.5f)) / PixelsPerUnit,
+                0f);
         }
+
+        /// <summary>
+        /// 计算本帧绘制矩形（"只画玻璃包围盒"，见 GlassRenderRect 文件头）。
+        /// 调试视图（Step ≤ 2）与无史莱姆时退回整屏——SDF/法线图是形状锚定工具，
+        /// 需要看到轮廓外的数值分布（快照逐像素比对也依赖这一点）。
+        /// </summary>
+        void ComputeRenderRect(int screenW, int screenH)
+        {
+            if (Step <= 2 || slimes.Count == 0)
+            {
+                renderCapW = renderCapH = 0; // 整屏不参与容量/滞回
+                renderRect = new PixelRect(0, 0, screenW, screenH);
+                return;
+            }
+
+            var minX = float.MaxValue;
+            var minY = float.MaxValue;
+            var maxX = float.MinValue;
+            var maxY = float.MinValue;
+            var width = ScaleValue;
+            foreach (var s in slimes)
+                GlassRenderRect.Accumulate(ref minX, ref minY, ref maxX, ref maxY, s.pos, width,
+                                           s.life.ScaleX, s.life.ScaleY, s.life.RotationRad);
+
+            var margin = GlassRenderRect.MarginFor(RefThickness, BlurRadius, ShadowExpand, ShadowFactor);
+            minX -= margin;
+            minY -= margin;
+            maxX += margin;
+            maxY += margin;
+
+            var needW = Mathf.Clamp(Mathf.CeilToInt(maxX) - Mathf.FloorToInt(minX), 1, screenW);
+            var needH = Mathf.Clamp(Mathf.CeilToInt(maxY) - Mathf.FloorToInt(minY), 1, screenH);
+            renderCapW = GlassRenderRect.Capacity(needW, renderCapW);
+            renderCapH = GlassRenderRect.Capacity(needH, renderCapH);
+            renderRect = GlassRenderRect.Place((minX + maxX) * 0.5f, (minY + maxY) * 0.5f,
+                                               renderCapW, renderCapH, screenW, screenH);
+        }
+
+        /// <summary>矩形在屏幕 uv（左下原点）的位置尺寸。</summary>
+        static Vector4 ScreenUvRectOf(PixelRect r, int screenW, int screenH) => new(
+            r.X / (float)screenW,
+            1f - (r.Y + r.H) / (float)screenH,
+            r.W / (float)screenW,
+            r.H / (float)screenH);
+
+        /// <summary>
+        /// 纹理（覆盖窗口内某像素矩形、与屏幕同像素密度）的采样映射：
+        /// xy = 该矩形左上角在屏幕 uv 的原点，zw = 屏幕 uv → 纹理 uv 的缩放。
+        /// </summary>
+        static Vector4 UvRemapOf(int x, int y, int w, int h, int screenW, int screenH) => new(
+            x / (float)screenW,
+            1f - (y + h) / (float)screenH,
+            screenW / (float)w,
+            screenH / (float)h);
 
         static Mesh BuildUnitQuad()
         {
@@ -570,6 +647,8 @@ namespace TransparentPet.Pet.Glass
             {
                 var s = slimes[i];
                 var active = s.dragging || s.motion.IsThrowing;
+                if (active)
+                    FramePacing.MarkActive(); // 空闲降帧：交互/飞行期要全速（见 Core/FramePacing）
                 s.life.Tick(deltaTime, Time.time, i * phaseStep, active, s.dragging,
                             s.motion.Physics.LastFrameVelocity.x, shapeHeightPx);
             }
@@ -585,19 +664,31 @@ namespace TransparentPet.Pet.Glass
             var h = mainCamera.pixelHeight;
             if (w <= 0 || h <= 0)
                 return;
-            EnsureTargets(w, h);
+
+            ComputeRenderRect(w, h);
+            EnsureTargets();
+            SyncQuadToCamera(w, h);
+            if (renderRect.IsEmpty)
+                return;
 
             UpdateBlurWeights();
 
-            // 1) 折射源：抓屏隐形生效时抓全屏桌面（隔帧降频，画面不含自己）；
+            var rectUv = ScreenUvRectOf(renderRect, w, h);
+            // 屏幕 uv → 矩形本地 uv（模糊 RT / 素材 RT 与绘制矩形同像素密度）
+            var rectUvScale = new Vector4(w / (float)renderRect.W, h / (float)renderRect.H, 0f, 0f);
+            var selfRemap = UvRemapOf(renderRect.X, renderRect.Y, renderRect.W, renderRect.H, w, h);
+
+            // 1) 折射源：抓屏隐形生效时抓"绘制矩形那一块"桌面（隔帧降频，画面不含自己）；
             //    未开启 / 抓屏失败时回退程序化素材
             if (DesktopReflection && captureInvisibleActive && Time.frameCount % DesktopCaptureInterval == 0)
                 lastDesktopCaptureOk = TryUpdateDesktopTexture(w, h);
 
             Texture reflectionSource;
+            Vector4 reflectionRemap;
             if (DesktopReflection && captureInvisibleActive && lastDesktopCaptureOk)
             {
                 reflectionSource = desktopTex;
+                reflectionRemap = desktopRemap;
             }
             else
             {
@@ -609,20 +700,32 @@ namespace TransparentPet.Pet.Glass
                     bgMat.SetFloat("_BgTextureRatio", (float)BgTexture.width / BgTexture.height);
                 }
                 bgMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
+                bgMat.SetVector("_ScreenUvRect", rectUv);
                 Graphics.Blit(Texture2D.whiteTexture, bgRT, bgMat);
                 reflectionSource = bgRT;
+                reflectionRemap = selfRemap;
             }
 
             // 2) 分离式高斯模糊：source →(竖)→ vRT →(横)→ hRT
-            blurMat.SetFloat("_Vertical", 1f);
+            //    采样步长仍以屏幕像素为单位（_Resolution = 整屏），源纹理按各自矩形重映射
             blurMat.SetFloat("_BlurRadius", BlurRadius);
             blurMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
+            blurMat.SetVector("_ScreenUvRect", rectUv);
+            blurMat.SetFloat("_Vertical", 1f);
+            blurMat.SetVector("_SrcRemap", reflectionRemap);
             Graphics.Blit(reflectionSource, vBlurRT, blurMat);
             blurMat.SetFloat("_Vertical", 0f);
+            blurMat.SetVector("_SrcRemap", selfRemap); // 第二遍的源是与矩形同尺寸的 vRT
             Graphics.Blit(vBlurRT, hBlurRT, blurMat);
 
             // 3) 主合成参数（每帧全量推送，与 Godot update_all_uniforms 同策略）
             mainMat.SetVector("_Resolution", new Vector4(w, h, 0, 0));
+            mainMat.SetVector("_ScreenUvRect", rectUv);
+            mainMat.SetVector("_RectUvScale", rectUvScale);
+            mainMat.SetVector("_BgRemap", reflectionRemap);
+            // 阴影尾巴之外没有任何可见输出：整屏提前退出阈值（shader 端再乘 2 抵掉形状因子）
+            mainMat.SetFloat("_EarlyOutPx",
+                GlassRenderRect.ShadowTailPx(ShadowExpand, ShadowFactor) * 1.05f + 2f);
             mainMat.SetTexture("_Bg", reflectionSource);
             mainMat.SetTexture("_BlurredBg", hBlurRT);
             mainMat.SetFloat("_RefThickness", RefThickness);
@@ -667,8 +770,16 @@ namespace TransparentPet.Pet.Glass
             mainMat.SetVectorArray("_ItemShape", itemShapes);
         }
 
-        void EnsureTargets(int w, int h)
+        /// <summary>
+        /// 渲染目标与绘制矩形同尺寸：矩形随史莱姆移动，但尺寸按 GlassRenderRect 量化 +
+        /// 滞回，只有真的跨过量化档位时才重建——拖拽不会每帧重建三张 RenderTexture。
+        /// </summary>
+        void EnsureTargets()
         {
+            var w = renderRect.W;
+            var h = renderRect.H;
+            if (w <= 0 || h <= 0)
+                return;
             if (bgRT != null && bgRT.width == w && bgRT.height == h)
                 return;
 
@@ -699,29 +810,32 @@ namespace TransparentPet.Pet.Glass
         /// <summary>
         /// 桌面折射贴图更新：消费抓屏工作线程的最新完成帧 → desktopTex。
         /// BitBlt/GetDIBits 在工作线程做（见字段区注释）；本方法只做主线程侧的
-        /// 纹理上传（SetPixelData 限主线程）。返回 false = 尚无可用帧或尺寸不符
-        /// （渲染目标尺寸与帧尺寸不一致时不喂，避免错位折射——契约同旧实现）。
+        /// 纹理上传（SetPixelData 限主线程）。返回 false = 尚无可用帧。
+        /// 帧自带"它覆盖哪块矩形"，shader 按该矩形重映射采样 ⇒ 帧与当前绘制矩形
+        /// 尺寸/位置不一致（拖拽中滞后一两帧）也能正确落在屏幕位置上。
         /// </summary>
-        bool TryUpdateDesktopTexture(int w, int h)
+        bool TryUpdateDesktopTexture(int screenW, int screenH)
         {
-            EnsureCaptureThread(w, h);
+            EnsureCaptureThread();
 
             byte[] latest;
-            int frameW, frameH;
+            int fx, fy, frameW, frameH;
             lock (captureGate)
             {
                 latest = captureLatest;
+                fx = captureLatestX;
+                fy = captureLatestY;
                 frameW = captureLatestW;
                 frameH = captureLatestH;
             }
-            if (latest == null || frameW != w || frameH != h)
+            if (latest == null || frameW <= 0 || frameH <= 0)
                 return false;
 
-            if (desktopTex == null || desktopTex.width != w || desktopTex.height != h)
+            if (desktopTex == null || desktopTex.width != frameW || desktopTex.height != frameH)
             {
                 if (desktopTex != null)
                     Destroy(desktopTex);
-                desktopTex = new Texture2D(w, h, TextureFormat.BGRA32, false)
+                desktopTex = new Texture2D(frameW, frameH, TextureFormat.BGRA32, false)
                 {
                     filterMode = FilterMode.Bilinear,
                     wrapMode = TextureWrapMode.Clamp
@@ -730,18 +844,21 @@ namespace TransparentPet.Pet.Glass
 
             desktopTex.SetPixelData(latest, 0);
             desktopTex.Apply(false, false);
+            desktopRemap = UvRemapOf(fx, fy, frameW, frameH, screenW, screenH);
             return true;
         }
 
-        /// <summary>惰性启动抓屏线程并同步期望尺寸/窗口句柄（每帧调用，轻量）。</summary>
-        void EnsureCaptureThread(int w, int h)
+        /// <summary>把当前绘制矩形交给抓屏线程，并按需惰性启动（每帧调用，轻量）。</summary>
+        void EnsureCaptureThread()
         {
-            if (hwnd == System.IntPtr.Zero)
+            if (hwnd == System.IntPtr.Zero || renderRect.IsEmpty)
                 return;
             lock (captureGate)
             {
-                captureWantW = w;
-                captureWantH = h;
+                captureWantX = renderRect.X;
+                captureWantY = renderRect.Y;
+                captureWantW = renderRect.W;
+                captureWantH = renderRect.H;
             }
             Interlocked.Exchange(ref captureHwnd, hwnd.ToInt64());
 
@@ -762,6 +879,10 @@ namespace TransparentPet.Pet.Glass
         /// 静止时挂起零开销）；会话不可建立/死亡时回退 BitBlt 轮询（Optimus 或虚拟
         /// 显示器驱动环境下 duplication 会整体不可用，实测踩坑）。两条路径产出同一
         /// bottom-up BGRA 契约，主线程消费无感知差异。
+        ///
+        /// 区域：BitBlt 路径抓"绘制矩形那一块"（本机全屏 BitBlt 稳定 ~100ms，收敛后
+        /// 降到个位数毫秒）；duplication 只能整输出取帧，故以整屏矩形发布（主线程按
+        /// 发布矩形重映射采样，两条路径消费方式一致）。
         /// </summary>
         void CaptureLoop()
         {
@@ -786,39 +907,49 @@ namespace TransparentPet.Pet.Glass
                     }
                     int w, h;
                     lock (captureGate) { w = captureWantW; h = captureWantH; }
-                    if (w > 0 && h > 0 && dup.Width == w && dup.Height == h)
+                    if (w > 0 && h > 0 && dup.Width > 0 && dup.Height > 0)
                     {
-                        if (captureWrite == null || captureWrite.Length < w * h * 4)
-                            captureWrite = new byte[w * h * 4];
+                        var n = dup.Width * dup.Height * 4;
+                        if (captureWrite == null || captureWrite.Length < n)
+                            captureWrite = new byte[n];
                         if (dup.TryAcquireInto(captureWrite, 33)) // 超时即节拍：变化驱动 ~30fps 上限
                             lock (captureGate)
                             {
+                                // duplication 整输出取帧：帧覆盖的就是整个显示输出
                                 (captureWrite, captureLatest) = (captureLatest, captureWrite);
-                                captureLatestW = w;
-                                captureLatestH = h;
+                                captureLatestX = 0;
+                                captureLatestY = 0;
+                                captureLatestW = dup.Width;
+                                captureLatestH = dup.Height;
                             }
                     }
                     else
                     {
-                        Thread.Sleep(w > 0 && h > 0 ? 100 : 33); // 尺寸不符（DPI/分辨率过渡）稍后重试
+                        Thread.Sleep(w > 0 && h > 0 ? 100 : 33); // 尺寸未知（DPI/分辨率过渡）稍后重试
                     }
                     continue;
                 }
 
                 // ── BitBlt 回退路径 ──
                 var hWnd = new IntPtr(Interlocked.Read(ref captureHwnd));
-                int bw, bh;
-                lock (captureGate) { bw = captureWantW; bh = captureWantH; }
-
-                if (hWnd != IntPtr.Zero && bw > 0 && bh > 0 &&
-                    NativeScreenCapture.TryGetWindowRect(hWnd, out var x, out var y, out var ww, out var hh) &&
-                    ww == bw && hh == bh)
+                int rx, ry, rw, rh;
+                lock (captureGate)
                 {
-                    if (captureWrite == null || captureWrite.Length < bw * bh * 4)
-                        captureWrite = new byte[bw * bh * 4];
+                    rx = captureWantX;
+                    ry = captureWantY;
+                    rw = captureWantW;
+                    rh = captureWantH;
+                }
+
+                if (hWnd != IntPtr.Zero && rw > 0 && rh > 0 &&
+                    NativeScreenCapture.TryGetWindowRect(hWnd, out var x, out var y, out _, out _))
+                {
+                    if (captureWrite == null || captureWrite.Length < rw * rh * 4)
+                        captureWrite = new byte[rw * rh * 4];
 
                     var stopwatch = Stopwatch.StartNew();
-                    var ok = NativeScreenCapture.TryCaptureRegion(x, y, bw, bh, captureWrite, out var failStep);
+                    // 窗口是全屏覆盖层：窗口左上角 + 绘制矩形 = 屏幕上要被折射的那一块
+                    var ok = NativeScreenCapture.TryCaptureRegion(x + rx, y + ry, rw, rh, captureWrite, out var failStep);
                     var took = stopwatch.ElapsedMilliseconds;
 
                     if (ok)
@@ -826,14 +957,16 @@ namespace TransparentPet.Pet.Glass
                         lock (captureGate)
                         {
                             (captureWrite, captureLatest) = (captureLatest, captureWrite);
-                            captureLatestW = bw;
-                            captureLatestH = bh;
+                            captureLatestX = rx;
+                            captureLatestY = ry;
+                            captureLatestW = rw;
+                            captureLatestH = rh;
                         }
                     }
                     else if (Environment.TickCount - failLogAt > 5000)
                     {
                         failLogAt = Environment.TickCount;
-                        Debug.Log($"[LiquidGlass] 桌面抓屏失败: step={failStep} rect=({x},{y},{ww}x{hh})");
+                        Debug.Log($"[LiquidGlass] 桌面抓屏失败: step={failStep} rect=({x + rx},{y + ry},{rw}x{rh})");
                     }
 
                     if (took > 100 && Environment.TickCount - slowLogAt > 5000)
@@ -872,12 +1005,16 @@ namespace TransparentPet.Pet.Glass
         }
 
         /// <summary>无头快照用：直接注入逻辑位置（绕开输入与持久化）。</summary>
-        public void SetLogicPositionForCapture(Vector2 screenPosTopOrigin)
+        public void SetLogicPositionForCapture(Vector2 screenPosTopOrigin) =>
+            SetLogicPositionForCapture(0, screenPosTopOrigin);
+
+        /// <summary>无头快照用：注入第 index 只的逻辑位置（不足则补足只数）。</summary>
+        public void SetLogicPositionForCapture(int index, Vector2 screenPosTopOrigin)
         {
-            if (slimes.Count == 0)
+            while (slimes.Count <= index)
                 slimes.Add(new Slime());
-            slimes[0].pos = screenPosTopOrigin;
-            slimes[0].lastSaved = screenPosTopOrigin;
+            slimes[index].pos = screenPosTopOrigin;
+            slimes[index].lastSaved = screenPosTopOrigin;
         }
 
         /// <summary>无头快照用：注入史莱姆全宽（px）。</summary>
@@ -890,6 +1027,9 @@ namespace TransparentPet.Pet.Glass
         public RenderTexture BgTarget => bgRT;
         public RenderTexture VBlurTarget => vBlurRT;
         public RenderTexture HBlurTarget => hBlurRT;
+
+        /// <summary>诊断：本帧绘制矩形（"只画玻璃包围盒"的收敛范围；整屏 = 未收敛）。</summary>
+        public PixelRect CurrentRenderRect => renderRect;
 
         /// <summary>无头快照诊断：quad 上实际生效的材质与 shader 状态。</summary>
         public string DescribeMaterialState()

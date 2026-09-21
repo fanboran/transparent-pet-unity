@@ -13,6 +13,7 @@ Builds/
 # 本地验证临时产物
 /verify_*.log
 /build_*.log
+/perf_*.log
 /testresults.xml
 
 # 本地验证临时产物（补回：规则随被丢弃的提交一并消失）

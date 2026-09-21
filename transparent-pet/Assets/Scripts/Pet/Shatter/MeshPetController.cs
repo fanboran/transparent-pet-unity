@@ -137,7 +137,10 @@ namespace TransparentPet.Pet.Shatter
             }
 
             if (sim.IsGrabbed)
+            {
+                FramePacing.MarkActive(); // 空闲降帧：拖拽期要全速（见 Core/FramePacing）
                 sim.MoveGrab(mouse, NowMs());
+            }
 
             if (Input.GetMouseButtonUp(0) && sim.IsGrabbed)
             {
