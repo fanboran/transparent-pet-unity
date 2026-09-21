@@ -18,6 +18,7 @@
 // ============================================================================
 using System.IO;
 using TransparentPet.Core;
+using TransparentPet.Pet.Glass;
 using TransparentPet.UI;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -98,6 +99,15 @@ namespace TransparentPet.EditorTools
             }
 
             frames++;
+            if (frames == FramesBeforeOpen - 5)
+            {
+                // 锁死生命感变换：呼吸相位取自 Time.time，不锁则每帧形变都不同、两张图没得比
+                //（与 LiquidGlassSnapshot 同一条纪律；它同时把 OffsetY 归零——见 GlassSlimeLife）
+                if (LiquidGlassPresence.Active is LiquidGlassController glass)
+                    for (var i = 0; i < glass.SlimeCount; i++)
+                        glass.SetLifeTransformForCapture(i, 1f, 1f, 0f);
+                return;
+            }
             if (frames == FramesBeforeOpen)
             {
                 EventBus.Publish(EventTopics.SettingsPanelToggleRequested, true);
@@ -112,7 +122,25 @@ namespace TransparentPet.EditorTools
                 return;
 
             var page = step / FramesPerPage;
-            if (page >= SettingsPanel.PageCount)
+            var dir = SessionState.GetString(PathKey, ".");
+
+            // 四页截完后再截一张 **SDF 调试视图**：那是"形状本身"，与内容无关。
+            // 用途（2026-09-22 排查"史莱姆两边像被裁"时靠它定案）：主渲染里玻璃内是
+            // 折射来的桌面，颜色会伪装成边界——量主渲染的轮廓不可靠，得跟这张比
+            if (page == SettingsPanel.PageCount)
+            {
+                if (LiquidGlassPresence.Active is LiquidGlassController glass)
+                {
+                    glass.Step = 0;
+                    var sdfPath = Path.Combine(dir, "sdf_shape.png");
+                    ScreenCapture.CaptureScreenshot(sdfPath);
+                    Debug.Log($"[UiSnapshot] SDF 形状视图 → {sdfPath}");
+                    return;
+                }
+                Finish(0);
+                return;
+            }
+            if (page > SettingsPanel.PageCount)
             {
                 Finish(0);
                 return;
@@ -127,7 +155,7 @@ namespace TransparentPet.EditorTools
                 return;
             }
             panel.SetPageForCapture(page);
-            var path = Path.Combine(SessionState.GetString(PathKey, "."), $"settings_p{page}.png");
+            var path = Path.Combine(dir, $"settings_p{page}.png");
             ScreenCapture.CaptureScreenshot(path); // 落盘发生在帧末
             Debug.Log($"[UiSnapshot] 第 {page} 页（{panel.CurrentPageForCapture}）截图 → {path}");
         }
