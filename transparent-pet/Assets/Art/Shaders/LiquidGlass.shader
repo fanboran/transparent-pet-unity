@@ -314,15 +314,27 @@ Shader "TransparentPet/LiquidGlass"
                 return length(q);
             }
 
-            // 是否所有物品都远到"阴影已不可见"。阈值由 CPU 端按阴影可量化尾巴长度
-            // 给出（GlassRenderRect.ShadowTailPx），这里再乘 2 抵掉上面那个形状因子。
+            // 提前退出的判定点必须"整格一致"：同一 2×2 quad 内若一部分像素提前返回、
+            // 另一部分继续，继续的那些像素的 ddx/ddy 会取到已返回 lane 的未定义值
+            //（aaWidth 被污染 → 轮廓外浮出一圈假阴影，实测差异全部集中在阈值边界）。
+            // 把判定点吸附到 quad 原点（2×2 块的偶数坐标）即整格同进退。
+            // 吸附点与真实像素最远差 √2 px，CPU 端给阈值时已含这个余量。
+            float2 snapToQuad(float2 pixelBottomUp, float2 resolution)
+            {
+                float2 q = floor(pixelBottomUp * 0.5) * 2.0;
+                return float2(q.x, resolution.y - q.y); // → 与 SDF 同系的 y 向下
+            }
+
+            // 是否所有物品都远到"输出必然全透明"。阈值由 CPU 端按 AA 带宽给
+            //（GlassRenderRect.EarlyOutPx）——轮廓外 alpha 会被抗锯齿项乘成 0，
+            // 真正决定"多远就没输出"的是 aaWidth 而不是阴影尾巴（见 CPU 端注释）。
             bool allItemsFar(float2 pixelTopDown)
             {
                 for (int i = 0; i < MAX_ITEMS; i++)
                 {
                     if (_ItemEnabled[i] < 0.5)
                         continue;
-                    if (itemAabbDistPx(i, pixelTopDown) <= _EarlyOutPx * 2.0)
+                    if (itemAabbDistPx(i, pixelTopDown) <= _EarlyOutPx)
                         return false;
                 }
                 return true;
@@ -345,14 +357,20 @@ Shader "TransparentPet/LiquidGlass"
             }
 
             // SDF 数值梯度 = 表面法线。返回像素空间单位梯度（merged 是归一化距离，
-            // 乘回分辨率）；Godot 原版此处乘 1414 的放大系数只为可视化，这里语义化
-            float2 getNormal(float2 pixelTopDown, bool allowSkip)
+            // 乘回分辨率）；Godot 原版此处乘 1414 的放大系数只为可视化，这里语义化。
+            //
+            // **前向差分**而非中心差分：轮廓曲率半径是几十像素量级（轮廓半宽 128px
+            // 的圆顶上 κ≈1/128），步长 1px 的前向差分方向偏差 ≈ h·κ/2 ≈ 0.4%；
+            // 而中心差分要多跑 2 次 mainSDF——mainSDF 是这条管线最贵的单项（每项
+            // 贝塞尔 SDF + 20 次二分反解），原来每像素 5 次求值里 4 次都出自法线。
+            // center 由调用方传入（它已经算过本像素的 SDF），总次数 5 → 3。
+            float2 getNormal(float2 pixelTopDown, bool allowSkip, float center)
             {
                 float2 h = float2(max(abs(ddx(pixelTopDown.x)), 0.0001), max(abs(ddy(pixelTopDown.y)), 0.0001));
                 float2 grad = float2(
-                    mainSDF(pixelTopDown + float2(h.x, 0.0), allowSkip) - mainSDF(pixelTopDown - float2(h.x, 0.0), allowSkip),
-                    mainSDF(pixelTopDown + float2(0.0, h.y), allowSkip) - mainSDF(pixelTopDown - float2(0.0, h.y), allowSkip)
-                ) / (2.0 * h);
+                    mainSDF(pixelTopDown + float2(h.x, 0.0), allowSkip) - center,
+                    mainSDF(pixelTopDown + float2(0.0, h.y), allowSkip) - center
+                ) / h;
                 return grad * _Resolution.y;
             }
 
@@ -480,8 +498,9 @@ Shader "TransparentPet/LiquidGlass"
                 // 剪枝只在主渲染路径开启（调试视图要全屏数值）
                 bool skip = _Step > 2;
 
-                // 离所有物品都远到阴影已不可见 → 输出与"逐像素算完得到 alpha=0"完全一致
-                if (skip && allItemsFar(pixelTD))
+                // 离所有物品都远到必然全透明 → 输出与"逐像素算完得到 alpha=0"完全一致
+                //（判定点吸附到 quad 原点，避免混合 quad 污染邻居的屏幕空间导数）
+                if (skip && allItemsFar(snapToQuad(pixel, resolution)))
                     return float4(0, 0, 0, 0);
 
                 float merged = mainSDF(pixelTD, skip);
@@ -511,7 +530,7 @@ Shader "TransparentPet/LiquidGlass"
                     // 调试：法线彩虹图（平滑过渡 = 法线连续；角度在 y 向下空间，hue 与 GL 惯例差 180°，仅诊断用）
                     if (merged < 0.0)
                     {
-                        float2 normal = getNormal(pixelTD, skip);
+                        float2 normal = getNormal(pixelTD, skip, merged);
                         float angle = atan2(normal.y, normal.x);
                         float hue = (angle < 0.0 ? angle + 2.0 * PI : angle) / (2.0 * PI);
                         outColor = float4(hsv2rgb(float3(hue, 1.0, 1.0)), length(normal));
@@ -525,7 +544,7 @@ Shader "TransparentPet/LiquidGlass"
                     if (merged < 0.005)
                     {
                         float nmerged = -merged * resolution.y; // 到边缘的深度（px）
-                        float2 normal = normalize(getNormal(pixelTD, skip) + float2(1e-6, 1e-6));
+                        float2 normal = normalize(getNormal(pixelTD, skip, merged) + float2(1e-6, 1e-6));
 
                         // 简化斯涅尔模型：深度越深入射角越平，edgeFactor = -tan(θT-θI)
                         // 在轮廓边缘→接近 1（透镜边缘折得最狠）、内部→0

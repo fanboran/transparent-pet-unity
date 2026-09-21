@@ -200,5 +200,22 @@ namespace TransparentPet.Pet.Tests
             Assert.AreEqual(0, rect.X);
             Assert.AreEqual(0, rect.Y);
         }
+
+        // ── 主渲染提前退出半径 ──
+
+        [Test]
+        public void EarlyOutPx_IsAaBandNotShadowTail()
+        {
+            // 轮廓外一两个像素（AA 带宽）之后 alpha 就恒为 0——提前退出半径由它决定，
+            // 与阴影尾巴无关（推导见 GlassRenderRect.EarlyOutPx）。这条是回归护栏：
+            // 上一版把它误当成"阴影尾巴长度"（默认参数下 126px），白白多画一大圈。
+            Assert.GreaterOrEqual(GlassRenderRect.EarlyOutPx, 2f + Mathf.Sqrt(2f), // AA 带 + quad 吸附余量
+                "不能小于 AA 带宽加判定点吸附余量，否则会裁掉抗锯齿边缘");
+            Assert.Less(GlassRenderRect.EarlyOutPx, 16f, "远小于阴影尾巴，说明用的是 AA 带宽口径");
+
+            var shadowTail = GlassRenderRect.ShadowTailPx(26f, 0.5f);
+            Assert.Greater(shadowTail, GlassRenderRect.EarlyOutPx * 10f,
+                "阴影尾巴只用于绘制矩形的保守外包，与提前退出半径是两个量，别再混用");
+        }
     }
 }

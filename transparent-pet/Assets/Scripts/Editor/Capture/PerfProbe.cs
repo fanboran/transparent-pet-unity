@@ -1,16 +1,20 @@
 // ============================================================================
 // PerfProbe.cs — 液态玻璃渲染耗时的可复现探针（batchmode，无窗口无干扰）
 // ============================================================================
-// 用途：给"绘制范围收敛"这类性能改动提供可对比的数字——同一套世界、同一套驱动
-// 代码（LiquidGlassController.Tick + Camera.Render），只改被测实现，跑两遍比耗时。
+// 用途：给"绘制范围收敛 / 主合成剪枝 / 法线求法"这类性能改动提供可对比的数字。
 //
 // 世界参数刻意取"本机最坏形态"：2560×1440（主显示器分辨率）+ 核显（Intel UHD）
-// + SlimeWidthPx=320。用例刻意覆盖两种量级：
-//   · 单只居中：收敛后绘制矩形远小于屏幕（本改动的主要收益场景）
-//   · 两只分散：并集矩形较大（用户实机配置的形态）
+// + SlimeWidthPx=320。用例覆盖两种量级：单只居中（收敛后绘制矩形远小于屏幕）
+// 与两只分散（用户实机配置的形态）。
 //
-// 计时口径：预热 30 帧后计 60 帧，每 10 帧用 1 像素 ReadPixels 强制一次 GPU 同步
-//（ReadPixels 是同步读回，等 GPU 排空；隔 10 帧一次让读回本身的开销摊薄到 1/10）。
+// **计时口径（关键，别退回成"跑 60 帧取平均"）**：核显是共享显存 + 睿频漂移的
+// 环境——同一配置放在不同位置实测能差 40%，单次均值完全不可比。故：
+//   1. 每批 10 帧后强制一次 GPU 排空（1 像素同步读回），逐批计时；
+//   2. 每批取**最小值**（受干扰最少的那批）作为该配置的速度，另报中位数看离散度；
+//   3. 要比多个配置时，必须在同一进程里**交替**测（时序漂移对所有配置同等作用），
+//      各跑一遍的旧做法会把漂移当成改动效果——本轮的"改前/改后"就是这么测的；
+//   4. 同一份代码连跑两次应当吻合（实测 5.06 / 5.01 ms）；某次整轮偏高说明有外部
+//      进程在抢 GPU，重跑即可，别据此下结论。
 // 锁死生命感变换（呼吸相位取自 Time.time，不锁则每次运行的形变不同）。
 //
 // 运行：-batchmode -quit -projectPath ... -executeMethod TransparentPet.EditorTools.PerfProbe.RunHeadless
@@ -67,7 +71,7 @@ namespace TransparentPet.EditorTools
             var rt = new RenderTexture(ScreenW, ScreenH, 24);
             cam.targetTexture = rt;
 
-            const int warmup = 30, frames = 60, syncEvery = 10;
+            const int warmup = 30, batchFrames = 10, batches = 12;
             for (var i = 0; i < warmup; i++)
             {
                 controller.Tick();
@@ -75,19 +79,26 @@ namespace TransparentPet.EditorTools
             }
             SyncGpu(rt);
 
-            var sw = Stopwatch.StartNew();
-            for (var i = 0; i < frames; i++)
+            var samples = new double[batches];
+            for (var b = 0; b < batches; b++)
             {
-                controller.Tick();
-                cam.Render();
-                if ((i + 1) % syncEvery == 0)
-                    SyncGpu(rt);
+                var sw = Stopwatch.StartNew();
+                for (var i = 0; i < batchFrames; i++)
+                {
+                    controller.Tick();
+                    cam.Render();
+                }
+                SyncGpu(rt);
+                sw.Stop();
+                samples[b] = sw.Elapsed.TotalMilliseconds / batchFrames;
             }
-            sw.Stop();
+
+            var sorted = (double[])samples.Clone();
+            System.Array.Sort(sorted);
 
             Debug.Log($"[PerfProbe] {label}（{ScreenW}x{ScreenH}）: " +
-                      $"{sw.Elapsed.TotalMilliseconds / frames:F2} ms/帧" +
-                      $"（{frames} 帧，每 {syncEvery} 帧一次 GPU 同步）");
+                      $"最快 {sorted[0]:F2} ms/帧，中位 {sorted[batches / 2]:F2} ms/帧" +
+                      $"（{batches} 批 × {batchFrames} 帧，每批一次 GPU 同步，取最小批）");
 
             cam.targetTexture = null;
             Object.DestroyImmediate(camGo);

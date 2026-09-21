@@ -12,10 +12,14 @@
 // 控制器负责把结果接到 quad 变换 / RenderTexture 尺寸 / 抓屏区域上。
 //
 // 边距为什么取这些值（少一个都会在玻璃边缘露出被裁掉的接缝）：
-//   · 阴影尾巴：轮廓外淡阴影 alpha = 0.5·Factor·exp(-d/Expand)，降到 8bit 半级
-//     （0.5/255）就与"什么都没画"不可区分 → 默认 26px/0.5 时约 126px；
 //   · 折射采样：边缘折射位移 |tan(θT-θI)|·_RefThickness ≤ ~1.05·厚度；
-//   · 模糊核：半径为 BlurRadius 的分离式高斯，取 3 倍余量。
+//   · 模糊核：半径为 BlurRadius 的分离式高斯，取 3 倍余量；
+//   · 阴影尾巴：轮廓外淡阴影 alpha = 0.5·Factor·exp(-d/Expand)，降到 8bit 半级
+//     （0.5/255）就与"什么都没画"不可区分 → 默认 26px/0.5 时约 126px。
+//     其实主渲染里 alpha 会被抗锯齿项 `(1-aa)` 整段乘成 0（见 EarlyOutPx），
+//     这一项对"画面"是多余的；保留它是因为它还约束着**来源纹理/抓屏区域**，
+//     且万一将来阴影重新可见不必回头改矩形。真正决定 shader 提前退出半径的是
+//     EarlyOutPx（8px），两者别再混用。
 // ============================================================================
 using UnityEngine;
 
@@ -45,7 +49,25 @@ namespace TransparentPet.Pet.Glass
         public const int Quantum = 64;
 
         /// <summary>
+        /// 主渲染里"轮廓外多远就必然全透明"的半径（px），直接作为 shader 的 `_EarlyOutPx`。
+        ///
+        /// 推导：frag 最后一步是 `outColor.a *= 1.0 - aa`，`aa = smoothstep(-w, w, merged)`。
+        /// merged ≥ w 时 aa 恒等于 1 → alpha 恒为 0——**决定这个半径的是抗锯齿带宽，
+        /// 不是阴影尾巴**：阴影项 `exp(-merged·H/Expand)·0.5·Factor` 被同一个 `(1-aa)`
+        /// 乘掉了，轮廓外一两个像素就已经没有输出。
+        /// （定点图逐像素取证：把本阈值从"阴影尾巴"压到 8px，整图输出不变——见
+        /// `docs/项目/待办事项.md` 的性能改造条目。）
+        ///
+        /// 换算：w = 2·|∇merged|，而 merged 是"像素距离 ÷ 屏高"，各向异性缩放（生命感的
+        /// 呼吸/挤压）对各分量同乘一个因子、不改变 merged = w 的交点位置，所以换算回
+        /// 像素恒为 2。另留 quad 吸附判定点的最远偏差 √2 与调度余量，取 8。
+        /// </summary>
+        public const float EarlyOutPx = 8f;
+
+        /// <summary>
         /// 阴影尾巴可见半径（px）：alpha 低于 8bit 量化半级即不可见（判据见文件头）。
+        /// 注意这只用于**绘制矩形的保守外包**——主渲染的提前退出半径由 EarlyOutPx 决定，
+        /// 因为轮廓外的输出会被抗锯齿项整段乘成 0（见 EarlyOutPx 的推导）。
         /// </summary>
         public static float ShadowTailPx(float shadowExpand, float shadowFactor)
         {

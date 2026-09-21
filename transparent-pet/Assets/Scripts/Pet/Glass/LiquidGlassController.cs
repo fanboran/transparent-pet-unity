@@ -723,9 +723,9 @@ namespace TransparentPet.Pet.Glass
             mainMat.SetVector("_ScreenUvRect", rectUv);
             mainMat.SetVector("_RectUvScale", rectUvScale);
             mainMat.SetVector("_BgRemap", reflectionRemap);
-            // 阴影尾巴之外没有任何可见输出：整屏提前退出阈值（shader 端再乘 2 抵掉形状因子）
-            mainMat.SetFloat("_EarlyOutPx",
-                GlassRenderRect.ShadowTailPx(ShadowExpand, ShadowFactor) * 1.05f + 2f);
+            // 轮廓外必然全透明的半径（推导见 GlassRenderRect.EarlyOutPx）：超过它的像素
+            // 直接输出全透明，与逐像素算完等价
+            mainMat.SetFloat("_EarlyOutPx", GlassRenderRect.EarlyOutPx);
             mainMat.SetTexture("_Bg", reflectionSource);
             mainMat.SetTexture("_BlurredBg", hBlurRT);
             mainMat.SetFloat("_RefThickness", RefThickness);
