@@ -60,8 +60,18 @@ namespace TransparentPet.Pet.Glass
         public Shader BlurShader;
 
         [Header("形状")]
-        [Tooltip("史莱姆全宽（物理像素）；轮廓比例固定 160:101（底平顶圆趴姿）")]
-        public float SlimeWidthPx = 320f;
+        [Tooltip("史莱姆轮廓全宽（逻辑像素）；轮廓比例固定 160:101（底平顶圆趴姿）。" +
+                 "注意是轮廓全宽：shader 的 SVG 尺度 = 全宽/0.8（LiquidGlassSlimeSdf.ShaderSpan），" +
+                 "CPU 命中与碰撞半宽 = 全宽/2，两侧同源；曾经 shader 错把全宽当 SVG 尺度用，" +
+                 "画出来只有 0.8 倍，于是物理按 110px 触地、实际轮廓底边在 88px 处——落地时悬空 22px")]
+        public float SlimeWidthPx = 256f;
+
+        [Header("融合")]
+        [Tooltip("多只融合半径 = 本比例 × 轮廓全宽（重合时轮廓每侧外扩 k/4 ≈ 全宽×1.25%）。" +
+                 "旧版这个半径是「屏高的 5%」（2560×1340 上恒为 67px，不随体量变），" +
+                 "在 256px 宽的史莱姆上相当于体宽 26%，重合时每侧胖 17px、看着像两边被切平；" +
+                 "等效旧观感 ≈ 0.21")]
+        public float MergeRatio = 0.05f;
 
         [Header("折射")]
         [Tooltip("玻璃厚度（px）：折射偏移带宽度，越大边缘弯曲越明显")]
@@ -783,7 +793,7 @@ namespace TransparentPet.Pet.Glass
             mainMat.SetFloat("_GlareOppositeFactor", GlareOppositeFactor);
             mainMat.SetFloat("_GlareFactor", GlareFactor);
             mainMat.SetFloat("_GlareAngle", GlareAngleDeg * Mathf.Deg2Rad);
-            mainMat.SetFloat("_MergeRate", 0.05f);
+            mainMat.SetFloat("_MergeRatio", MergeRatio);
             mainMat.SetColor("_Tint", Tint);
             mainMat.SetFloat("_BlurEdge", BlurEdge ? 1f : 0f);
             mainMat.SetInt("_Step", Step);
@@ -797,7 +807,10 @@ namespace TransparentPet.Pet.Glass
                 itemPositions[i] = live
                     ? new Vector4(slimes[i].pos.x, slimes[i].pos.y + slimes[i].life.OffsetY, 0, 0)
                     : Vector4.zero;
-                itemWidths[i] = live ? SlimeWidthPx : 0f;
+                // 注意传的是 **SVG 尺度**（全宽/0.8），不是全宽本身：shader 拿它除像素距离
+                // 得到 SVG 空间坐标。传全宽会让画出来的轮廓只有 0.8 倍（CPU 却按全宽算
+                // 命中与碰撞）——落地悬空、点在外圈也能抓住都是这一个 1.25 倍差造成的
+                itemWidths[i] = live ? LiquidGlassSlimeSdf.ShaderSpan(SlimeWidthPx) : 0f;
                 itemScales[i] = live ? Mathf.Clamp(userScale, MinUserScale, MaxUserScale) : 0f;
                 itemEnabled[i] = live ? 1f : 0f;
                 itemShapes[i] = live

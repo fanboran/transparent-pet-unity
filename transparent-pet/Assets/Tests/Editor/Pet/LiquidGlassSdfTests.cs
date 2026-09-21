@@ -89,5 +89,46 @@ namespace TransparentPet.Pet.Tests
             // 160px 宽 → 缩放 200：0.506 高（SVG）对应 101px，160:101 与烘焙图一致
             Assert.AreEqual(200f, LiquidGlassSlimeSdf.ScaleFromWidthPx(160f), 1e-3f);
         }
+
+        /// <summary>
+        /// 回归守卫：shader 收到的 SDF 尺度（ShaderSpan）必须与 CPU 的碰撞半尺寸描述
+        /// **同一条轮廓**——物理按 CPU 半尺寸触地、渲染按 ShaderSpan 画。
+        /// 2026-09-22 用户实测"投掷后落不到屏幕底部、比任务栏高若干像素"：shader 收到的是
+        /// 全宽本身（少乘 1.25），画出的轮廓只有 0.8 倍，物理以为底边在 0.275×1.25×全宽 处、
+        /// 实际底边在 0.275×全宽 处 → 落地悬空 0.069×全宽（256 宽 = 22px）。
+        /// </summary>
+        [Test]
+        public void ShaderSpan_MatchesCpuOutline()
+        {
+            foreach (var widthPx in new[] { 160f, 200f, 256f, 320f })
+            {
+                var span = LiquidGlassSlimeSdf.ShaderSpan(widthPx);
+
+                // 半宽：CPU 命中判定用的半宽 == 渲染出的半宽
+                Assert.AreEqual(GlassSlimeMotion.HalfWidthOf(widthPx),
+                    span * LiquidGlassSlimeSdf.SvgHalfWidth, 1e-3f, $"半宽 @{widthPx}");
+
+                // 底 / 顶：碰撞盒（触地就用它）== 渲染轮廓的底 / 顶
+                Assert.AreEqual(GlassSlimeMotion.BottomOf(widthPx),
+                    span * LiquidGlassSlimeSdf.SvgFloor, 1e-3f, $"底边 @{widthPx}");
+                Assert.AreEqual(GlassSlimeMotion.TopOf(widthPx),
+                    span * -LiquidGlassSlimeSdf.SvgCeiling, 1e-3f, $"顶边 @{widthPx}");
+
+                // 反过来：轮廓全宽 == 传进来的全宽（"全宽"这个口径本身也得自洽）
+                Assert.AreEqual(widthPx, span * LiquidGlassSlimeSdf.SvgHalfWidth * 2f, 1e-3f);
+            }
+        }
+
+        /// <summary>落地精度：触地时轮廓底边正好压在地面线上（余量 0，不是"高几个像素"）。</summary>
+        [Test]
+        public void GroundContact_LeavesNoGap()
+        {
+            const float groundY = 1400f;   // 任务栏上沿（工作区底边）
+            const float widthPx = 256f;
+            var restingCenterY = groundY - GlassSlimeMotion.BottomOf(widthPx); // 物理落定的中心
+            var drawnBottomY = restingCenterY
+                + LiquidGlassSlimeSdf.ShaderSpan(widthPx) * LiquidGlassSlimeSdf.SvgFloor;
+            Assert.AreEqual(groundY, drawnBottomY, 1e-2f);
+        }
     }
 }

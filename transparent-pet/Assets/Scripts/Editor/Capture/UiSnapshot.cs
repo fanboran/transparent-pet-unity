@@ -55,6 +55,13 @@ namespace TransparentPet.EditorTools
         /// <summary>每页打开后等这么多帧再截（布局/字体/滚动条就位）。</summary>
         const int FramesPerPage = 15;
 
+        /// <summary>融合形态核对的两只间距（px）：从"明显两只"到完全重合，逐档截一张。</summary>
+        static readonly float[] FusionOffsetsPx = { 200f, 120f, 60f, 0f };
+
+        /// <summary>融合核对时第 0 只的落点（屏幕左上原点逻辑像素）。</summary>
+        const float FusionAnchorX = 700f;
+        const float FusionAnchorY = 700f;
+
         [MenuItem("TransparentPet/快照：设置面板")]
         public static void CaptureFromMenu()
         {
@@ -135,8 +142,29 @@ namespace TransparentPet.EditorTools
             if (frames < FramesBeforeOpen + FramesAfterOpen)
                 return;
 
-            // 逐页截：面板默认停在第一页，没有 SetPageForCapture 就只能看到那一页
+            // 逐页截：面板默认停在第一页，没有 SetPageForCapture 就只能看到那一页。
+            // 融合核对的位置注入要**抢在**"只在整页帧截图"这条 return 之前——它发生在
+            // 截图的**前一拍**，那一拍 step % FramesPerPage == FramesPerPage-1，会被
+            // 下面那条 return 直接吞掉。
             var step = frames - (FramesBeforeOpen + FramesAfterOpen);
+
+            // 位置注入必须比截图早一拍：本回调排在帧末（帧内顺序是 MonoBehaviour.Update
+            // → RenderPipeline（上传材质 + 渲染）→ 本回调），同一帧里改位置只影响下一帧的
+            // 渲染，而 CaptureScreenshot 拍的正是本帧——不提前就会永远拍到上一档间距
+            //（本工具第一版就这么错了一档，四张融合图全部错位）。
+            if (step % FramesPerPage == FramesPerPage - 1
+                && LiquidGlassPresence.Active is LiquidGlassController injector)
+            {
+                var nextFuse = (step + 1) / FramesPerPage - (SettingsPanel.PageCount + 2);
+                if (nextFuse >= 0 && nextFuse < FusionOffsetsPx.Length)
+                {
+                    var d = FusionOffsetsPx[nextFuse];
+                    injector.SetLogicPositionForCapture(0, new Vector2(FusionAnchorX, FusionAnchorY));
+                    injector.SetLogicPositionForCapture(1, new Vector2(FusionAnchorX + d, FusionAnchorY));
+                    return; // 注入这一拍不截图
+                }
+            }
+
             if (step % FramesPerPage != 0)
                 return;
 
@@ -174,6 +202,20 @@ namespace TransparentPet.EditorTools
                         var flatPath = Path.Combine(dir, "flat_bg.png");
                         ScreenCapture.CaptureScreenshot(flatPath);
                         Debug.Log($"[UiSnapshot] 均匀渐变底主渲染 → {flatPath}");
+                        return;
+                    }
+                    // 融合形态核对：两只按固定间距依次摆开各截一张（用户 2026-09-22 反馈
+                    // "融合时看起来被裁"）。间距从大到小，最后一张是重合。位置由上面"早一拍"
+                    // 的注入块摆好，这里只负责日志与出图。
+                    var fuseStep = page - (SettingsPanel.PageCount + 2);
+                    if (fuseStep >= 0 && fuseStep < FusionOffsetsPx.Length)
+                    {
+                        glass.Step = 9;
+                        var dx = FusionOffsetsPx[fuseStep];
+                        LogShaderParams($"融合{dx:0}");
+                        var fusePath = Path.Combine(dir, $"fuse_{dx:0}.png");
+                        ScreenCapture.CaptureScreenshot(fusePath);
+                        Debug.Log($"[UiSnapshot] 融合形态（间距 {dx:0}px）→ {fusePath}");
                         return;
                     }
                 }
@@ -216,8 +258,9 @@ namespace TransparentPet.EditorTools
             var positions = mat.GetVectorArray("_ItemPositions");
             var res = mat.GetVector("_Resolution");
             var quadUv = mat.GetVector("_ScreenUvRect");
-            var mergeRate = mat.GetFloat("_MergeRate");
+            var mergeRatio = mat.GetFloat("_MergeRatio");
             var liveCount = 0;
+            var spanMeans = new float[shapes?.Length ?? 0];
             for (var i = 0; i < (shapes?.Length ?? 0); i++)
             {
                 if (enabled != null && enabled[i] < 0.5f)
@@ -225,21 +268,19 @@ namespace TransparentPet.EditorTools
                 liveCount++;
                 var span = widths[i] * scales[i];
                 var shape = shapes[i];
+                spanMeans[i] = span * 0.5f * (shape.x + shape.y);
                 Debug.Log($"[UiSnapshot] {tag} 槽{i}: 位置=({positions[i].x:F0},{positions[i].y:F0}) " +
-                          $"宽{widths[i]:F1} 缩放{scales[i]:F3} span={span:F1} " +
+                          $"全宽尺度{widths[i]:F1} 缩放{scales[i]:F3} span={span:F1} " +
                           $"形状缩放=({shape.x:F4},{shape.y:F4}) 旋转{shape.z * Mathf.Rad2Deg:F2}°");
                 // 期望轮廓尺寸：SVG 全宽 0.8 / 全高 0.508 × span × 各向缩放
                 Debug.Log($"[UiSnapshot] {tag} 槽{i}: 期望轮廓 {0.8f * span * Mathf.Abs(shape.x):F1}" +
                           $"x{0.508f * span * Mathf.Abs(shape.y):F1}px");
             }
 
-            // 融合半径（shader 的 smin：|d0-d1| < k 才互相影响，k 是归一化量 → k×屏高 px）。
-            // 两只落进这个半径，轮廓就不再是单只的形状：重合时 smin 退化成 d-k/4，
-            // 整圈外扩 k/4×屏高（0.05×1340 ≈ 16.75px/侧），侧壁被推平，看着像"两边被裁"。
-            if (mergeRate > 0f && liveCount > 1)
+            // 融合半径 = 比例 × 轮廓全宽（px）；重合时 smin 退化成 d - k/4 → 轮廓每侧
+            // 外扩 k/4。两只落进这个半径，画出来就不再是单只的形状（并集 + 整体变胖）。
+            if (mergeRatio > 0f && liveCount > 1)
             {
-                var zonePx = mergeRate * res.y;
-                var bulgePx = mergeRate * 0.25f * res.y;
                 for (var i = 0; i < (positions?.Length ?? 0); i++)
                 {
                     if (enabled == null || enabled[i] < 0.5f)
@@ -251,10 +292,13 @@ namespace TransparentPet.EditorTools
                         var dx = positions[i].x - positions[j].x;
                         var dy = positions[i].y - positions[j].y;
                         var dist = Mathf.Sqrt(dx * dx + dy * dy);
+                        var spanMean = 0.5f * (spanMeans[i] + spanMeans[j]);
+                        var zonePx = mergeRatio * spanMean;
                         if (dist < zonePx)
                             Debug.LogWarning($"[UiSnapshot] {tag} 槽{i}/槽{j} 相距 {dist:F0}px " +
-                                             $"< 融合半径 {zonePx:F0}px → 轮廓是并集，最大外扩 " +
-                                             $"{bulgePx:F1}px/侧；量单只形状请先摆开");
+                                             $"< 融合半径 {zonePx:F0}px（= {mergeRatio:F3}×轮廓全宽）" +
+                                             $" → 轮廓是并集，重合时最大外扩 {zonePx * 0.25f:F1}px/侧；" +
+                                             "量单只形状请先摆开");
                     }
                 }
             }

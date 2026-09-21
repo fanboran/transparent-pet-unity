@@ -29,6 +29,16 @@ namespace TransparentPet.Pet.Glass
         /// <summary>史莱姆全宽对应像素宽 → SVG→像素缩放系数。</summary>
         public static float ScaleFromWidthPx(float widthPx) => widthPx / (SvgHalfWidth * 2f);
 
+        /// <summary>
+        /// 交给 shader 的 SDF 尺度（`_ItemWidths` 槽位值）：**必须走这里**。
+        /// shader 把 `d / span` 当 SVG 空间坐标用，所以单位是"全宽 / 0.8"，
+        /// 不是全宽本身——直接传全宽会让画出来的轮廓只有 0.8 倍，而 CPU 的命中判定
+        /// 与碰撞半尺寸（HalfWidthOf/BottomOf）都按全宽算，两边差 1.25 倍：
+        /// 落地时轮廓底边离地 0.069×全宽（256 宽 → 22px）、点在外圈 32px 也能抓住。
+        /// 2026-09-22 用户实测"投掷后落不到屏幕底部"就是这个差，故把换算收成唯一一处。
+        /// </summary>
+        public static float ShaderSpan(float widthPx) => ScaleFromWidthPx(widthPx);
+
         /// <summary>三次贝塞尔求值（t∈[0,1]）。</summary>
         static void Bezier3(float[] a, float[] b, float[] c, float[] d, float t, out float x, out float y)
         {

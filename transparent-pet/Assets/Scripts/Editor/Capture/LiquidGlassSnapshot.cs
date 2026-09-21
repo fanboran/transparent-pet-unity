@@ -77,7 +77,7 @@ namespace TransparentPet.EditorTools
             // ── 画布 1：既有 800×560 表现锚定用例 ──
             var world = BuildWorld(W, H);
             var controller = world.Controller;
-            controller.SetSlimeWidthForCapture(320f);
+            controller.SetSlimeWidthForCapture(256f);
             controller.SetLogicPositionForCapture(new Vector2(W * 0.5f, H * 0.5f));
             PinLife(controller, controller.SlimeCount);
 
@@ -131,7 +131,7 @@ namespace TransparentPet.EditorTools
             controller.BgType = 1; // 渐变素材：折射形变比棋盘格更直观
 
             // 单只贴角：绘制矩形只覆盖画面一角
-            controller.SetSlimeWidthForCapture(240f);
+            controller.SetSlimeWidthForCapture(192f);
             controller.SetLogicPositionForCapture(new Vector2(1380f, 130f));
             PinLife(controller, controller.SlimeCount);
             world.Snap("liquidglass_rect_single.png");

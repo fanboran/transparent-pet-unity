@@ -36,8 +36,12 @@
 // 多只分散时 quad 的并集可能覆盖大半个屏幕，故主渲染路径再加两级跳过（均为
 // 「本来就不改变结果」的剪枝，见 allItemsFar / mainSDF）：
 //   · 整屏提前退出：离所有物品都远到轮廓外已无输出 → 直接输出全透明；
-//   · 逐项跳过：某物品的下界距离已超过当前 smin 结果 + 融合宽度 → 该项对结果
+//   · 逐项跳过：某物品的**下界距离**已超过当前 smin 结果 + 融合半径 → 该项对结果
 //     无影响（smin 在 |a-b|≥k 时恒等于 min，逐位等价）。
+//     ⚠ 下界必须是下界：itemAabbDistPx 在 AABB 内部恒为 0，而轮廓内 signed d 可以是
+//     负数，拿 0 当界限会把"点就在该物品内"误剪掉（并集少一份负贡献 → 值在
+//     merged = -k 的等值线上跳变 → 体内一条与轮廓平行的缝，只在多只靠近时出现）。
+//     故逐项剪枝额外要求下界 > 0（AABB 外），细节见 mainSDF 的注释。
 // 调试视图（_Step ≤ 2）保持全屏 + 不剪枝：SDF/法线图是形状锚定工具，需要看到
 // 轮廓外的数值分布。
 // ================================================================
@@ -67,7 +71,7 @@ Shader "TransparentPet/LiquidGlass"
         _GlareFactor ("眩光强度", Range(0, 1)) = 0.9
         _GlareAngle ("眩光角度(度)", Float) = -45
         [Header(Shape)]
-        _MergeRate ("融合宽度(SDF空间)", Range(0.001, 0.5)) = 0.05
+        _MergeRatio ("融合半径(占轮廓全宽比例)", Range(0.001, 0.5)) = 0.05
         _Tint ("色调(RGBA, A=强度)", Color) = (1, 1, 1, 0.08)
         _BlurEdge ("边缘模糊(0=渐进 1=全模糊)", Float) = 1
     }
@@ -121,7 +125,7 @@ Shader "TransparentPet/LiquidGlass"
             float _GlareOppositeFactor;
             float _GlareFactor;
             float _GlareAngle; // 已换算为弧度
-            float _MergeRate;
+            float _MergeRatio;
             float4 _Tint;
             float _BlurEdge;
 
@@ -342,6 +346,18 @@ Shader "TransparentPet/LiquidGlass"
                 return true;
             }
 
+            // 该槽位的融合半径 k（归一化单位）= 比例 × 轮廓全宽 / 屏高。
+            // 关键是**按体量给**而不是按屏幕给：固定 0.05×屏高 = 67px，在 256px 宽的
+            // 史莱姆上相当于体宽的 26%，两只一靠近轮廓就被整体外扩（重合时 smin 退化成
+            // d - k/4 → 每侧胖 k/4×屏高 ≈ 17px），看着像两边被切平。按体量给之后，
+            // 重合外扩 = 0.05/4 × 轮廓全宽 ≈ 3px，且随整体缩放一起变。
+            float itemMergeRate(int index)
+            {
+                float span = _ItemWidths[index] * _ItemScales[index];
+                float spanMean = span * 0.5 * (_ItemShape[index].x + _ItemShape[index].y);
+                return _MergeRatio * spanMean / _Resolution.y;
+            }
+
             float mainSDF(float2 pixelTopDown, bool allowSkip)
             {
                 float result = 1.0;
@@ -349,11 +365,19 @@ Shader "TransparentPet/LiquidGlass"
                 {
                     if (_ItemEnabled[i] < 0.5)
                         continue;
+                    float k = itemMergeRate(i);
                     // 剪枝（仅在主渲染路径开启）：|d - result| ≥ k 时 smin 恒等于
-                    // min(result, d)，该项对 result 无影响，跳过与不跳过逐位等价
-                    if (allowSkip && itemAabbDistPx(i, pixelTopDown) / _Resolution.y * 0.5 - result >= _MergeRate)
+                    // min(result, d)，跳过与不跳过逐位等价——**但前提是这个下界成立**。
+                    // itemAabbDistPx 是"到 AABB 的距离"，AABB 内部恒为 0；而轮廓内 d 可以是
+                    // 负的，0 就不是下界了。于是"点落在该物品内部"的情形会被误剪掉一整只，
+                    // result 少一份负贡献 → 值在 merged = -k 的等值线上跳变，画出来就是体内
+                    // 一条与轮廓平行的缝（深度恰好 k）。单只时 result 从 1.0 起步永远剪不掉，
+                    // 所以这条缝只在多只靠近时出现（2026-09-22 用户报的"融合时被裁"）。
+                    // 故只在 AABB 外（下界 > 0）才允许剪枝。
+                    float lb = itemAabbDistPx(i, pixelTopDown) / _Resolution.y * 0.5;
+                    if (allowSkip && lb > 0.0 && lb - result >= k)
                         continue;
-                    result = smin(result, getItemSDF(i, pixelTopDown), _MergeRate);
+                    result = smin(result, getItemSDF(i, pixelTopDown), k);
                 }
                 return result;
             }

@@ -305,7 +305,7 @@ MonoBehaviour:
   MainShader: {fileID: 4800000, guid: a8a5816c983606f429c9323592f43746, type: 3}
   BgShader: {fileID: 4800000, guid: 8da91fad556f51f488d678805a8ef15b, type: 3}
   BlurShader: {fileID: 4800000, guid: acb7e82dcc81ccd419aa4f2808eca262, type: 3}
-  SlimeWidthPx: 320
+  SlimeWidthPx: 256
   RefThickness: 80
   RefFactor: 1.45
   RefDispersion: 7
