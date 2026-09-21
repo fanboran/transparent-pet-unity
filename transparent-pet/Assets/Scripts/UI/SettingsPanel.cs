@@ -84,7 +84,7 @@ namespace TransparentPet.UI
         Texture2D whiteTex, borderTex, darkTex, tabActiveTex, closeHoverTex, tabHoverTex, pageColumnTex;
         Texture2D[] pageIcons;   // 左列页图标（16×16 白色实心图形，绘制时 GUI.color 上色）
         GUIStyle borderStyle, windowStyle, titleBarStyle, closeButtonStyle,
-            tabStyle, tabActiveStyle, labelStyle, valueStyle, buttonStyle, smallStyle, sectionStyle,
+            tabStyle, tabActiveStyle, labelStyle, valueStyle, buttonStyle, toggleStyle, smallStyle, sectionStyle,
             pageColumnStyle, pageLabelStyle, pageLabelActiveStyle;
         Vector2 pageScroll;      // 内容区滚动位置（换页归零）
 
@@ -104,6 +104,25 @@ namespace TransparentPet.UI
             EventBus.Unsubscribe<bool>(EventTopics.CaptureInvisibleChanged, OnExternalCaptureInvisible);
             SetVisible(false); // 场景卸载时收走模态标记，别把窗口层的 ESC 永久让位
         }
+
+        /// <summary>页数（无头截图工具按此遍历所有页）。</summary>
+        public static int PageCount => TabNames.Length;
+
+        /// <summary>
+        /// 无头快照用：切到第 index 页（越界忽略）。与液态玻璃控制器那几个
+        /// `SetXForCapture` 同一用途——没有它，离屏截图只能看到默认第一页。
+        /// </summary>
+        public void SetPageForCapture(int index)
+        {
+            if (index < 0 || index >= TabNames.Length)
+                return;
+            tab = (Tab)index;
+            characterListOpen = false;
+            pageScroll = Vector2.zero;
+        }
+
+        /// <summary>无头快照用：当前页序号（诊断日志）。</summary>
+        public int CurrentPageForCapture => (int)tab;
 
         void OnToggleRequested(bool show) => SetVisible(show);
 
@@ -366,7 +385,7 @@ namespace TransparentPet.UI
 
         void DrawPhysicsTab()
         {
-            var enabled = GUILayout.Toggle(config.throwParams.enabled, "抛射物理（甩出去）");
+            var enabled = GUILayout.Toggle(config.throwParams.enabled, "抛射物理（甩出去）", toggleStyle);
             if (enabled != config.throwParams.enabled)
                 Commit(EventTopics.ThrowParamsChanged, SwapThrow(enabled: enabled));
 
@@ -413,12 +432,12 @@ namespace TransparentPet.UI
 
         void DrawWindowTab()
         {
-            var onTop = GUILayout.Toggle(config.alwaysOnTop, "窗口始终置顶");
+            var onTop = GUILayout.Toggle(config.alwaysOnTop, "窗口始终置顶", toggleStyle);
             if (onTop != config.alwaysOnTop)
                 Commit(EventTopics.AlwaysOnTopChanged, config.alwaysOnTop = onTop);
 
             GUILayout.Space(6f);
-            var captureInvisible = GUILayout.Toggle(config.captureInvisible, "抓屏隐形（折射真实桌面）");
+            var captureInvisible = GUILayout.Toggle(config.captureInvisible, "抓屏隐形（折射真实桌面）", toggleStyle);
             if (captureInvisible != config.captureInvisible)
             {
                 config.captureInvisible = captureInvisible;
@@ -430,7 +449,7 @@ namespace TransparentPet.UI
             GUILayout.Label("开启后录屏 / 直播 / 截图中桌宠不可见", smallStyle);
 
             GUILayout.Space(6f);
-            var auto = GUILayout.Toggle(autoStart, "开机自启动");
+            var auto = GUILayout.Toggle(autoStart, "开机自启动", toggleStyle);
             if (auto != autoStart)
             {
                 autoStart = auto;
@@ -676,6 +695,17 @@ namespace TransparentPet.UI
 
             // 经典灰按钮：借默认 button 的浮雕皮肤换中文字体（3D 灰按钮正是经典对话框味）
             buttonStyle = new GUIStyle(GUI.skin.button) { font = osFont, fontSize = 13 };
+
+            // 开关的文字颜色必须自己给：默认 toggle 皮肤是给深色底设计的，摆在白色面板上
+            // 明显发灰（2026-09-22 用 UiSnapshot 截图才看出来——"抛射物理/抓屏隐形"那几行
+            // 比旁边的黑字淡一大截），连同字体一起换成本面板的颜色
+            toggleStyle = new GUIStyle(GUI.skin.toggle) { font = osFont, fontSize = 13 };
+            foreach (var state in new[]
+                     {
+                         toggleStyle.normal, toggleStyle.onNormal, toggleStyle.hover, toggleStyle.onHover,
+                         toggleStyle.active, toggleStyle.onActive, toggleStyle.focused, toggleStyle.onFocused,
+                     })
+                state.textColor = Color.black;
         }
 
         void OnDestroy()

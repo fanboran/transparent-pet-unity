@@ -18,6 +18,7 @@
 // ============================================================================
 using System.IO;
 using TransparentPet.Core;
+using TransparentPet.UI;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -42,6 +43,9 @@ namespace TransparentPet.EditorTools
         static int frames;
         static int idleFrames;
 
+        /// <summary>每页打开后等这么多帧再截（布局/字体/滚动条就位）。</summary>
+        const int FramesPerPage = 15;
+
         [MenuItem("TransparentPet/快照：设置面板")]
         public static void CaptureFromMenu()
         {
@@ -55,9 +59,9 @@ namespace TransparentPet.EditorTools
 
         public static void CaptureHeadless()
         {
-            var outPath = Path.Combine(Path.GetTempPath(), "pet-ui", "settings.png");
-            Directory.CreateDirectory(Path.GetDirectoryName(outPath));
-            SessionState.SetString(PathKey, outPath);
+            var dir = Path.Combine(Path.GetTempPath(), "pet-ui");
+            Directory.CreateDirectory(dir);
+            SessionState.SetString(PathKey, dir);
             SessionState.SetBool(PendingKey, true);
 
             EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
@@ -95,14 +99,37 @@ namespace TransparentPet.EditorTools
 
             frames++;
             if (frames == FramesBeforeOpen)
-                EventBus.Publish(EventTopics.SettingsPanelToggleRequested, true);
-            else if (frames == FramesBeforeOpen + FramesAfterOpen)
-                ScreenCapture.CaptureScreenshot(SessionState.GetString(PathKey, "settings.png")); // 落盘发生在帧末
-            else if (frames >= FramesBeforeOpen + FramesAfterOpen + 10)
             {
-                Debug.Log($"[UiSnapshot] 设置面板截图 → {SessionState.GetString(PathKey, "settings.png")}");
-                Finish(0);
+                EventBus.Publish(EventTopics.SettingsPanelToggleRequested, true);
+                return;
             }
+            if (frames < FramesBeforeOpen + FramesAfterOpen)
+                return;
+
+            // 逐页截：面板默认停在第一页，没有 SetPageForCapture 就只能看到那一页
+            var step = frames - (FramesBeforeOpen + FramesAfterOpen);
+            if (step % FramesPerPage != 0)
+                return;
+
+            var page = step / FramesPerPage;
+            if (page >= SettingsPanel.PageCount)
+            {
+                Finish(0);
+                return;
+            }
+
+            // 编辑器工具里按类型找实例是可接受的（运行时模块间禁止 Find 的纪律针对耦合）
+            var panel = Object.FindObjectOfType<SettingsPanel>();
+            if (panel == null)
+            {
+                Debug.LogError("[UiSnapshot] 场景里没有 SettingsPanel，截图放弃");
+                Finish(1);
+                return;
+            }
+            panel.SetPageForCapture(page);
+            var path = Path.Combine(SessionState.GetString(PathKey, "."), $"settings_p{page}.png");
+            ScreenCapture.CaptureScreenshot(path); // 落盘发生在帧末
+            Debug.Log($"[UiSnapshot] 第 {page} 页（{panel.CurrentPageForCapture}）截图 → {path}");
         }
 
         static void Finish(int exitCode)
