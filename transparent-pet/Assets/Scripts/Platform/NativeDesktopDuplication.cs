@@ -42,6 +42,22 @@ namespace TransparentPet.Platform
         [StructLayout(LayoutKind.Sequential)]
         struct RECT { public int Left, Top, Right, Bottom; }
 
+        [StructLayout(LayoutKind.Sequential)]
+        struct POINT { public int X, Y; }
+
+        /// <summary>
+        /// dxgi1_2.h: DXGI_OUTDUPL_POINTER_POSITION = { POINT Position; BOOL Visible; }。
+        /// 字段名是 Visible 不是 Busy（早期手抄错），x64 下 12 字节（POINT 8 + BOOL 4）。
+        /// 若按 8 字节算（丢掉 Visible 那 4 字节），后面两个 UINT 会错位到 36/40、
+        /// 整个 FRAME_INFO 只剩 44 字节——见 DXGI_OUTDUPL_FRAME_INFO 的"勿回退"注释。
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        struct DXGI_OUTDUPL_POINTER_POSITION
+        {
+            public POINT Position;
+            public int Visible; // BOOL = 4 字节 int（Win32 定义）
+        }
+
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         struct DXGI_OUTPUT_DESC
         {
@@ -52,12 +68,26 @@ namespace TransparentPet.Platform
             public IntPtr Monitor;
         }
 
+        // dxgi1_2.h 精确布局（x64 = 48 字节，逐字段对齐过 external/dxsdk/Include/dxgi1_2.h）：
+        //   0  LastPresentTime(LARGE_INTEGER=long)   8  LastMouseUpdateTime(LARGE_INTEGER)
+        //   16 AccumulatedFrames(UINT)               20 RectsCoalesced(BOOL)
+        //   24 ProtectedContentMaskedOut(BOOL)       28 PointerPosition(12B: POINT+BOOL)
+        //   40 TotalMetadataBufferSize(UINT)         44 PointerShapeBufferSize(UINT)
+        // 【勿回退】旧定义把 AccumulatedFrames/RectsCoalesced/ProtectedContentMaskedOut 全
+        // 写成 long、又漏掉 PointerPosition 的两个字段，凑巧也是 48 字节（5×8+IntPtr），
+        // 调用方又是 out _ 丢弃它，所以错位从未暴露。原生侧按 48 字节写入本结构，
+        // 总大小必须保持 48——别按"字段数"把它简化回去，那会让写入溢出栈上结构。
         [StructLayout(LayoutKind.Sequential)]
         struct DXGI_OUTDUPL_FRAME_INFO
         {
-            public long LastPresentTime, LastUpdateTime, AccumulatedFrames;
-            public long RectsCoalesced, ProtectedContentMaskedOut;
-            public IntPtr pPointerInfo;
+            public long LastPresentTime;             // LARGE_INTEGER
+            public long LastMouseUpdateTime;         // LARGE_INTEGER
+            public uint AccumulatedFrames;           // UINT
+            public int RectsCoalesced;               // BOOL
+            public int ProtectedContentMaskedOut;    // BOOL
+            public DXGI_OUTDUPL_POINTER_POSITION PointerPosition;
+            public uint TotalMetadataBufferSize;     // UINT
+            public uint PointerShapeBufferSize;      // UINT
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -373,24 +403,40 @@ namespace TransparentPet.Platform
                     IntPtr.Zero, 0, D3D11_SDK_VERSION, out var device, out _, out var context) != 0)
                 return null;
 
+            // output → IDXGIOutput1（DuplicateOutput 只存在于 1_2 版接口）只是本方法内的
+            // 临时视图，用完必须按引用计数归还，否则每扫一个适配器泄漏一份引用（同下方
+            // texture 路径 :469 的引用计数注释）。
+            // 但不能无脑 ReleaseComObject：强转是否复用 output 的 RCW 取决于运行时的
+            // RCW 身份表实现（按 IUnknown 去重则复用）——若复用了，在这里再释放一次
+            // 等于提前把 output 拆掉，caller 扫描循环里的 finally 就成了二次释放（抛异常）。
+            // 故用 ReferenceEquals 判定是否真拿到了独立 RCW：独立才归本方法还，复用则
+            // 引用随 output 一并归还。两种实现下都既不泄漏、也不重复释放。
             var output1 = (IDXGIOutput1)output;
-            if (output1.DuplicateOutput(device, out var duplication) != S_OK)
+            try
             {
-                // 失败路径 device/context 无人接管，就地归还，否则每试一个非桌面适配器泄漏一对设备
-                Marshal.ReleaseComObject(context);
-                Marshal.ReleaseComObject(device);
-                return null; // 非 DWM 适配器（Optimus）/虚拟显示器 → UNSUPPORTED
-            }
+                if (output1.DuplicateOutput(device, out var duplication) != S_OK)
+                {
+                    // 失败路径 device/context 无人接管，就地归还，否则每试一个非桌面适配器泄漏一对设备
+                    Marshal.ReleaseComObject(context);
+                    Marshal.ReleaseComObject(device);
+                    return null; // 非 DWM 适配器（Optimus）/虚拟显示器 → UNSUPPORTED
+                }
 
-            return new DesktopDuplicator
+                return new DesktopDuplicator
+                {
+                    adapter = adapter,
+                    device = device,
+                    context = context,
+                    duplication = duplication,
+                    Width = desc.DesktopCoordinates.Right - desc.DesktopCoordinates.Left,
+                    Height = desc.DesktopCoordinates.Bottom - desc.DesktopCoordinates.Top,
+                };
+            }
+            finally
             {
-                adapter = adapter,
-                device = device,
-                context = context,
-                duplication = duplication,
-                Width = desc.DesktopCoordinates.Right - desc.DesktopCoordinates.Left,
-                Height = desc.DesktopCoordinates.Bottom - desc.DesktopCoordinates.Top,
-            };
+                if (!ReferenceEquals(output1, output))
+                    Marshal.ReleaseComObject(output1);
+            }
         }
 
         /// <summary>
@@ -400,6 +446,13 @@ namespace TransparentPet.Platform
         /// </summary>
         public bool TryAcquireInto(byte[] buffer, int timeoutMs = 200)
         {
+            // 入参校验（同 NativeScreenCapture.TryCaptureRegion:124 的风格）：抓屏线程
+            // 没有 try/catch 兜底，越界的 Marshal.Copy 会直接杀死线程（表现为静默黑屏）。
+            // 这里只判空——尺寸校验必须放到 staging 长宽刷新之后（见下方翻行序处），
+            // 分辨率刚变大时用上一帧的旧长宽校验是拦不住的。
+            if (buffer == null)
+                return false;
+
             var hr = duplication.AcquireNextFrame(timeoutMs, out _, out var resource);
             if (hr == DXGI_ERROR_WAIT_TIMEOUT)
                 return false;
@@ -445,6 +498,14 @@ namespace TransparentPet.Platform
                         return false;
                     try
                     {
+                        // 尺寸校验放在这里而不是方法入口：上面重建分支刚把 staging 换成
+                        // 新分辨率的纹理（stagingW/H 同步刷新），而调用方的 buffer 可能还是
+                        // 旧尺寸——分辨率变大时 buffer 偏小，Marshal.Copy 直接越界。返回
+                        // false 丢本轮帧（帧随后由 finally 正常 ReleaseFrame），等调用方按
+                        // 新 Width/Height 重建 buffer；抓屏线程无 try/catch，越界即死。
+                        if (buffer.Length < (long)stagingW * stagingH * 4)
+                            return false;
+
                         // 翻行序：源首行=屏幕顶行（RowPitch 步进），目标首行=屏幕底行
                         var rowBytes = stagingW * 4;
                         for (var y = 0; y < stagingH; y++)
