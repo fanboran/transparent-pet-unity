@@ -189,6 +189,12 @@ namespace TransparentPet.Platform
             var config = PetConfigStore.Load();
             config.autoStart = enabled;
             PetConfigStore.Save(config);
+
+            // 结果通知（不是"请求切换"）：注册表已写、配置已落盘之后才播，订阅方按新状态
+            // 刷新自己的显示即可——从托盘改的开机自启，设置面板窗口页的开关要能跟上。
+            // 注意 Save 抛异常时这行到不了，即"没写成就没通知"；本方法由托盘项经
+            // NativeTray 的 InvokeAction 调用，异常在那里被吞并记 warning。
+            EventBus.Publish(EventTopics.AutoStartChanged, enabled);
         }
 
         /// <summary>
@@ -326,15 +332,25 @@ namespace TransparentPet.Platform
 
             // 等窗口就绪；UniWinC 在切换透明/置顶时会重设窗口样式，做多次重试兜底
             var delays = new[] { 0.5f, 1f, 3f };
+            var handleFound = false;
             foreach (var delay in delays)
             {
                 yield return new WaitForSeconds(delay);
                 // requireVisible:false：主窗口可能仍是隐藏状态（上面恢复失败时），
                 // 按可见性过滤会找不到它，显示与任务栏处理就会静默失效
                 var hwnd = NativeWindowStyles.FindCurrentProcessTopLevelWindow(requireVisible: false);
+                if (hwnd == IntPtr.Zero)
+                    continue; // 句柄还没就绪：HideFromTaskbar/SetVisible 对零句柄本就是 no-op，跳过
+                handleFound = true;
                 NativeWindowStyles.HideFromTaskbar(hwnd);
                 NativeWindowStyles.SetVisible(hwnd, true);
             }
+
+            // 三轮都没拿到句柄 = 任务栏隐藏与"从启动画面恢复显示"都没生效，窗口可能仍隐形。
+            // 此前静默——用户只报"桌宠没出来"，日志里什么都查不到（唯一兜底是 ESC，而窗口
+            // 不可见时用户也未必知道要按）。只在最终失败时告警一次，不刷三轮噪音。
+            if (!handleFound)
+                Debug.LogWarning("[PetWindowSetup] 三轮重试后仍未找到主窗口句柄：任务栏隐藏与恢复显示均未生效");
 #endif
         }
     }

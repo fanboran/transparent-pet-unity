@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using UnityEngine;
+using TransparentPet.Core;
 
 namespace TransparentPet.Platform
 {
@@ -110,7 +111,8 @@ namespace TransparentPet.Platform
     /// <summary>
     /// 系统托盘图标（右键弹出通用菜单）——全屏无边框窗口的常驻入口。
     /// 实现要点：
-    /// - Shell_NotifyIcon + 隐藏消息窗口（HWND_MESSAGE 父窗口，不显示不抢焦点）
+    /// - Shell_NotifyIcon + 宿主窗口。宿主是**隐藏的普通顶层窗口**（WS_POPUP + 1x1，
+    ///   从不 ShowWindow），而不是 HWND_MESSAGE 消息窗口——见构造函数里的改因说明
     /// - Unity 主线程没有 Win32 消息循环，由调用方每帧调 Pump() 抽干本窗口消息
     /// - 窗口过程委托用静态字段持有，防止被 GC 回收后崩溃
     /// - 菜单数据（menuItems）随实例走；静态 active 只负责把窗口过程路由回当前实例
@@ -144,8 +146,18 @@ namespace TransparentPet.Platform
         const uint MFT_RADIOCHECK = 0x200;
         const uint TPM_RIGHTBUTTON = 0x2;
         const uint TPM_RETURNCMD = 0x100;
-        static readonly IntPtr HWND_MESSAGE = new IntPtr(-3);
         const int IDI_APPLICATION = 32512;
+
+        // ── 宿主窗口样式（隐藏的普通顶层窗口，见构造函数）──
+        // WS_POPUP：无边框无标题的顶层窗口；WS_EX_TOOLWINDOW 让它在 ALT+TAB/任务栏里
+        // 都不出现（本就没显示过，这里是双保险）；WS_EX_NOACTIVATE 保证它永远不会
+        // 抢焦点——托盘宿主是个纯粹的消息接收器，不能打断用户正在操作的前台窗口。
+        const uint WS_POPUP = 0x80000000;
+        const uint WS_EX_TOOLWINDOW = 0x80;
+        const uint WS_EX_NOACTIVATE = 0x08000000;
+
+        /// <summary>Win32 错误码：窗口类已存在（RegisterClassW 对已注册类名同样返回 0，但这不是失败）。</summary>
+        const int ERROR_CLASS_ALREADY_EXISTS = 1410;
 
         // explorer 重启重加失败的重试参数：5 次 × 0.5s 覆盖任务栏初始化竞态窗口
         // （MS 文档提示 TaskbarCreated 到达时任务栏可能尚未就绪），又不至于长时间空转。
@@ -211,13 +223,15 @@ namespace TransparentPet.Platform
             public POINT pt;
         }
 
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        // SetLastError：失败原因要读，Win32 规定必须在调用后立刻取（见构造函数的注册检查）——
+        // "类已注册"（ERROR_CLASS_ALREADY_EXISTS）返回的同样是 0，那不是故障，不该报错
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern ushort RegisterClassW(ref WNDCLASSW lpWndClass);
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         static extern uint RegisterWindowMessageW(string message);
 
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern IntPtr CreateWindowExW(uint exStyle, string className, string windowName,
             uint style, int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
 
@@ -275,6 +289,7 @@ namespace TransparentPet.Platform
         readonly Queue<Action> pendingActions = new Queue<Action>(); // 菜单动作队列（Pump 顶层执行）
         NOTIFYICONDATAW trayIconData; // 首次 NIM_ADD 的完整数据（hIcon/szTip 原样），explorer 重启后重加图标复用
         readonly ReaddRetryState readdRetry = new ReaddRetryState(MaxReaddRetries, ReaddRetryIntervalSeconds);
+        bool disposed; // Dispose 幂等标志（hwnd 是 readonly、释放后清不掉，靠它兜住重复释放，见 Dispose）
 
         /// <param name="tip">托盘悬停提示文字</param>
         /// <param name="menuItems">右键菜单内容（含分隔线与子菜单；"退出"也由调用方传入，
@@ -300,12 +315,29 @@ namespace TransparentPet.Platform
                     hInstance = GetModuleHandleW(null),
                     lpszClassName = "PetTrayHost",
                 };
-                RegisterClassW(ref wc);
-                // HWND_MESSAGE 父窗口 → 纯消息窗口，不可见
-                hwnd = CreateWindowExW(0, "PetTrayHost", "PetTrayHost", 0,
-                    0, 0, 0, 0, HWND_MESSAGE, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
-                if (hwnd == IntPtr.Zero)
+                if (RegisterClassW(ref wc) == 0 && Marshal.GetLastWin32Error() != ERROR_CLASS_ALREADY_EXISTS)
+                {
+                    ReportFailure("托盘宿主窗口类注册失败，托盘图标不会出现（用户失去设置/退出入口）");
                     return;
+                }
+
+                // 宿主窗口＝**隐藏的普通顶层窗口**（WS_POPUP，父窗口 IntPtr.Zero＝桌面，1x1）。
+                // 为什么不再是 HWND_MESSAGE 消息窗口：Win32 规定 message-only 窗口不接收
+                // 广播消息（MSDN《Window Features》——HWND_MESSAGE 窗口被排除在
+                // HWND_BROADCAST 的目标之外），而 explorer 重启的 "TaskbarCreated" 正是靠
+                // 广播送达；挂 HWND_MESSAGE 时这条消息永远收不到，P1 的 ReaddRetryState
+                // 自愈机制因此从未被触发过（审计结论）。顶层窗口才在广播范围内。
+                // 隐形的保证：1x1 尺寸 + 从不调用 ShowWindow（窗口创建后默认隐藏）+
+                // WS_EX_TOOLWINDOW 不出现在任务栏/ALT+TAB + WS_EX_NOACTIVATE 不抢焦点，
+                // 对用户而言与之前的消息窗口一样不可见。
+                hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, "PetTrayHost", "PetTrayHost",
+                    WS_POPUP, 0, 0, 1, 1, IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
+                if (hwnd == IntPtr.Zero)
+                {
+                    // 错误码紧跟在 P/Invoke 之后读（Win32 约定，中间不得穿插别的原生调用）
+                    ReportFailure($"托盘宿主窗口创建失败（Win32 错误 {Marshal.GetLastWin32Error()}），托盘图标不会出现（用户失去设置/退出入口）");
+                    return;
+                }
 
                 // 注册 explorer 重启广播 "TaskbarCreated"：explorer 崩溃/重启会收走全部
                 // 托盘图标，这条广播是系统给的唯一补偿窗口（返回 0 = 注册失败，
@@ -329,9 +361,32 @@ namespace TransparentPet.Platform
                 if (!Shell_NotifyIconW(NIM_ADD, ref trayIconData))
                     readdRetry.OnFailure(NowSeconds);
             }
-            catch
+            catch (Exception e)
             {
-                // 托盘创建失败不阻断主流程（spike 阶段仍有 ESC 兜底）
+                // 托盘创建失败不阻断主流程（spike 阶段仍有 ESC 兜底）——但不再是全空
+                // catch 的静默降级：告警出去，否则"托盘没图标"只能靠用户上报回溯
+                ReportFailure($"托盘初始化异常，托盘图标不会出现（用户失去设置/退出入口）：{e}");
+            }
+        }
+
+        /// <summary>
+        /// Platform 层关键设施失败的统一出口：Debug.LogWarning + EventBus.Publish
+        /// （PlatformErrorRaised，当前无强制消费者，是 HUD/诊断的扩展点）。
+        /// **不抛异常**——托盘失败只降级不阻断（spike 阶段仍有 ESC 兜底），调用方
+        /// 都是构造期的失败分支，本方法返回后正常 return 即可。
+        /// </summary>
+        static void ReportFailure(string message)
+        {
+            Debug.LogWarning($"[NativeTray] {message}");
+            // 上报本身再失败也不能影响失败路径（EventBus 内部已 try/catch 各 handler，
+            // 这里兜底的是 topic 拼写/载荷类型这类开发期失误）
+            try
+            {
+                EventBus.Publish(EventTopics.PlatformErrorRaised, message);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[NativeTray] 上报 PlatformErrorRaised 失败: {e}");
             }
         }
 
@@ -366,6 +421,8 @@ namespace TransparentPet.Platform
         /// 必须自愈，否则用户只剩 ESC 硬退。单次重加可能撞上任务栏初始化未完成的
         /// 竞态（MS 文档明示），失败登记重试由 Pump 每 0.5s 补试至成功或 5 次用尽
         /// （见 ReaddRetryState）。
+        /// 调用点只有两处、都在 Pump 的顶层栈上：TaskbarCreated 到达时经 pendingActions
+        /// 排队来的这一发，以及 Pump 末尾按到点 Due 补偿重试的那一发（见 Pump 注释）。
         /// </summary>
         void ReaddIcon()
         {
@@ -402,17 +459,23 @@ namespace TransparentPet.Platform
                 DispatchMessageW(ref msg);
             }
 
-            // explorer 重启/启动时重加失败的兜底重试：到点再试一次（顶层栈执行，
-            // 同菜单动作的纪律——Shell_NotifyIcon 是同步跨进程调用，不进 wndproc 嵌套栈）
-            if (readdRetry.Due(NowSeconds))
-                ReaddIcon();
-
-            // 菜单动作在主循环顶层执行，而不是在窗口过程里直接调：
-            // ShowMenu 跑在 DispatchMessageW 的嵌套栈上，在那里摘托盘图标
+            // 队列里的动作在主循环顶层执行，而不是在窗口过程里直接调：
+            // ShowMenu 与 TrayWndProc 跑在 DispatchMessageW 的嵌套栈上，在那里摘托盘图标
             // （Shell_NotifyIcon → 任务栏，同步跨进程调用）或退出，一旦对方不响应
             // 就整进程挂死；挪到这里，嵌套栈已经退出，同一时刻只有一个顶层调用在跑。
+            // 队列里除了菜单项/左键动作，还有 TaskbarCreated 的重加请求（见 TrayWndProc）。
             while (pendingActions.Count > 0)
                 InvokeAction(pendingActions.Dequeue());
+
+            // explorer 重启/启动时重加失败的兜底重试：到点再试一次（顶层栈执行，
+            // 同菜单动作的纪律——Shell_NotifyIcon 是同步跨进程调用，不进 wndproc 嵌套栈）。
+            // 顺序上刻意排在队列**之后**：队列里的 TaskbarCreated 重加会把自己的结果写进
+            // readdRetry（成功 Clear / 失败排下次尝试），先跑它，这条 Due 检查就不会在
+            // 同一帧再来一次 NIM_ADD——"explorer 刚重启"恰好就是启动重加失败与广播同时
+            // 到来的场景，同帧双 NIM_ADD 会多出一个托盘图标；而它失败时 OnFailure 已把
+            // 下次尝试推到下个间隔，这里也不会空转。
+            if (readdRetry.Due(NowSeconds))
+                ReaddIcon();
         }
 
         static void InvokeAction(Action action)
@@ -436,7 +499,16 @@ namespace TransparentPet.Platform
             else if (msg == WM_APP_TRAY && (uint)lParam == WM_LBUTTONUP && active?.leftClickAction != null)
                 active.pendingActions.Enqueue(active.leftClickAction); // 同菜单动作：Pump 顶层执行
             else if (taskbarCreatedMsg != 0 && msg == taskbarCreatedMsg)
-                active?.ReaddIcon(); // explorer 重启广播：图标被系统收走，立即重加（0 = 未注册成功，跳过）
+            {
+                // explorer 重启广播：图标被系统收走，重加（0 = 未注册成功，跳过）。
+                // **登记到队列而不是就地调用**：本分支跑在 DispatchMessageW 的嵌套栈上，
+                // 而 ReaddIcon → Shell_NotifyIconW 是同步跨进程调用（→ 任务栏），在嵌套栈上
+                // 一旦对方不响应就整进程挂死——本文件 ShowMenu 注释记录的同款 AppHang 教训，
+                // 纪律一致（同左键动作、同菜单项动作，都只 Enqueue）。真正调用在 Pump 顶层。
+                var self = active;
+                if (self != null)
+                    self.pendingActions.Enqueue(self.ReaddIcon);
+            }
             else if (msg == 0x0010 /* WM_CLOSE */)
                 DestroyWindow(hWnd);
             return DefWindowProcW(hWnd, msg, wParam, lParam);
@@ -548,6 +620,14 @@ namespace TransparentPet.Platform
 
         public void Dispose()
         {
+            // 幂等：本类的 Dispose 有两个调用方（PetWindowSetup.ExitFromTray 与 OnDestroy），
+            // 退出路径上可能重入，重复跑会二次 Shell_NotifyIcon(NIM_DELETE)——那是同步跨进程
+            // 调用，而且 DestroyWindow 之后 hwnd 字段是 readonly、清不掉（没法像常规写法
+            // 那样"置零即已释放"），故用独立标志兜住。
+            if (disposed)
+                return;
+            disposed = true;
+
             if (hwnd != IntPtr.Zero)
             {
                 var nid = new NOTIFYICONDATAW
