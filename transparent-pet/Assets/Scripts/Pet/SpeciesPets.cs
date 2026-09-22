@@ -4,13 +4,12 @@
 // 本进程窗口独立于玻璃窗口（各自相机各自渲染链，互不干扰），z 序上紧贴玻璃下方、
 // 一起置顶全屏透明。玻璃的抓屏只排除玻璃自己 → 本窗口对玻璃而言是普通桌面内容，
 // 被自然折射（真采样）。输入天然分流：玻璃穿透区的点击落到本窗口。
-// 持久化写独立 JSON（summoned_pets.json），不与玻璃进程的 pet_config.json 共文件，
+// 持久化写独立 JSON（summoned_pets.json），不与玻璃进程的 config.json 共文件，
 // 杜绝双进程读写竞争。
 // ============================================================================
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using TransparentPet.Core;
 using TransparentPet.Pet.Jelly;
 using TransparentPet.Pet.Shatter;
@@ -274,7 +273,7 @@ namespace TransparentPet.Pet
             return pet;
         }
 
-        // ── 持久化（独立 JSON，与玻璃进程的 pet_config.json 分文件）──
+        // ── 持久化（独立 JSON，与玻璃进程的 config.json 分文件）──
 
         void Load()
         {

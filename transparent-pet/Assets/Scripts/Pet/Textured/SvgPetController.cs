@@ -10,7 +10,6 @@
 // PetLifeVisual 表现层在 LateUpdate 里叠加呼吸/挤压/倾角后接管最终变换。
 // 物理永不读 transform：视觉偏移不会污染模拟（装饰量累积是这类分层的经典坑）。
 // ============================================================================
-using System;
 using AlphaHit = TransparentPet.Pet.Textured.AlphaHitTestCore;
 using TransparentPet.Core;
 using UnityEngine;

@@ -2,7 +2,7 @@
 // SlimePbf.cs — 2D PBF（Position Based Fluids）史莱姆粒子模拟
 // ============================================================================
 // 【来源与血统】lamp-cap/Unity_Slime 的 3D PBF（2048 粒子 GPU Jobs）降维到 2D：
-//   Jobs_Simulation_PBF.ApplyForceJob   → ApplyForces（阻尼+重力+拖拽吸附+形状记忆）
+//   Jobs_Simulation_PBF.ApplyForceJob   → ApplyForces（阻尼+重力+拖拽皮区钉扎+形状记忆）
 //   Jobs_Simulation_PBF.ComputeLambdaJob→ ComputeLambda（Poly6 密度 / Spiky 梯度）
 //   Jobs_Simulation_PBF.ComputeDeltaPosJob → ApplyDeltaPos（位置修正 + s_corr 张力）
 //   Jobs_Simulation_PBF.UpdateJob       → ProjectBounds（边界投影 + 速度钳制）
@@ -10,8 +10,8 @@
 // 差异（2D/桌宠适配）：
 //   · 核函数换成 2D 归一化系数（Poly6: 4/(πh⁸)，Spiky: 30/(πh⁵)）
 //   · 粒子少（~190），邻居用 n² 暴力搜索，不需要空间哈希/Jobs
-//   · 拖拽 = 项目同款"控制器吸附"：影响半径内粒子速度向控制器速度 lerp
-//     并向抓取点吸引（拖拽与它碎块回流是同一套机制）
+//   · 拖拽 = 点受力皮区：只钉住点击处皮区粒子（半径 PinPatchRadiusMul×h），
+//     其余质量挂在皮区上，由重力/弹性键/密度决定垂坠与摆动（不是全身弹簧）
 //   · 形状记忆（Unity_Slime 没有，桌宠静置必需）：每粒子保存质心系初始锚点，
 //     低速时施加极弱恢复加速度——防止静置数分钟后摊成一滩；高速时失效，
 //     不妨碍甩动拉伸与落地压扁。静息形态由 Godot 原版 SVG 轮廓锚定。
@@ -86,7 +86,7 @@ namespace TransparentPet.Pet.Jelly
         // ── 粒子状态（平行数组）──
         public readonly int ParticleCount;
         readonly Vector2[] pos;
-        readonly Vector2[] prev;
+        readonly Vector2[] prev;                // 构造时复制的初始位置快照（当前无读者，保留备用）
         readonly Vector2[] vel;
         readonly Vector2[] pred;
         readonly float[] lambda;
@@ -107,7 +107,7 @@ namespace TransparentPet.Pet.Jelly
         Vector2 grabVel;                        // 鼠标速度（滑窗平均，来自 MoveGrab 采样）
         readonly List<(Vector2 point, float timeMs)> velocityBuffer = new List<(Vector2, float)>(VelocityBufferSize);
         // 点受力：皮区粒子（点击半径内的一小撮）+ 各自相对点击点的偏移
-        readonly int[] pinIdx = new int[64];
+        readonly int[] pinIdx = new int[64];   // 皮区粒子下标（写入但当前无读者；读取走 pinOf/pinOffset）
         readonly Vector2[] pinOffset = new Vector2[64];
         readonly int[] pinOf;                   // [i] → 皮区槽位（-1 = 非皮区）
         int pinCount;
@@ -548,7 +548,7 @@ namespace TransparentPet.Pet.Jelly
             grabVel = Vector2.zero;
             velocityBuffer.Clear();
 
-            // 皮区 = 点击点半径 1.6h 内的粒子；记录各自相对点击点的偏移，
+            // 皮区 = 点击点半径 PinPatchRadiusMul×h（=1.2h）内的粒子；记录各自相对点击点的偏移，
             // 之后它们被钉在 (鼠标位置 + 偏移) 上——受力点就是用户点的位置
             pinCount = 0;
             for (var i = 0; i < ParticleCount; i++)

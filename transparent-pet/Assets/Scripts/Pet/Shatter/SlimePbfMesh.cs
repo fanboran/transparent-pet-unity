@@ -10,8 +10,10 @@
 // 差异（2D/桌宠适配）：
 //   · 核函数换成 2D 归一化系数（Poly6: 4/(πh⁸)，Spiky: 30/(πh⁵)）
 //   · 粒子少（~190），邻居用 n² 暴力搜索，不需要空间哈希/Jobs
-//   · 拖拽 = 项目同款"控制器吸附"：影响半径内粒子速度向控制器速度 lerp
-//     并向抓取点吸引（拖拽与它碎块回流是同一套机制）
+//   · 拖拽 = 影响半径（GrabRadiusMul×h）内粒子速度向控制器速度 lerp + 向抓取点
+//     吸引，权重随距离线性衰减到 0（无硬切）；半径外粒子不直接受鼠标力。
+//     注：本类没有任何"碎裂/碎块回流"逻辑（整条 Shatter 线目前也没有），
+//     落在 Shatter 目录下只表示它是碎裂版物种用的模拟，不是它会碎。
 //   · 形状记忆（Unity_Slime 没有，桌宠静置必需）：每粒子保存质心系初始锚点，
 //     低速时施加极弱恢复加速度——防止静置数分钟后摊成一滩；高速时失效，
 //     不妨碍甩动拉伸与落地压扁。静息形态由 Godot 原版 SVG 轮廓锚定。
@@ -60,7 +62,7 @@ namespace TransparentPet.Pet.Shatter
         // ── 粒子状态（平行数组）──
         public readonly int ParticleCount;
         readonly Vector2[] pos;
-        readonly Vector2[] prev;
+        readonly Vector2[] prev;                // 构造时复制的初始位置快照（当前无读者，保留备用）
         readonly Vector2[] vel;
         readonly Vector2[] pred;
         readonly float[] lambda;
