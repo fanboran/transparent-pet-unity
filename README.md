@@ -5,7 +5,7 @@
 
 ![拖拽抛掷演示](docs/images/throw.gif)
 
-![静息](docs/images/hero.png)
+![叠加在真实窗口之上——玻璃内折射出背后界面的文字](docs/images/over-ui.jpg)
 
 ## 玩法
 
