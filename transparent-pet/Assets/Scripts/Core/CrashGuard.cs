@@ -59,6 +59,29 @@ namespace TransparentPet.Core
         static Mutex singleInstanceMutex; // 静态持有：进程存活期间不释放（进程退出由系统释放）
 
         /// <summary>
+        /// 崩溃日志路径，只在主线程安装阶段抓取一次并缓存。
+        /// 为什么必须缓存：Log() 会被看门狗线程与异常兜底线程调用，而
+        /// Application.persistentDataPath 是主线程 API，从工作线程直接读属于未定义行为。
+        /// 缓存后线程侧只读这个 string 字段——写入发生在看门狗启动之前、之后无并发写，
+        /// 引用赋值天然原子，读取安全。
+        /// </summary>
+        static string crashLogPath;
+
+        /// <summary>主线程阶段抓取崩溃日志路径（必须在任何线程启动/Log 调用之前执行）。</summary>
+        static void CaptureCrashLogPath()
+        {
+            try
+            {
+                crashLogPath = Path.Combine(Application.persistentDataPath, "crashguard.log");
+            }
+            catch
+            {
+                // 取不到路径就放弃文件日志（Debug 输出仍在）：总好过让线程去碰主线程 API
+                crashLogPath = null;
+            }
+        }
+
+        /// <summary>
         /// 幂等安装。两个入口：RuntimeInitializeOnLoadMethod（最早）与 PetWindowSetup.Awake（兜底）——
         /// 某些构建配置下 runtime initialize 可能不触发，双入口保证保护一定生效。
         /// </summary>
@@ -69,6 +92,7 @@ namespace TransparentPet.Core
         {
             if (Interlocked.Exchange(ref installed, 1) != 0)
                 return;
+            CaptureCrashLogPath(); // 主线程阶段：必须是启动看门狗线程、以及任何 Log 调用之前
             if (!TryAcquireSingleInstance())
                 return;
 
@@ -175,19 +199,27 @@ namespace TransparentPet.Core
         {
             try
             {
-                var path = Path.Combine(Application.persistentDataPath, "crashguard.log");
-                // 写盘加串行锁：Log 会被多个线程调（看门狗线程/主线程/异常兜底），
-                // File.AppendAllText 并发互撞时后写者整条丢失。取舍：日志频率极低
-                // （安装/超时/强杀各一条），锁开销可忽略，胜于丢崩溃证据。
-                lock (logLock)
+                // 只读主线程安装阶段缓存好的路径（见 crashLogPath）：看门狗/异常兜底线程
+                // 绝不能在这里再读 Application.persistentDataPath——那是主线程 API。
+                var path = crashLogPath;
+                if (path != null)
                 {
-                    File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + message + Environment.NewLine);
+                    // 写盘加串行锁：Log 会被多个线程调（看门狗线程/主线程/异常兜底），
+                    // File.AppendAllText 并发互撞时后写者整条丢失。取舍：日志频率极低
+                    // （安装/超时/强杀各一条），锁开销可忽略，胜于丢崩溃证据。
+                    lock (logLock)
+                    {
+                        File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + message + Environment.NewLine);
+                    }
                 }
             }
             catch
             {
                 // 日志写不进去也要继续"自杀"（例如目录不可写）
             }
+            // 刻意保留（未缓存）：Unity 的 Debug.Log 内部自带锁，实践上可安全跨线程调用，
+            // 且崩溃现场必须在控制台留痕——这是它和 persistentDataPath 的区别，后者只允许
+            // 主线程访问、必须提前缓存。
             Debug.LogWarning("[CrashGuard] " + message);
         }
 

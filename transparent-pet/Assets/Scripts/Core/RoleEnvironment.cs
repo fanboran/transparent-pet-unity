@@ -1,5 +1,7 @@
 // ============================================================================
-// RoleEnvironment.cs — 双窗口角色环境：进程与跨进程命令协议（纯 BCL，无窗口 API）
+// RoleEnvironment.cs — 双窗口角色环境：进程与跨进程命令协议
+// （Core 例外：持有 kernel32 Job Object 互操作——无窗口 API、不触碰透明/穿透行为、
+//  创建/设置/加入任一步失败即静默放弃并由窗口信号联动兜底，见下方 DllImport 处的边界说明）
 // ============================================================================
 // 为什么分两个进程：玻璃靠"抓屏排除自己"(WDA_EXCLUDEFROMCAPTURE) 才能折射真实
 // 桌面，且它的相机/渲染链每帧独占驱动主相机——其他物种控制器同样每帧写相机，
@@ -68,6 +70,19 @@ namespace TransparentPet.Core
         // 全部成员（物种副进程），零轮询零宽限。"子死父随"Job Object 管不了，
         // 仍由窗口存活信号联动（GlassRole）承担——两层互补。
         // 兜底：创建/设置/加入任一步失败则静默放弃（窗口信号联动仍在，双保险）。
+
+        // ── Win32 边界例外：下面这组 kernel32 DllImport 是全项目唯一留在 Core 的 Win32 调用 ──
+        // 约定是 Platform 层独占 Win32，这里为什么不搬去 Platform/NativeJobObject.cs：
+        // 1) 调用方不止本类。CrashGuard 在 [RuntimeInitializeOnLoadMethod(BeforeSceneLoad)]
+        //    里读 IsSpecies（InstallFromRuntime → EnsureInstalled → 互斥体命名，全工程最早的
+        //    初始化路径之一），HardExit 退出链调 KillSpeciesChild，二者都在 Core。搬走后 Core
+        //    要么反向依赖 Platform（Core.asmdef references 为空，方向白名单禁止），要么改成
+        //    "Platform 注册静态委托钩子"——而跨程序集 RuntimeInitialize 顺序无保证，钩子尚未
+        //    注册时退出链会静默跳过"带走副进程"，把安全兜底押在初始化顺序上不划算。
+        // 2) 本组只做进程/句柄操作，不碰任何窗口、不涉透明与穿透行为——与 Platform 层
+        //    "改动可能破坏观感"的风险面无关；且每一步失败都静默降级，由窗口信号联动兜底。
+        // 结论：保留在 Core，仅以注释声明边界。若将来 Platform 有了稳定的早期初始化钩子，再议下移。
+        // ────────────────────────────────────────────────────────────────────────────
 
         [StructLayout(LayoutKind.Sequential)]
         struct IO_COUNTERS

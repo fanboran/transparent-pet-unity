@@ -50,6 +50,7 @@ namespace TransparentPet.Tests
                 Assert.AreEqual("slime_2", loaded.characterId);
                 Assert.IsFalse(loaded.alwaysOnTop);
                 Assert.IsTrue(loaded.autoStart);
+                Assert.IsNotNull(loaded.throwParams); // 兜底逻辑不得影响正常往返（此处本就非 null）
                 Assert.AreEqual(900f, loaded.throwParams.gravity);
                 Assert.AreEqual(300f, loaded.throwParams.minSpeed);
                 Assert.AreEqual(700f, loaded.throwParams.maxSpeed);
@@ -101,6 +102,72 @@ namespace TransparentPet.Tests
                     Assert.AreEqual("slime_1", loaded.characterId);
                     Assert.AreEqual(800f, loaded.throwParams.gravity);
                 });
+            }
+            finally
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // PetConfigStore：throwParams 兜底（手工编辑 config.json 的两种触发形态）
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// 显式写 "throwParams": null（手工编辑 config.json 即可触发）→ Load 必须补出
+        /// 非 null 的默认参数，否则 PetController 等下游读 throwParams.xxx 直接 NRE。
+        /// 同时校验同 JSON 里的标量被正常解析，证明不是"整体回退默认"蒙对的。
+        /// </summary>
+        [Test]
+        public void Load_ExplicitNullThrowParams_UsesDefaults()
+        {
+            var path = Path.GetTempFileName();
+            try
+            {
+                File.WriteAllText(path,
+                    "{\"petScale\":0.75,\"characterId\":\"slime_3\",\"throwParams\":null}");
+
+                var loaded = PetConfigStore.Load(path);
+
+                Assert.AreEqual(0.75f, loaded.petScale);        // 证明 JSON 确实被解析（非整体回退）
+                Assert.AreEqual("slime_3", loaded.characterId);
+                Assert.IsNotNull(loaded.throwParams, "throwParams 为 null 时 Load 应兜底为默认");
+                Assert.AreEqual(800f, loaded.throwParams.gravity);
+                Assert.AreEqual(350f, loaded.throwParams.minSpeed);
+                Assert.AreEqual(800f, loaded.throwParams.maxSpeed);
+                Assert.AreEqual(2f, loaded.throwParams.multiplier);
+                Assert.IsTrue(loaded.throwParams.enabled);
+            }
+            finally
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+        }
+
+        /// <summary>
+        /// 旧配置文件缺 throwParams 节点：JsonUtility 不回填字段初始化器，读到的是 null，
+        /// 与显式 null 同路——必须同样兜底为默认参数。
+        /// </summary>
+        [Test]
+        public void Load_MissingThrowParamsField_UsesDefaults()
+        {
+            var path = Path.GetTempFileName();
+            try
+            {
+                File.WriteAllText(path, "{\"petScale\":0.75,\"characterId\":\"slime_3\"}");
+
+                var loaded = PetConfigStore.Load(path);
+
+                Assert.AreEqual(0.75f, loaded.petScale);
+                Assert.AreEqual("slime_3", loaded.characterId);
+                Assert.IsNotNull(loaded.throwParams, "缺 throwParams 字段时 Load 应兜底为默认");
+                Assert.AreEqual(800f, loaded.throwParams.gravity);
+                Assert.AreEqual(350f, loaded.throwParams.minSpeed);
+                Assert.AreEqual(800f, loaded.throwParams.maxSpeed);
+                Assert.AreEqual(2f, loaded.throwParams.multiplier);
+                Assert.IsTrue(loaded.throwParams.enabled);
             }
             finally
             {

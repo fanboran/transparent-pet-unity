@@ -103,7 +103,16 @@ namespace TransparentPet.Core
                     return new PetConfig();
 
                 var config = JsonUtility.FromJson<PetConfig>(json);
-                return config ?? new PetConfig(); // 合法 JSON 的 "null"/空对象等边界也兜底
+                if (config == null)
+                    return new PetConfig(); // 合法 JSON 的 "null"/空对象等边界也兜底
+
+                // throwParams 统一兜底：手工编辑 config.json 写成 "throwParams": null，或旧
+                // 配置文件缺该节点（JsonUtility 不回填字段初始化器，缺失即为 null），都会让
+                // PetController / MeshPetController / SvgPetController 读默认抛射参数时 NRE。
+                // 在唯一的读取入口补齐默认值（new ThrowParams() 即与"JSON 缺字段"时同源的默认），
+                // 下游三处便无需各自判空。
+                config.throwParams ??= new ThrowParams();
+                return config;
             }
             catch (Exception e)
             {
