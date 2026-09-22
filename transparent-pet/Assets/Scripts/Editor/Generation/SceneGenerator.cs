@@ -60,10 +60,17 @@ namespace TransparentPet.EditorTools
             LiquidGlassDesktop,
         }
 
+        /// <summary>
+        /// 交付默认版本场景路径（= Versions[0]，编辑器试玩与无头面板截图都从这里取）。
+        /// 路径字面量只此一处：PlayHelper/UiSnapshot 各自抄一份的话，改目录时必漏掉一处，
+        /// 表现是"菜单打开的还是旧场景"。
+        /// </summary>
+        public const string DefaultVersionScenePath = "Assets/Scenes/Versions/LiquidGlassDesktop/PetScene.unity";
+
         /// <summary>全部保留版本：路径 + 类型 + 行为语义说明（index 0 = 交付默认，其余存档）。</summary>
         static readonly (string scenePath, PetKind kind, bool hoverMode, string description)[] Versions =
         {
-            ("Assets/Scenes/Versions/LiquidGlassDesktop/PetScene.unity", PetKind.LiquidGlassDesktop, false,
+            (DefaultVersionScenePath, PetKind.LiquidGlassDesktop, false,
                 "真液态玻璃桌面版（交付默认）：抓屏隐形 + 折射真实桌面，多只同屏（≤3，smin 融合）；录屏/截图中桌宠隐形（F11 可切换）"),
             ("Assets/Scenes/Versions/LifeVisual/PetScene.unity", PetKind.SvgLife, false,
                 "生命感版：烘焙图原样 + 呼吸/拖拽倾斜/落地挤压/戳反应（存档）"),
@@ -120,12 +127,10 @@ namespace TransparentPet.EditorTools
 
             // 双窗口交付三场景插到最前：index 0 = Bootstrap（按 -species 命令行分岔到玻璃/物种窗口）
             GenerateDeliveryScenes();
-            var delivery = new List<EditorBuildSettingsScene>
-            {
-                new EditorBuildSettingsScene(BootstrapScenePath, true),
-                new EditorBuildSettingsScene(GlassScenePath, true),
-                new EditorBuildSettingsScene(SpeciesScenePath, true),
-            };
+            // 交付清单取自 DeliveryScenePaths（BuildPlayer 用的是同一份，见其字段注释）
+            var delivery = new List<EditorBuildSettingsScene>(DeliveryScenePaths.Length + scenes.Length);
+            foreach (var path in DeliveryScenePaths)
+                delivery.Add(new EditorBuildSettingsScene(path, true));
             delivery.AddRange(scenes);
             EditorBuildSettings.scenes = delivery.ToArray();
             AssetDatabase.SaveAssets();
@@ -308,6 +313,18 @@ namespace TransparentPet.EditorTools
         internal const string BootstrapScenePath = "Assets/Scenes/Delivery/Bootstrap.unity";
         internal const string GlassScenePath = "Assets/Scenes/Delivery/Glass.unity";
         internal const string SpeciesScenePath = "Assets/Scenes/Delivery/Species.unity";
+
+        /// <summary>
+        /// 双窗口交付场景清单，顺序即构建索引顺序（Bootstrap 入口分岔 → Glass 玻璃主 → Species 物种副）。
+        /// GenerateAll 收进构建设置、BuildPlayer 取作构建清单，两处共用这一份——各自列举
+        /// 迟早漂移（少一个就是"构建出来少一个窗口"，而编辑器里跑是对的，最难查）。
+        /// </summary>
+        public static readonly string[] DeliveryScenePaths =
+        {
+            BootstrapScenePath,
+            GlassScenePath,
+            SpeciesScenePath,
+        };
 
         [MenuItem("TransparentPet/生成双窗口交付场景")]
         public static void GenerateDeliveryScenes()

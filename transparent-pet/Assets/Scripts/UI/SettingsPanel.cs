@@ -73,6 +73,7 @@ namespace TransparentPet.UI
         int selectedCharacterIndex = -1;
         bool characterListOpen;   // 自绘下拉的展开态
         Coroutine saveCoroutine;  // 防抖落盘协程（null = 无待写变更）
+        bool autoStartNotifyPending; // 自启改过、等配置落盘后再广播结果（事件语义见 EventTopics.AutoStartChanged）
 
         // 物种计数（读 summoned_pets.json，只读不写；玻璃计数实时查 LiquidGlassPresence）
         float nextSpeciesCountRefresh = -1f;
@@ -95,6 +96,10 @@ namespace TransparentPet.UI
             // 面板的落盘是全量覆盖式的，不同步就会把托盘刚改的值写回去
             EventBus.Subscribe<float>(EventTopics.PetScaleChanged, OnExternalScaleChanged);
             EventBus.Subscribe<bool>(EventTopics.CaptureInvisibleChanged, OnExternalCaptureInvisible);
+            // 开机自启同理：托盘菜单那条链（PetWindowSetup.ToggleAutoStart）只写注册表 + 配置，
+            // 面板的工作副本不知情；不同步的话，之后任意滑条 Commit 触发的全量 SaveAndNotify
+            // 会把托盘刚改的值覆盖回去（自启勾选自己弹回旧状态）。
+            EventBus.Subscribe<bool>(EventTopics.AutoStartChanged, OnExternalAutoStartChanged);
         }
 
         void OnDisable()
@@ -102,6 +107,7 @@ namespace TransparentPet.UI
             EventBus.Unsubscribe<bool>(EventTopics.SettingsPanelToggleRequested, OnToggleRequested);
             EventBus.Unsubscribe<float>(EventTopics.PetScaleChanged, OnExternalScaleChanged);
             EventBus.Unsubscribe<bool>(EventTopics.CaptureInvisibleChanged, OnExternalCaptureInvisible);
+            EventBus.Unsubscribe<bool>(EventTopics.AutoStartChanged, OnExternalAutoStartChanged);
             SetVisible(false); // 场景卸载时收走模态标记，别把窗口层的 ESC 永久让位
         }
 
@@ -136,6 +142,23 @@ namespace TransparentPet.UI
         {
             if (config != null)
                 config.captureInvisible = on;
+        }
+
+        /// <summary>
+        /// 托盘改了"开机自启动"：只刷 autoStart 这一个字段，**不整份重载工作副本**。
+        /// 为什么不重载（从盘上重读 config）：
+        ///   ① 载荷已给出确切新值，窄更新一个字段就够；
+        ///   ② 面板是"即改即用 + 0.4s 防抖落盘"，重载会把防抖计时中的未提交编辑一起
+        ///      清掉——用户正拖滑条或刚勾了某项，面板自己弹回磁盘旧值；
+        ///   ③ config.json 另有秒级的位置持久化在写（LiquidGlassController.PersistSlimes
+        ///      节流写盘），"此刻重载是否安全"根本说不清——同理没有改成订阅 ConfigSaved 全量同步。
+        /// 真值在注册表，这里刷的是 UI 态（勾选框）与工作副本里的那个字段。
+        /// </summary>
+        void OnExternalAutoStartChanged(bool on)
+        {
+            autoStart = on;
+            if (config != null)
+                config.autoStart = on;
         }
 
         void SetVisible(bool show)
@@ -458,6 +481,11 @@ namespace TransparentPet.UI
 #endif
                 config.autoStart = auto;
                 ScheduleSave();
+                // 广播要等"注册表 + 配置都写完"（AutoStartChanged 的语义是**结果通知**，
+                // 见 EventTopics）——本面板的配置落盘是防抖的，故这里只挂标记，
+                // 真正发布在 SaveAndNotify 里。两侧对称：谁改了自启都发同一条事件，
+                // 订阅方不必区分发起方；本面板也会收到，但处理器只把同值写回，幂等无害。
+                autoStartNotifyPending = true;
             }
         }
 
@@ -541,6 +569,13 @@ namespace TransparentPet.UI
                 return;
             PetConfigStore.Save(config);
             EventBus.Publish(EventTopics.ConfigSaved, config);
+            // 自启的结果通知放在这里：注册表早在切换那一刻写完，配置此刻刚落盘，语义齐了
+            //（见上面 autoStartNotifyPending 的挂标记处）
+            if (autoStartNotifyPending)
+            {
+                autoStartNotifyPending = false;
+                EventBus.Publish(EventTopics.AutoStartChanged, config.autoStart);
+            }
             RoleEnvironment.SendSpeciesCommand("config");
         }
 

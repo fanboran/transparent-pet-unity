@@ -11,7 +11,8 @@ namespace TransparentPet.EditorTools
     /// </summary>
     public static class PlayHelper
     {
-        const string ScenePath = "Assets/Scenes/Versions/LiquidGlassDesktop/PetScene.unity";
+        // 路径取自 SceneGenerator 的交付默认版本常量（唯一来源，别在这里再抄一份字面量）
+        const string ScenePath = SceneGenerator.DefaultVersionScenePath;
 
         [MenuItem("TransparentPet/播放宠物场景")]
         public static void PlayPetScene()

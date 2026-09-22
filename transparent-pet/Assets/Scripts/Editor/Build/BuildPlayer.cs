@@ -12,16 +12,13 @@ namespace TransparentPet.EditorTools
     /// </summary>
     public static class BuildPlayer
     {
-        /// <summary>双窗口交付三场景（Bootstrap 进 index 0，按 -species 分岔到玻璃/物种窗口）。</summary>
-        static readonly string[] DeliveryScenes =
-        {
-            SceneGenerator.BootstrapScenePath,
-            SceneGenerator.GlassScenePath,
-            SceneGenerator.SpeciesScenePath,
-        };
-
-        /// <summary>构建透明桌宠交付版（双窗口：液态玻璃 + 可召唤物种）。</summary>
-        public static void BuildWindows64() => Build(DeliveryScenes, "TransparentPet.exe");
+        /// <summary>
+        /// 构建透明桌宠交付版（双窗口：液态玻璃 + 可召唤物种）。
+        /// 场景清单不在此列举：取 SceneGenerator.DeliveryScenePaths（与 GenerateAll 写入
+        /// EditorBuildSettings 的交付段同一份来源，顺序也一致），避免两处清单各自演进。
+        /// </summary>
+        public static void BuildWindows64() =>
+            Build(SceneGenerator.DeliveryScenePaths, "TransparentPet.exe");
 
         static void Build(string[] scenePaths, string exeName)
         {

@@ -22,6 +22,7 @@
 //      没有这张表，光看图只会一直怀疑绘制矩形/提前退出。
 //
 // 运行：-batchmode -projectPath ... -executeMethod TransparentPet.EditorTools.UiSnapshot.CaptureHeadless
+//       菜单：TransparentPet/快照：设置面板（同一个入口，但跑完**不退出编辑器**，见 Finish）
 // 输出：%TEMP%/pet-ui/settings.png（Path.GetTempPath() 派生，不写死个人路径）
 // ============================================================================
 using System.IO;
@@ -36,7 +37,8 @@ namespace TransparentPet.EditorTools
 {
     public static class UiSnapshot
     {
-        const string ScenePath = "Assets/Scenes/Versions/LiquidGlassDesktop/PetScene.unity";
+        // 路径取自 SceneGenerator 的交付默认版本常量（唯一来源，别在这里再抄一份字面量）
+        const string ScenePath = SceneGenerator.DefaultVersionScenePath;
         const string PendingKey = "TransparentPet.UiSnapshot.Pending";
         const string PathKey = "TransparentPet.UiSnapshot.Path";
 
@@ -305,11 +307,28 @@ namespace TransparentPet.EditorTools
             Debug.Log($"[UiSnapshot] {tag} _Resolution=({res.x},{res.y}) quadUv={quadUv}");
         }
 
+        /// <summary>
+        /// 收尾：退订回调 + 清 Pending（两种运行方式都闭环）。
+        /// **只有 batchmode 才退出编辑器进程**：命令行/无头跑完退出是必要的（否则
+        /// -quit 等不到结束），但菜单项跑的是同一个入口——无条件 Exit 会把用户的
+        /// 编辑器整个关掉（本工具第一版就是这样）。非 batchmode 下留着 Play 与
+        /// 打开的面板，用户自己看图；Pending 已清零，域重载不会再重挂回调。
+        /// </summary>
         static void Finish(int exitCode)
         {
             EditorApplication.update -= Tick;
             SessionState.SetBool(PendingKey, false);
-            EditorApplication.Exit(exitCode);
+            if (Application.isBatchMode)
+            {
+                EditorApplication.Exit(exitCode);
+                return;
+            }
+
+            var dir = SessionState.GetString(PathKey, ".");
+            if (exitCode == 0)
+                Debug.Log($"[UiSnapshot] 快照完成 → {dir}（编辑器模式不退出）");
+            else
+                Debug.LogWarning($"[UiSnapshot] 快照中止 exitCode={exitCode}，已出图在 {dir}");
         }
     }
 }
