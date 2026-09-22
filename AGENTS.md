@@ -49,7 +49,7 @@
 1. **Spike 优先**：透明窗口 spike（`docs/技术/spike-透明窗口.md`）未通过验收清单前，**禁止编写任何业务功能代码**。项目生死未定时不堆功能，防止弃坑成本膨胀。
 2. **参照库强制**：写新系统（尤其 Win32 互操作）前，先下载星标多、维护活跃的开源参照项目到 `external/`（已 gitignore），读懂后**翻译改编，不凭记忆写**。简单参数调整不需要。
 3. **测试驱动**：核心逻辑（软体物理模拟、抛射物理参数、事件总线、配置持久化）必须附带 Unity Test Framework（NUnit）测试，放 `transparent-pet/Assets/Tests/`。
-4. **安全第一**：`transparent-pet/Assets/Scripts/Platform/`（Win32 窗口互操作层）一经 spike 验收，修改须谨慎——它是全项目唯一碰 Win32 API 的地方，改动可能破坏透明/穿透行为，改前跑全量测试。
+4. **安全第一**：`transparent-pet/Assets/Scripts/Platform/`（Win32 窗口互操作层）一经 spike 验收，修改须谨慎——它是全项目 Win32 窗口 API 的集中地（`Core/RoleEnvironment.cs` 的 kernel32 Job Object 是唯一例外，无窗口 API、不碰透明/穿透，见架构原则第 2 条），改动可能破坏透明/穿透行为，改前跑全量测试。
 5. **原子化提交 + 主动沟通**：每次提交一个独立最小功能；任务描述不清或与架构原则冲突时主动提问，不做危险假设。
 
 ***
@@ -60,15 +60,15 @@
 
 1. **两层结构**：仓库根放文档与 AGENTS.md，Unity 工程本体放 `transparent-pet/` 子目录（Unity Hub 打开的是它，不是仓库根）。
 2. **模块划分（功能定边界，asmdef 定依赖）**：`Assets/Scripts/` 下按功能域分模块，每模块一个 asmdef，依赖方向由 asmdef 引用白名单强制（等价 stick-world 的 audit_deps.py）：
-   - `Core/`（L0 应用基建）：事件总线、配置持久化、穿透判定输入、跨层中转状态（OverlayState/LiquidGlassPresence）、失控保护——零外部引用
-   - `Platform/`（L1 Win32 窗口层）：透明置顶窗口、托盘、抓屏、开机自启、强杀退出——全项目唯一碰 Win32 的地方
+   - `Core/`（L0 应用基建）：事件总线、配置持久化、穿透判定输入、跨层中转状态（OverlayState/LiquidGlassPresence）、失控保护——零外部程序集引用（唯一 Win32 例外是 `RoleEnvironment.cs` 的 kernel32 Job Object，见下条 Platform 说明）
+   - `Platform/`（L1 Win32 窗口层）：透明置顶窗口、托盘、抓屏、开机自启、强杀退出——Win32 互操作的主要物理边界。**例外**：`Core/RoleEnvironment.cs` 用 kernel32 Job Object 做"父死子亡"配对，该处无窗口 API、不触碰透明/穿透行为，且调用方在 Core 的早期初始化链上，故经决策保留在 Core（文件头已标注）而非搬来 Platform
    - `Pet/`（L2 玩法）：按物种线分目录 `Common/`（共享物理/仲裁/注册表）、`Glass/`（液态玻璃）、`Jelly/`（PBF 果冻）、`Shatter/`（碎裂）、`Textured/`（贴图）——目录=命名空间（`TransparentPet.Pet.Glass` 等）
    - `UI/`（L2）：HUD 与设置面板（SettingsPanel，设计见 docs/设计/设置窗口与托盘菜单设计.md）
    - `Editor/`（Editor-only）：按用途分 `Build/`（构建入口）、`Capture/`（快照/宣传图）、`Generation/`（场景生成器）
 3. **耦合原则**：模块间通信走 `Core/EventBus.cs`（静态 C# 事件中心，对应 Godot 的 event_bus autoload）；**禁止** `GameObject.Find`、跨模块 `GetComponent` 裸引用。跨 asmdef 想引用对方类型必须显式加引用——依赖违规在编译期即失败。
 4. **命名规范**：C# 类型与文件 PascalCase（文件名=类名）；资产与目录 PascalCase；目录=命名空间（asmdef rootNamespace 对齐）。场景每个版本一个目录。
 5. **依赖分层**：`Core` ← `Platform` ← `Pet`、`UI` ← 场景装配（SceneGenerator 生成）。高层可依赖低层，反向禁止（asmdef 引用白名单强制）。（历史注：曾有 `Input/` 模块做贴图 alpha 命中检测，后并入 `Pet/Textured/AlphaHitTest.cs`。）
-6. **单例约定**：全局服务（窗口控制器、事件总线）由场景组装根创建并 `DontDestroyOnLoad`，禁止场景里手工摆放重复实例。
+6. **单例约定**：全局服务是**静态类**（`EventBus` / `CrashGuard` / `FramePacing` / `OverlayState` 等），由 `RuntimeInitializeOnLoadMethod` 或 Bootstrap 分岔完成初始化；工程无运行期切场景需求，故不使用 `DontDestroyOnLoad` 的 MonoBehaviour 单例，也不在场景里手工摆放全局服务实例。
 
 ***
 
